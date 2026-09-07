@@ -169,8 +169,15 @@ impl ConfigBuilder {
     /// The `<game>` placeholder lets a single root cover every prefix, instead of
     /// enumerating them or rescanning all of them for every game.
     pub fn wine_prefix_collection(self, prefixes_dir: &Path) -> Self {
-        let pattern = prefixes_dir.join("<game>");
-        self.root(RootStore::OtherWine, pattern.to_string_lossy().into_owned())
+        // Appended as text, not with `Path::join`: `<game>` is a token Ludusavi expands
+        // rather than a real path component, and joining would write a backslash on
+        // Windows into a path that is always a Linux one, since Wine prefixes only exist
+        // there.
+        let root = prefixes_dir.to_string_lossy();
+        self.root(
+            RootStore::OtherWine,
+            format!("{}/<game>", root.trim_end_matches('/')),
+        )
     }
 
     /// Make the user's home directory portable across machines and accounts.
