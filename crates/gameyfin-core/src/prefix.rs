@@ -232,6 +232,7 @@ pub fn map_drive(prefix: &Path, target: &Path) -> CoreResult<PathBuf> {
 ///
 /// `create` controls whether a missing target is created, appropriate for a destination,
 /// wrong for a source that should already exist.
+#[cfg(unix)]
 pub fn map_drive_letter(
     prefix: &Path,
     letter: char,
@@ -255,10 +256,28 @@ pub fn map_drive_letter(
         Err(e) => return Err(e.into()),
     }
 
-    #[cfg(unix)]
     std::os::unix::fs::symlink(target, &link)?;
 
     Ok(link)
+}
+
+/// Refused on Windows, where there is no prefix and nothing to map.
+///
+/// A mapping is a symlink named `g:` inside the prefix, which only means anything to
+/// Wine. Windows has no such prefix, cannot use a colon in a filename, and `Path::join`
+/// there reads `g:` as a drive specifier and returns it *in place of* the whole path.
+/// Refusing keeps that from looking like it worked. Unreachable in practice: every caller
+/// is behind `needs_proton`, which is always false on Windows.
+#[cfg(windows)]
+pub fn map_drive_letter(
+    _prefix: &Path,
+    _letter: char,
+    _target: &Path,
+    _create: bool,
+) -> CoreResult<PathBuf> {
+    Err(crate::error::CoreError::Other(
+        "drive letters are only mapped inside a Wine prefix".into(),
+    ))
 }
 
 /// Screen DPI for a scale factor, rounded to something Windows software expects.
@@ -396,6 +415,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_proton_prefix_is_found_inside_pfx() {
         // Proton is handed the compat data directory and builds the real prefix in `pfx`.
         // Looking for Wine's layout at the top level reports a freshly built prefix as
@@ -422,6 +442,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_wine_prefix_stays_at_its_own_root() {
         let dir = std::env::temp_dir().join(format!("gameyfin-wineroot-{}", std::process::id()));
         // Cleared first: a previous run that panicked leaves this behind, and the
