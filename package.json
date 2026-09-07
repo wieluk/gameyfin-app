@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "set-version": "node scripts/set-version.mjs",
     "test": "vitest run",
     "tauri": "tauri",
     "fetch-ludusavi": "node scripts/fetch-ludusavi.mjs",

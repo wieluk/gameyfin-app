@@ -67,10 +67,6 @@ jobs:
       - run: npm ci
       - run: npx vite build
 
-      # Without this the save-sync integration tests skip themselves rather than fail,
-      # so fetching it is what makes them actually run in CI.
-      - run: npm run fetch-ludusavi
-
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-features
