@@ -19,8 +19,8 @@ jobs:
       matrix:
         os: [ubuntu-22.04, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -52,8 +52,8 @@ jobs:
     # The draft release must exist before the bundle can be attached to it.
     needs: bundle
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -80,7 +80,7 @@ jobs:
       - run: npm run package deb
       - run: npm run package:flatpak
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: flatpak-bundle
           path: build/*.flatpak

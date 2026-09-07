@@ -38,7 +38,8 @@ impl CommandRunner for ProcessRunner {
         // flash on screen every time a save is backed up.
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
+            // tokio's Command exposes creation_flags directly; the std CommandExt trait
+            // is not needed and importing it is an unused import.
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             command.creation_flags(CREATE_NO_WINDOW);
         }
