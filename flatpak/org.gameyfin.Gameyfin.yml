@@ -1,0 +1,136 @@
+# Flatpak manifest for the Gameyfin desktop client.
+#
+# The app is installed from the `.deb` that `npm run package` already produces, rather
+# than compiled inside the sandbox. Building Rust in a Flatpak needs the SDK's rust
+# extension plus fully vendored Cargo and npm dependencies (Flathub builds are offline),
+# which is a large amount of machinery for a build we already perform. Packaging the deb
+# keeps one build path for every Linux target.
+#
+# Note: Flathub *submission* would require a source build. This manifest targets
+# self-distribution: a `.flatpak` bundle attached to a GitHub release.
+app-id: org.gameyfin.Gameyfin
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+command: gameyfin-app
+separate-locales: false
+
+finish-args:
+  # Running Windows games uses the host's Wine through the sandbox helper, rather than a
+  # bundled copy: one runtime across the deb, rpm and Flatpak means one thing to install
+  # and one thing to diagnose.
+  - --talk-name=org.freedesktop.Flatpak
+
+  # Talking to a Gameyfin server, and the webview's own IPC.
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+
+  # Games need audio, controllers and the GPU.
+  - --socket=pulseaudio
+  - --device=all
+  - --allow=devel
+
+  # Without this, 32-bit Windows programs cannot run at all.
+  #
+  # Flatpak's seccomp filter only admits the i386 architecture when `multiarch` is
+  # granted, and blocks `modify_ldt`, which Wine needs to set up the segments 32-bit code
+  # runs in. The symptom is specific and deeply misleading: 64-bit Windows programs work
+  # perfectly, while every 32-bit one fails at `CreateProcess`, whereupon Wine falls back
+  # to ShellExecute and reports "Application could not be started", the same message it
+  # gives for a missing file. Wine cannot even load its own message resources to say why,
+  # so the reason prints empty next to `err:start:fatal_error FormatMessage failed`.
+  #
+  # This is not niche: Inno Setup's stub is 32-bit, and so is a large share of the Unity
+  # and older games people install. The identical Wine binary, prefix and executable run
+  # fine outside the sandbox, which is what makes it look like a packaging or file
+  # problem rather than a permission one.
+  - --allow=multiarch
+
+  # Games are downloaded, installed and launched from the user's own directories.
+  # Narrower access is not possible: the library root is chosen by the user at runtime.
+  - --filesystem=home
+  - --filesystem=xdg-download:create
+  - --filesystem=/run/media
+
+  # Wine and Proton prefixes, plus the Steam locations we register shortcuts into.
+  - --filesystem=~/.steam:rw
+  - --filesystem=~/.local/share/Steam:rw
+  - --filesystem=~/.var/app/com.valvesoftware.Steam:rw
+
+  # Tray icon, notifications, and the keychain that holds the device token.
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.secrets
+
+  - --env=PATH=/app/bin:/usr/bin
+
+  # WebKitGTK's DMA-BUF renderer sends buffer requests that some Wayland compositors
+  # reject, and a rejected request is fatal: the display connection is dropped and GDK
+  # aborts with `Error 71 (Protocol error)` before the window ever appears. Seen on
+  # Bazzite (Fedora Atomic, Plasma Wayland); it is not specific to that distribution.
+  #
+  # Disabling it costs the webview GPU-accelerated buffer sharing, which for a launcher
+  # UI is not measurable, and a slightly slower window is worth more than one that will
+  # not open. Users whose compositor handles it fine can drop it per machine with
+  # `flatpak override --user --unset-env=WEBKIT_DISABLE_DMABUF_RENDERER org.gameyfin.Gameyfin`
+  #, unset rather than set to 0, because WebKit tests several of these for presence
+  # rather than value.
+  - --env=WEBKIT_DISABLE_DMABUF_RENDERER=1
+
+modules:
+  # 7-Zip, for unpacking downloads.
+  #
+  # The GNOME runtime ships `bsdtar` and nothing else that reads RAR, and libarchive's RAR
+  # support is partial, which is why `RAR_TOOLS` ranks it last. On a normal distribution
+  # the app finds `unar` or `7z` on the host and never reaches that fallback; inside the
+  # sandbox there is no host to fall back to, so the Flatpak silently got the weakest
+  # extractor and produced files that were not what the archive contained.
+  #
+  # Bundling it keeps unpacking identical across every package format, the same reasoning
+  # that applies to the Wine runtime.
+  - name: sevenzip
+    buildsystem: simple
+    build-commands:
+      - cd CPP/7zip/Bundles/Alone2 && make -j ${FLATPAK_BUILDER_N_JOBS:-4} -f ../../cmpl_gcc.mak
+      - install -Dm755 CPP/7zip/Bundles/Alone2/b/g/7zz /app/bin/7zz
+    sources:
+      - type: archive
+        url: https://7-zip.org/a/7z2501-src.tar.xz
+        sha256: ed087f83ee789c1ea5f39c464c55a5c9d4008deb0efe900814f2df262b82c36e
+        # The tarball unpacks its contents directly, with no wrapping directory.
+        strip-components: 0
+
+  - name: gameyfin
+    buildsystem: simple
+    build-commands:
+      # Unpack the prebuilt deb.
+      - ar x gameyfin.deb
+      - tar -xf data.tar.gz
+      - install -Dm755 usr/bin/gameyfin-app /app/bin/gameyfin-app
+
+      # Flatpak requires the desktop file, icons and metainfo to be named after the
+      # app id, so everything is renamed from Tauri's own naming on the way in.
+      - install -Dm644 usr/share/applications/Gameyfin.desktop
+        /app/share/applications/org.gameyfin.Gameyfin.desktop
+      - desktop-file-edit --set-icon=org.gameyfin.Gameyfin
+        /app/share/applications/org.gameyfin.Gameyfin.desktop
+      # Iterating over what the deb actually contains, rather than a fixed list of sizes:
+      # a hard-coded size that is absent makes the loop exit non-zero and fails the build.
+      - |
+        set -e
+        for src in usr/share/icons/hicolor/*/apps/gameyfin-app.png; do
+          [ -f "$src" ] || continue
+          size=$(basename "$(dirname "$(dirname "$src")")")
+          install -Dm644 "$src" \
+            "/app/share/icons/hicolor/${size}/apps/org.gameyfin.Gameyfin.png"
+        done
+      - install -Dm644 org.gameyfin.Gameyfin.metainfo.xml
+        /app/share/metainfo/org.gameyfin.Gameyfin.metainfo.xml
+    sources:
+      - type: file
+        path: ../build/gameyfin.deb
+      - type: file
+        path: org.gameyfin.Gameyfin.metainfo.xml

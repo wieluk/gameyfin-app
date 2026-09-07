@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    /* The app owns the whole viewport; nothing here should scroll like a document. */
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* Window dragging is handled by Tauri's `data-tauri-drag-region` attribute, not by CSS.
+   `-webkit-app-region` is an Electron feature and does nothing here. */
+[data-tauri-drag-region] { cursor: default; }

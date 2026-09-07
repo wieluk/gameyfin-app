@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.gameyfin.Gameyfin</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>Gameyfin</name>
+  <summary>Play your Gameyfin library</summary>
+
+  <description>
+    <p>
+      A desktop client for a Gameyfin server. Browse your library, download and install
+      games, launch them, and keep your saves in sync across machines.
+    </p>
+    <p>
+      Windows games are run through wine.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">org.gameyfin.Gameyfin.desktop</launchable>
+
+  <url type="homepage">https://github.com/gameyfin/gameyfin-app</url>
+  <url type="bugtracker">https://github.com/gameyfin/gameyfin-app/issues</url>
+
+  <categories>
+    <category>Game</category>
+  </categories>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>gamepad</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">940</display_length>
+  </requires>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-09-06">
+      <description>
+        <p>First development release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

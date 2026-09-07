@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# tauri-action needs write access to create the draft release.
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: bundle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Tauri's Linux build needs the system WebKit/GTK development packages.
+      - name: Install Linux GUI dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev patchelf
+
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Gameyfin Desktop ${{ github.ref_name }}
+          releaseDraft: true
+
+  flatpak:
+    name: flatpak
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    # The draft release must exist before the bundle can be attached to it.
+    needs: bundle
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev patchelf \
+            flatpak flatpak-builder desktop-file-utils
+
+      - name: Add Flathub and install the GNOME runtime
+        run: |
+          flatpak remote-add --if-not-exists --user flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y --user flathub org.gnome.Platform//48 org.gnome.Sdk//48
+
+      - run: npm ci
+
+      # The Flatpak is assembled from the deb, so that has to exist first.
+      - run: npm run package deb
+      - run: npm run package:flatpak
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: build/*.flatpak
+
+      # Without this the Flatpak stays a 90-day CI artifact and never reaches users.
+      - name: Attach the Flatpak to the draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: gh release upload "$GITHUB_REF_NAME" build/*.flatpak --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
