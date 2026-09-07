@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Called by the release workflow, so a tag runs the same checks a push does.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always

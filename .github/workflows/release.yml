@@ -10,14 +10,20 @@ permissions:
   contents: write
 
 jobs:
+  # Nothing is built for release until the same checks a push runs have passed, on both
+  # platforms. A tag can point at any commit, so this is not redundant with the push run.
+  test:
+    uses: ./.github/workflows/ci.yml
+
   bundle:
     name: bundle (${{ matrix.os }})
+    needs: test
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -29,7 +35,7 @@ jobs:
 
       # Tauri's Linux build needs the system WebKit/GTK development packages.
       - name: Install Linux GUI dependencies
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -47,7 +53,7 @@ jobs:
 
   flatpak:
     name: flatpak
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     # The draft release must exist before the bundle can be attached to it.
     needs: bundle
