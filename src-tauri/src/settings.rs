@@ -150,6 +150,24 @@ pub struct Settings {
     /// Back up and upload after the game exits.
     #[serde(default = "on")]
     pub sync_saves_on_exit: bool,
+    /// Where synced saves are kept. Chosen explicitly rather than inferred, so it is always
+    /// clear which one is in use.
+    #[serde(default)]
+    pub save_backend: SaveBackend,
+    #[serde(default)]
+    pub save_folder: Option<String>,
+    #[serde(default)]
+    pub webdav_url: Option<String>,
+    #[serde(default)]
+    pub webdav_username: Option<String>,
+    /// Stored unencrypted, like the session cookies beside it. The settings screen says so
+    /// where the password is entered, rather than leaving it to be discovered.
+    #[serde(default)]
+    pub webdav_password: Option<String>,
+    /// How many versions a folder or WebDAV store keeps per game. A Gameyfin server owns
+    /// its own retention, so this does not apply there.
+    #[serde(default = "default_save_versions")]
+    pub save_max_versions: u32,
 }
 
 /// Executable names that are almost never the game. A default, not hard-coded, so it stays editable.
@@ -226,6 +244,22 @@ fn default_installer_memory_limit() -> u32 {
 
 /// Hand-written, not derived: a derived `Default` would zero `installer_memory_limit_mb`
 /// (the `#[serde(default)]` fns only run on deserialize), disabling the cap.
+/// Where synced saves are kept.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SaveBackend {
+    /// A Gameyfin server that supports save sync.
+    #[default]
+    Server,
+    /// Any directory: an rclone or Syncthing folder, a NextCloud client's folder, a mount.
+    Folder,
+    WebDav,
+}
+
+fn default_save_versions() -> u32 {
+    10
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -255,6 +289,12 @@ impl Default for Settings {
             save_sync_enabled: false,
             sync_saves_on_launch: true,
             sync_saves_on_exit: true,
+            save_backend: SaveBackend::default(),
+            save_folder: None,
+            webdav_url: None,
+            webdav_username: None,
+            webdav_password: None,
+            save_max_versions: default_save_versions(),
             extraction_password: None,
             ignored_executables: default_ignored_executables(),
             theme: Theme::default(),

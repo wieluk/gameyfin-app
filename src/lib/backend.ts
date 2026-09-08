@@ -195,6 +195,28 @@ export interface AppSettings {
   saveSyncEnabled: boolean;
   syncSavesOnLaunch: boolean;
   syncSavesOnExit: boolean;
+  saveBackend: SaveBackend;
+  saveFolder: string | null;
+  webdavUrl: string | null;
+  webdavUsername: string | null;
+  webdavPassword: string | null;
+  saveMaxVersions: number;
+}
+
+/** Where synced saves are kept. Chosen explicitly, never inferred. */
+export type SaveBackend = "server" | "folder" | "webdav";
+
+/** The Saves settings screen, saved as a whole. */
+export interface SaveSyncSettings {
+  enabled: boolean;
+  onLaunch: boolean;
+  onExit: boolean;
+  backend: SaveBackend;
+  folder: string | null;
+  webdavUrl: string | null;
+  webdavUsername: string | null;
+  webdavPassword: string | null;
+  maxVersions: number;
 }
 
 /** A download provider the server offers, with the one this client uses marked. */
@@ -319,7 +341,10 @@ export interface Backend {
     redirects: Array<[string, string]>,
   ): Promise<SaveSyncState>;
   deleteSaveVersion(gameId: number, saveId: string): Promise<void>;
-  setSaveSyncSettings(enabled: boolean, onLaunch: boolean, onExit: boolean): Promise<void>;
+  setSaveSyncSettings(settings: SaveSyncSettings): Promise<void>;
+  /** Checks the configured location answers. Returns a sentence to show the user. */
+  testSaveStore(): Promise<string>;
+  setSaveLocked(gameId: number, saveId: string, locked: boolean): Promise<void>;
 
   updateStatus(): Promise<UpdateStatus>;
   /** Returns what to tell the user; what happens next differs by package format. */
@@ -464,8 +489,10 @@ const tauriBackend: Backend = {
     invoke<SaveSyncState>("set_save_mapping", { gameId, crossOs, redirects }),
   deleteSaveVersion: (gameId, saveId) =>
     invoke<void>("delete_save_version", { gameId, saveId }),
-  setSaveSyncSettings: (enabled, onLaunch, onExit) =>
-    invoke<void>("set_save_sync_settings", { enabled, onLaunch, onExit }),
+  setSaveSyncSettings: (settings) => invoke<void>("set_save_sync_settings", { settings }),
+  testSaveStore: () => invoke<string>("test_save_store"),
+  setSaveLocked: (gameId, saveId, locked) =>
+    invoke<void>("set_save_locked", { gameId, saveId, locked }),
 
   updateStatus: () => invoke<UpdateStatus>("update_status"),
   installUpdate: () => invoke<string>("install_update"),
@@ -576,6 +603,12 @@ const mockBackend: Backend = {
     saveSyncEnabled: true,
     syncSavesOnLaunch: true,
     syncSavesOnExit: true,
+    saveBackend: "server" as SaveBackend,
+    saveFolder: null,
+    webdavUrl: null,
+    webdavUsername: null,
+    webdavPassword: null,
+    saveMaxVersions: 10,
   }),
   wineStatus: async () => ({
     installed: { version: "11.17", variant: "staging-wow64" as WineVariant, binary: "/tmp/wine" },
@@ -689,7 +722,11 @@ const mockBackend: Backend = {
   setSaveMapping: async () => ({ kind: "never-synced" }),
   deleteSaveVersion: async (gameId, saveId) =>
     console.info(`[mock] delete save ${saveId} of ${gameId}`),
-  setSaveSyncSettings: async (enabled) => console.info(`[mock] save sync ${enabled}`),
+  setSaveSyncSettings: async (settings) =>
+    console.info(`[mock] save sync ${settings.enabled} via ${settings.backend}`),
+  testSaveStore: async () => "Fixture location is reachable.",
+  setSaveLocked: async (gameId, saveId, locked) =>
+    console.info(`[mock] lock ${saveId} of ${gameId}: ${locked}`),
 
   updateStatus: async () => ({
     currentVersion: "0.1.0",

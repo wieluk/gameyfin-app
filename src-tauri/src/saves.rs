@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use gameyfin_api::saves::{SaveVersion, UploadOutcome};
+use gameyfin_core::save_store::{FolderStore, SaveStore, ServerStore, WebDavStore};
 use gameyfin_core::save_sync::{self, LocalSaveState, SaveSync, SaveSyncState};
 use gameyfin_core::{ConflictChoice, InstallLayout};
 use gameyfin_saves::config::{Redirect, RedirectKind};
@@ -16,6 +17,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{CommandError, CommandResult};
+use crate::settings::SaveBackend;
 use crate::state::AppState;
 
 /// One game's sync state, pushed so the UI updates in place rather than refetching.
@@ -293,13 +295,56 @@ async fn candidates(
     }
 }
 
-fn sync_for<'a>(
-    client: &'a gameyfin_api::GameyfinClient,
+/// Builds the store the user chose, or explains what is missing.
+///
+/// The choice is explicit rather than inferred from what happens to be reachable, so it is
+/// always clear which one is in use.
+async fn store_for(
+    state: &State<'_, AppState>,
+    settings: &crate::settings::Settings,
+) -> CommandResult<Box<dyn SaveStore>> {
+    let versions = settings.save_max_versions.max(1) as usize;
+
+    match settings.save_backend {
+        SaveBackend::Server => {
+            let client = state.client().await.ok_or(CommandError::NotConnected)?;
+            Ok(Box::new(ServerStore::new(client)))
+        }
+        SaveBackend::Folder => {
+            let folder = settings.save_folder.as_deref().unwrap_or("").trim();
+            if folder.is_empty() {
+                return Err(CommandError::Message(
+                    "No save folder is set. Choose one under Settings, Saves.".into(),
+                ));
+            }
+            Ok(Box::new(FolderStore::new(folder, versions)))
+        }
+        SaveBackend::WebDav => {
+            let url = settings.webdav_url.as_deref().unwrap_or("").trim();
+            if url.is_empty() {
+                return Err(CommandError::Message(
+                    "No WebDAV address is set. Add one under Settings, Saves.".into(),
+                ));
+            }
+            Ok(Box::new(WebDavStore::new(
+                url,
+                settings.webdav_username.clone(),
+                settings.webdav_password.clone(),
+                state.transfer_http().await,
+                versions,
+            )))
+        }
+    }
+}
+
+async fn sync_for(
+    state: &State<'_, AppState>,
     context: &GameContext,
     settings: &crate::settings::Settings,
-) -> SaveSync<'a> {
-    SaveSync::new(client, context.staging.clone())
-        .identified_as(settings.installation_id.clone(), hostname())
+) -> CommandResult<SaveSync> {
+    let store = store_for(state, settings).await?;
+    Ok(SaveSync::new(store, context.staging.clone())
+        .identified_as(settings.installation_id.clone(), hostname()))
 }
 
 /// A human-readable name for this machine, shown in the save history.
@@ -406,11 +451,8 @@ pub async fn state_of(
         });
     }
 
-    let client = state.client().await.ok_or(CommandError::NotConnected)?;
-    let remote = match sync_for(&client, &context, &settings)
-        .newest_remote(game_id)
-        .await
-    {
+    let sync = sync_for(state, &context, &settings).await?;
+    let remote = match sync.newest_remote(game_id).await {
         Ok(remote) => remote,
         // Both mean the server cannot store saves; the UI tells them apart so it can
         // advise either "ask your admin" or "set up a cloud folder instead".
@@ -454,8 +496,9 @@ pub async fn list_save_versions(
     state: State<'_, AppState>,
     game_id: i64,
 ) -> CommandResult<Vec<SaveVersion>> {
-    let client = state.client().await.ok_or(CommandError::NotConnected)?;
-    Ok(client.list_saves(game_id).await?)
+    let settings = state.settings().await;
+    let store = store_for(&state, &settings).await?;
+    Ok(store.list(game_id).await?)
 }
 
 /// Backs up and uploads. Returns the resulting state, including a conflict.
@@ -490,8 +533,7 @@ async fn do_backup(
         return Ok(SaveSyncState::NeverSynced);
     }
 
-    let client = state.client().await.ok_or(CommandError::NotConnected)?;
-    let sync = sync_for(&client, &context, &settings);
+    let sync = sync_for(state, &context, &settings).await?;
     let base = context.record_saves.last_synced_save_id.clone();
 
     let outcome = sync
@@ -563,12 +605,11 @@ async fn do_restore(
         });
     };
 
-    let client = state.client().await.ok_or(CommandError::NotConnected)?;
-    let sync = sync_for(&client, &context, &settings);
+    let sync = sync_for(state, &context, &settings).await?;
 
     let version = match save_id {
-        Some(id) => client
-            .list_saves(game_id)
+        Some(id) => sync
+            .versions(game_id)
             .await?
             .into_iter()
             .find(|v| v.id == id)
@@ -663,19 +704,75 @@ pub async fn set_save_mapping(
     state_of(&app, &state, game_id).await
 }
 
+/// Everything the Saves settings screen owns, sent as one payload because the screen is
+/// saved as a whole.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSyncSettings {
+    pub enabled: bool,
+    pub on_launch: bool,
+    pub on_exit: bool,
+    pub backend: SaveBackend,
+    pub folder: Option<String>,
+    pub webdav_url: Option<String>,
+    pub webdav_username: Option<String>,
+    pub webdav_password: Option<String>,
+    pub max_versions: u32,
+}
+
+fn blank_to_none(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 #[tauri::command]
 pub async fn set_save_sync_settings(
     state: State<'_, AppState>,
-    enabled: bool,
-    on_launch: bool,
-    on_exit: bool,
+    settings: SaveSyncSettings,
 ) -> CommandResult<()> {
-    crate::ipc::mutate_settings(&state, |settings| {
-        settings.save_sync_enabled = enabled;
-        settings.sync_saves_on_launch = on_launch;
-        settings.sync_saves_on_exit = on_exit;
+    let backend = settings.backend;
+
+    crate::ipc::mutate_settings(&state, move |current| {
+        current.save_sync_enabled = settings.enabled;
+        current.sync_saves_on_launch = settings.on_launch;
+        current.sync_saves_on_exit = settings.on_exit;
+        current.save_backend = backend;
+        current.save_folder = blank_to_none(settings.folder);
+        current.webdav_url = blank_to_none(settings.webdav_url);
+        current.webdav_username = blank_to_none(settings.webdav_username);
+        current.webdav_password = blank_to_none(settings.webdav_password);
+        current.save_max_versions = settings.max_versions.max(1);
     })
     .await
+}
+
+/// Checks the configured save location answers, so a wrong path or a bad password is caught
+/// at setup rather than after a play session.
+#[tauri::command]
+pub async fn test_save_store(state: State<'_, AppState>) -> CommandResult<String> {
+    let settings = state.settings().await;
+    let store = store_for(&state, &settings).await?;
+    let description = store.describe();
+
+    match store.games().await {
+        Ok(games) if settings.save_backend != SaveBackend::Server => Ok(format!(
+            "{description} is reachable, holding saves for {} game(s).",
+            games.len()
+        )),
+        // A server has no "which games" route, so reaching it at all is the check.
+        Ok(_) => Ok(format!("{description} is reachable.")),
+        Err(gameyfin_api::ApiError::SaveSyncUnsupported) => Err(CommandError::Message(
+            "That server does not support save sync. Use a folder or WebDAV instead.".into(),
+        )),
+        Err(gameyfin_api::ApiError::SaveSyncDisabled) => Err(CommandError::Message(
+            "Save sync is turned off on that server. An administrator can enable it.".into(),
+        )),
+        Err(e) if e.is_auth() => Err(CommandError::Message(
+            "Those credentials were refused.".into(),
+        )),
+        Err(e) => Err(CommandError::Message(format!("Could not reach it: {e}"))),
+    }
 }
 
 #[tauri::command]
@@ -684,8 +781,23 @@ pub async fn delete_save_version(
     game_id: i64,
     save_id: String,
 ) -> CommandResult<()> {
-    let client = state.client().await.ok_or(CommandError::NotConnected)?;
-    client.delete_save(game_id, &save_id).await?;
+    let settings = state.settings().await;
+    let store = store_for(&state, &settings).await?;
+    store.delete(game_id, &save_id).await?;
+    Ok(())
+}
+
+/// Marks a version exempt from retention pruning, or lifts that.
+#[tauri::command]
+pub async fn set_save_locked(
+    state: State<'_, AppState>,
+    game_id: i64,
+    save_id: String,
+    locked: bool,
+) -> CommandResult<()> {
+    let settings = state.settings().await;
+    let store = store_for(&state, &settings).await?;
+    store.set_locked(game_id, &save_id, locked).await?;
     Ok(())
 }
 

@@ -325,7 +325,9 @@ pub fn run() {
             saves::set_save_title,
             saves::set_save_mapping,
             saves::delete_save_version,
+            saves::set_save_locked,
             saves::set_save_sync_settings,
+            saves::test_save_store,
             updater::update_status,
             updater::install_update,
         ])

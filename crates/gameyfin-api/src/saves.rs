@@ -264,6 +264,22 @@ impl GameyfinClient {
         }
     }
 
+    /// Marks a version exempt from retention pruning.
+    ///
+    /// Metadata rather than bytes, so this is the one save operation that goes over Hilla.
+    pub async fn set_save_locked(&self, save_id: &str, locked: bool) -> ApiResult<()> {
+        let id: i64 = save_id
+            .parse()
+            .map_err(|_| ApiError::Other(format!("not a server save id: {save_id}")))?;
+        self.call::<Option<serde_json::Value>>(
+            "SaveSyncEndpoint",
+            "setLocked",
+            serde_json::json!({ "saveId": id, "locked": locked }),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn delete_save(&self, game_id: i64, save_id: &str) -> ApiResult<()> {
         self.delete_at(&format!("/saves/game/{game_id}/{save_id}"))
             .await

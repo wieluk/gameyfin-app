@@ -6,7 +6,9 @@
 use std::path::{Path, PathBuf};
 
 use gameyfin_api::saves::{SaveVersion, UploadMetadata, UploadOutcome};
-use gameyfin_api::{ApiError, GameyfinClient};
+use gameyfin_api::ApiError;
+
+use crate::save_store::SaveStore;
 use gameyfin_saves::{SavePlatform, SaveResult};
 use serde::{Deserialize, Serialize};
 
@@ -254,22 +256,27 @@ fn collect_files(root: &Path, dir: &Path, into: &mut Vec<PathBuf>) -> std::io::R
 }
 
 /// Performs the transfers the decisions call for.
-pub struct SaveSync<'a> {
-    client: &'a GameyfinClient,
+pub struct SaveSync {
+    store: Box<dyn SaveStore>,
     /// Holds the per-game staging directories and the packed archives beside them.
     saves_root: PathBuf,
     installation_id: Option<String>,
     device_name: Option<String>,
 }
 
-impl<'a> SaveSync<'a> {
-    pub fn new(client: &'a GameyfinClient, saves_root: impl Into<PathBuf>) -> Self {
+impl SaveSync {
+    pub fn new(store: Box<dyn SaveStore>, saves_root: impl Into<PathBuf>) -> Self {
         Self {
-            client,
+            store,
             saves_root: saves_root.into(),
             installation_id: None,
             device_name: None,
         }
+    }
+
+    /// Which store this is syncing against, for the UI.
+    pub fn describe(&self) -> String {
+        self.store.describe()
     }
 
     pub fn identified_as(
@@ -282,10 +289,15 @@ impl<'a> SaveSync<'a> {
         self
     }
 
-    /// The newest version the server holds, or None when there are none.
+    /// The newest version the store holds, or None when there are none.
     pub async fn newest_remote(&self, game_id: i64) -> Result<Option<SaveVersion>, ApiError> {
-        // The endpoint returns newest first.
-        Ok(self.client.list_saves(game_id).await?.into_iter().next())
+        // Every store lists newest first.
+        Ok(self.store.list(game_id).await?.into_iter().next())
+    }
+
+    /// Every version of a game, newest first.
+    pub async fn versions(&self, game_id: i64) -> Result<Vec<SaveVersion>, ApiError> {
+        self.store.list(game_id).await
     }
 
     /// Packs the staged backup and uploads it. `base` is the version it was built on.
@@ -314,15 +326,13 @@ impl<'a> SaveSync<'a> {
             force,
         };
 
-        self.client.upload_save(game_id, &archive, &metadata).await
+        self.store.upload(game_id, &archive, &metadata).await
     }
 
     /// Fetches a version and unpacks it, ready for Ludusavi to restore from.
     pub async fn fetch(&self, game_id: i64, save_id: &str) -> Result<PathBuf, ApiError> {
         let archive = archive_path(&self.saves_root, game_id);
-        self.client
-            .download_save(game_id, save_id, &archive)
-            .await?;
+        self.store.fetch(game_id, save_id, &archive).await?;
 
         let staging = self.staging_for(game_id);
         unpack(&archive, &staging).map_err(|e| ApiError::Other(e.to_string()))?;

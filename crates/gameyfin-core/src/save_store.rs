@@ -33,6 +33,9 @@ pub trait SaveStore: Send + Sync {
 
     async fn delete(&self, game_id: i64, version_id: &str) -> StoreResult<()>;
 
+    /// Marks a version exempt from retention pruning.
+    async fn set_locked(&self, game_id: i64, version_id: &str, locked: bool) -> StoreResult<()>;
+
     /// Which games this store holds anything for. Used by migration.
     async fn games(&self) -> StoreResult<Vec<i64>>;
 
@@ -76,6 +79,10 @@ impl SaveStore for ServerStore {
 
     async fn delete(&self, game_id: i64, version_id: &str) -> StoreResult<()> {
         self.client.delete_save(game_id, version_id).await
+    }
+
+    async fn set_locked(&self, _game_id: i64, version_id: &str, locked: bool) -> StoreResult<()> {
+        self.client.set_save_locked(version_id, locked).await
     }
 
     async fn games(&self) -> StoreResult<Vec<i64>> {
@@ -136,6 +143,15 @@ impl FolderStore {
         self.game_dir(game_id).join(format!("{version_id}.json"))
     }
 
+    /// Locking writes a companion file rather than editing the sidecar.
+    ///
+    /// Rewriting a sidecar is the one thing this layout avoids: a replicating tool that
+    /// produced a conflicted copy of one would leave two files carrying the same id, and
+    /// the version would list twice. Creating and deleting a marker never has that problem.
+    fn marker_for(&self, game_id: i64, version_id: &str) -> PathBuf {
+        self.game_dir(game_id).join(format!("{version_id}.locked"))
+    }
+
     /// Removes the oldest unlocked versions past the limit.
     ///
     /// A locked version does not occupy a slot, matching how the server prunes, so pinning
@@ -165,26 +181,32 @@ impl SaveStore for FolderStore {
 
         let mut entries = tokio::fs::read_dir(&dir).await.map_err(other)?;
         let mut versions = Vec::new();
+        let mut locked = std::collections::HashSet::new();
 
         while let Some(entry) = entries.next_entry().await.map_err(other)? {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let text = match tokio::fs::read_to_string(&path).await {
-                Ok(text) => text,
-                // A sidecar half-written by another machine's sync is skipped rather than
-                // failing the whole listing.
-                Err(_) => continue,
-            };
-            if let Ok(sidecar) = serde_json::from_str::<Sidecar>(&text) {
-                versions.push(sidecar.version);
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("locked") => {
+                    if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
+                        locked.insert(id.to_string());
+                    }
+                }
+                Some("json") => {
+                    let text = match tokio::fs::read_to_string(&path).await {
+                        Ok(text) => text,
+                        // A sidecar half-written by another machine's sync is skipped
+                        // rather than failing the whole listing.
+                        Err(_) => continue,
+                    };
+                    if let Ok(sidecar) = serde_json::from_str::<Sidecar>(&text) {
+                        versions.push(sidecar.version);
+                    }
+                }
+                _ => {}
             }
         }
 
-        // Ids lead with fixed-width epoch millis, so this is newest first.
-        versions.sort_by(|a, b| b.id.cmp(&a.id));
-        Ok(versions)
+        Ok(finish_listing(versions, &locked))
     }
 
     async fn upload(
@@ -269,6 +291,20 @@ impl SaveStore for FolderStore {
     async fn delete(&self, game_id: i64, version_id: &str) -> StoreResult<()> {
         let _ = tokio::fs::remove_file(self.archive_for(game_id, version_id)).await;
         let _ = tokio::fs::remove_file(self.sidecar_for(game_id, version_id)).await;
+        let _ = tokio::fs::remove_file(self.marker_for(game_id, version_id)).await;
+        Ok(())
+    }
+
+    async fn set_locked(&self, game_id: i64, version_id: &str, locked: bool) -> StoreResult<()> {
+        let marker = self.marker_for(game_id, version_id);
+        if locked {
+            tokio::fs::create_dir_all(self.game_dir(game_id))
+                .await
+                .map_err(other)?;
+            tokio::fs::write(&marker, b"").await.map_err(other)?;
+        } else {
+            let _ = tokio::fs::remove_file(&marker).await;
+        }
         Ok(())
     }
 
@@ -294,6 +330,24 @@ impl SaveStore for FolderStore {
     fn describe(&self) -> String {
         format!("Folder at {}", self.root.display())
     }
+}
+
+/// Applies lock markers, drops duplicate ids and orders newest first.
+///
+/// De-duplication is insurance: a replicating tool that copies a sidecar under a new name
+/// leaves two files carrying one id, and a version listed twice would let the user delete
+/// something that appears to still be there.
+fn finish_listing(
+    mut versions: Vec<SaveVersion>,
+    locked: &std::collections::HashSet<String>,
+) -> Vec<SaveVersion> {
+    for version in &mut versions {
+        version.locked = version.locked || locked.contains(&version.id);
+    }
+    // Ids lead with fixed-width epoch millis, so this is newest first.
+    versions.sort_by(|a, b| b.id.cmp(&a.id));
+    versions.dedup_by(|a, b| a.id == b.id);
+    versions
 }
 
 fn iso8601_now() -> String {
@@ -459,6 +513,12 @@ impl SaveStore for WebDavStore {
         let dir = game_id.to_string();
         let names = self.children(&dir).await?;
 
+        let locked: std::collections::HashSet<String> = names
+            .iter()
+            .filter_map(|name| name.strip_suffix(".locked"))
+            .map(str::to_string)
+            .collect();
+
         let mut versions = Vec::new();
         for name in names.iter().filter(|n| n.ends_with(".json")) {
             let response = self
@@ -473,8 +533,7 @@ impl SaveStore for WebDavStore {
             }
         }
 
-        versions.sort_by(|a, b| b.id.cmp(&a.id));
-        Ok(versions)
+        Ok(finish_listing(versions, &locked))
     }
 
     async fn upload(
@@ -581,7 +640,7 @@ impl SaveStore for WebDavStore {
     }
 
     async fn delete(&self, game_id: i64, version_id: &str) -> StoreResult<()> {
-        for extension in ["zip", "json"] {
+        for extension in ["zip", "json", "locked"] {
             let _ = self
                 .request(
                     reqwest::Method::DELETE,
@@ -590,6 +649,29 @@ impl SaveStore for WebDavStore {
                 .await;
         }
         Ok(())
+    }
+
+    async fn set_locked(&self, game_id: i64, version_id: &str, locked: bool) -> StoreResult<()> {
+        let path = format!("{game_id}/{version_id}.locked");
+        let response = if locked {
+            let req = self.http.put(self.url(&path)).body(Vec::new());
+            self.authorized(req)
+                .send()
+                .await
+                .map_err(ApiError::Transport)?
+        } else {
+            self.request(reqwest::Method::DELETE, &path).await?
+        };
+
+        // Unlocking something already unlocked is a 404, which is the state we wanted.
+        if response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        Err(ApiError::Status {
+            endpoint: "webdav lock".into(),
+            status: response.status().as_u16(),
+            body: String::new(),
+        })
     }
 
     async fn games(&self) -> StoreResult<Vec<i64>> {
@@ -905,6 +987,89 @@ mod folder_tests {
         std::fs::write(root.join("42/0000000000001_device-a.zip"), b"PK\x03\x04").unwrap();
 
         assert!(store.list(42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn locking_writes_a_marker_and_survives_pruning() {
+        let root = scratch("lockmarker");
+        let store = store_with(&root, 1).await;
+        let file = archive(&root, b"PK\x03\x04one");
+
+        let first = match store
+            .upload(42, &file, &meta("keep-me", None, true))
+            .await
+            .unwrap()
+        {
+            UploadOutcome::Stored(v) => v,
+            other => panic!("got {other:?}"),
+        };
+        store.set_locked(42, &first.id, true).await.unwrap();
+        assert!(root.join(format!("42/{}.locked", first.id)).exists());
+
+        let listed = store.list(42).await.unwrap();
+        assert!(listed[0].locked, "the marker is reflected in the listing");
+
+        // A limit of one, so an unlocked version in its place would have been pruned.
+        tokio::time::sleep(std::time::Duration::from_millis(3)).await;
+        store
+            .upload(42, &file, &meta("newer", None, true))
+            .await
+            .unwrap();
+
+        let hashes: Vec<_> = store
+            .list(42)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|v| v.content_hash)
+            .collect();
+        assert!(
+            hashes.contains(&"keep-me".to_string()),
+            "locked survived: {hashes:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unlocking_removes_the_marker() {
+        let root = scratch("unlock");
+        let store = store_with(&root, 5).await;
+        let file = archive(&root, b"PK\x03\x04one");
+        let stored = match store
+            .upload(42, &file, &meta("aaa", None, false))
+            .await
+            .unwrap()
+        {
+            UploadOutcome::Stored(v) => v,
+            other => panic!("got {other:?}"),
+        };
+
+        store.set_locked(42, &stored.id, true).await.unwrap();
+        store.set_locked(42, &stored.id, false).await.unwrap();
+
+        assert!(!root.join(format!("42/{}.locked", stored.id)).exists());
+        assert!(!store.list(42).await.unwrap()[0].locked);
+    }
+
+    #[tokio::test]
+    async fn a_duplicated_sidecar_lists_the_version_once() {
+        // What a replicating tool leaves behind: the same record under a second name. Two
+        // entries for one id would let the user delete something that still appears present.
+        let root = scratch("dupe");
+        let store = store_with(&root, 5).await;
+        let file = archive(&root, b"PK\x03\x04one");
+        let stored = match store
+            .upload(42, &file, &meta("aaa", None, false))
+            .await
+            .unwrap()
+        {
+            UploadOutcome::Stored(v) => v,
+            other => panic!("got {other:?}"),
+        };
+
+        let original = std::fs::read(root.join(format!("42/{}.json", stored.id))).unwrap();
+        std::fs::write(root.join("42/0000000000001_conflicted copy.json"), original).unwrap();
+
+        assert_eq!(1, store.list(42).await.unwrap().len());
     }
 
     #[tokio::test]

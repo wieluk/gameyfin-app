@@ -8,6 +8,8 @@ import {
   backend,
   isMockBackend,
   type PrefixEntry,
+  type SaveBackend,
+  type SaveSyncSettings,
   type Theme,
   type WineProgress,
   type WineVariant,
@@ -1236,43 +1238,207 @@ function PathRow({
   );
 }
 
-/** Save sync, off until the user opts in: it uploads their files to a server. */
+/** Save sync, off until the user opts in: it copies their files somewhere else. */
 function SavesSection() {
   const settings = useAppSettings();
-  const enabled = settings.data?.saveSyncEnabled ?? false;
-  const onLaunch = settings.data?.syncSavesOnLaunch ?? true;
-  const onExit = settings.data?.syncSavesOnExit ?? true;
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  async function update(next: { enabled?: boolean; onLaunch?: boolean; onExit?: boolean }) {
-    await backend.setSaveSyncSettings(
-      next.enabled ?? enabled,
-      next.onLaunch ?? onLaunch,
-      next.onExit ?? onExit,
-    );
+  const data = settings.data;
+  const active: SaveBackend = data?.saveBackend ?? "server";
+
+  async function update(next: Partial<SaveSyncSettings>) {
+    if (!data) return;
+    setResult(null);
+    await backend.setSaveSyncSettings({
+      enabled: data.saveSyncEnabled,
+      onLaunch: data.syncSavesOnLaunch,
+      onExit: data.syncSavesOnExit,
+      backend: data.saveBackend,
+      folder: data.saveFolder,
+      webdavUrl: data.webdavUrl,
+      webdavUsername: data.webdavUsername,
+      webdavPassword: data.webdavPassword,
+      maxVersions: data.saveMaxVersions,
+      ...next,
+    });
     await settings.refetch();
+  }
+
+  async function test() {
+    setTesting(true);
+    setResult(null);
+    try {
+      setResult({ ok: true, message: await backend.testSaveStore() });
+    } catch (error) {
+      setResult({ ok: false, message: messageOf(error) });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function browse() {
+    const chosen = await backend.pickFolder(data?.saveFolder ?? undefined);
+    if (chosen) await update({ folder: chosen });
   }
 
   return (
     <>
       <Check
-        label="Sync my saves with the server"
-        hint="Backs up your saves after you play so another PC can pick them up. Your server has to have save sync turned on."
-        checked={enabled}
+        label="Sync my saves"
+        hint="Backs up your saves after you play so another PC can pick them up."
+        checked={data?.saveSyncEnabled ?? false}
         onChange={(next) => update({ enabled: next })}
       />
       <Check
         label="Restore before a game starts"
         hint="Fetches a newer save from another PC before launching, so you carry on where you left off."
-        checked={onLaunch}
+        checked={data?.syncSavesOnLaunch ?? true}
         onChange={(next) => update({ onLaunch: next })}
       />
       <Check
         label="Back up after a game closes"
         hint="Uploads your save when you finish playing. Nothing is uploaded if it has not changed."
-        checked={onExit}
+        checked={data?.syncSavesOnExit ?? true}
         onChange={(next) => update({ onExit: next })}
       />
+
+      <div className="mt-4 flex flex-col gap-2">
+        <p className="text-xs font-medium text-foreground/70">Where saves are kept</p>
+        {(
+          [
+            ["server", "Gameyfin server", "Needs a server with save sync turned on."],
+            ["folder", "A folder", "Any folder something else syncs: Syncthing, rclone, a NextCloud or Dropbox folder."],
+            ["webdav", "WebDAV", "A NextCloud, ownCloud or other WebDAV share, without mounting it first."],
+          ] as Array<[SaveBackend, string, string]>
+        ).map(([id, label, hint]) => (
+          <label key={id} className="flex cursor-pointer items-start gap-2">
+            <input
+              type="radio"
+              name="save-backend"
+              className="mt-1"
+              checked={active === id}
+              onChange={() => update({ backend: id })}
+            />
+            <span>
+              <span className="text-sm">{label}</span>
+              <span className="block text-[11px] text-foreground/50">{hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+
+      {active === "folder" && (
+        <div className="mt-3 flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <input
+              className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content1 px-3 py-1.5 text-xs"
+              placeholder="No folder chosen"
+              readOnly
+              value={data?.saveFolder ?? ""}
+            />
+            <button
+              type="button"
+              onClick={browse}
+              className="rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200"
+            >
+              Browse
+            </button>
+          </div>
+          {/* The sandbox only reaches the home directory and removable media, the same
+              limit the games folder already has. */}
+          <p className="text-[11px] text-foreground/50">
+            In the Flatpak build the folder has to be inside your home directory.
+          </p>
+        </div>
+      )}
+
+      {active === "webdav" && (
+        <div className="mt-3 flex flex-col gap-2">
+          <Field
+            label="Address"
+            placeholder="https://cloud.example.com/remote.php/dav/files/me/saves"
+            value={data?.webdavUrl ?? ""}
+            onCommit={(value) => update({ webdavUrl: value })}
+          />
+          <Field
+            label="Username"
+            value={data?.webdavUsername ?? ""}
+            onCommit={(value) => update({ webdavUsername: value })}
+          />
+          <Field
+            label="Password"
+            type="password"
+            value={data?.webdavPassword ?? ""}
+            onCommit={(value) => update({ webdavPassword: value })}
+          />
+          <p className="text-[11px] text-warning-600">
+            This password is stored unencrypted in this PC's settings file. Use an app
+            password rather than your account password if your server offers one.
+          </p>
+        </div>
+      )}
+
+      {active !== "server" && (
+        <div className="mt-3">
+          <Field
+            label="Versions to keep per game"
+            type="number"
+            value={String(data?.saveMaxVersions ?? 10)}
+            onCommit={(value) => update({ maxVersions: Math.max(1, Number(value) || 10) })}
+          />
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={test}
+          disabled={testing}
+          className="rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
+        >
+          {testing ? "Checking..." : "Test connection"}
+        </button>
+        {result && (
+          <span className={`text-xs ${result.ok ? "text-success-600" : "text-danger"}`}>
+            {result.message}
+          </span>
+        )}
+      </div>
     </>
+  );
+}
+
+/** A labelled text box that saves when you leave it or press Enter, not on every keystroke. */
+function Field({
+  label,
+  value,
+  onCommit,
+  type = "text",
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onCommit: (value: string) => void;
+  type?: string;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[11px] text-foreground/60">{label}</span>
+      <input
+        type={type}
+        className="rounded-lg border border-default-200 bg-content1 px-3 py-1.5 text-xs"
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => draft !== value && onCommit(draft)}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      />
+    </label>
   );
 }
 
