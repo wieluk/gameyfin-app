@@ -18,6 +18,9 @@ use crate::error::{CoreError, CoreResult};
 /// Lutris and Bottles, published per release with checksums.
 const RELEASES_API: &str = "https://api.github.com/repos/Kron4ek/Wine-Builds/releases/latest";
 
+/// The same feed, listed, so a specific version can be chosen rather than only the newest.
+const RELEASES_LIST_API: &str = "https://api.github.com/repos/Kron4ek/Wine-Builds/releases";
+
 /// Marker recording what is installed, so the version can be shown without unpacking.
 const MARKER: &str = ".gameyfin-wine.json";
 
@@ -102,6 +105,8 @@ pub struct WineStatus {
     /// `None` when the release feed could not be reached; the UI says so rather than
     /// claiming the installed build is current.
     pub latest: Option<WineRelease>,
+    /// Recent versions offering this variant, newest first, for picking an older one.
+    pub available: Vec<String>,
 }
 
 impl WineStatus {
@@ -141,14 +146,60 @@ fn binary_in(dir: &Path) -> PathBuf {
 }
 
 /// Look up the latest published build for a variant.
+/// Recent versions that publish a build for this variant, newest first.
+pub async fn available_versions(
+    http: &reqwest::Client,
+    variant: WineVariant,
+    limit: usize,
+) -> CoreResult<Vec<String>> {
+    let feed: Vec<serde_json::Value> = http
+        .get(format!("{RELEASES_LIST_API}?per_page={limit}"))
+        .header(reqwest::header::USER_AGENT, "Gameyfin-Desktop")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    Ok(feed
+        .into_iter()
+        .filter_map(|entry| {
+            let version = entry.get("tag_name")?.as_str()?.to_string();
+            // Only versions that actually ship this variant are worth offering.
+            let wanted = format!("wine-{version}-{}.tar.xz", variant.asset_suffix());
+            let has_build = entry.get("assets")?.as_array()?.iter().any(|a| {
+                a.get("name").and_then(serde_json::Value::as_str) == Some(wanted.as_str())
+            });
+            has_build.then_some(version)
+        })
+        .collect())
+}
+
 pub async fn latest_release(
     http: &reqwest::Client,
     variant: WineVariant,
 ) -> CoreResult<WineRelease> {
+    release_from(http, variant, RELEASES_API.to_string()).await
+}
+
+/// One specific version, for a user who has pinned it.
+pub async fn release_for(
+    http: &reqwest::Client,
+    variant: WineVariant,
+    version: &str,
+) -> CoreResult<WineRelease> {
+    release_from(http, variant, format!("{RELEASES_LIST_API}/tags/{version}")).await
+}
+
+async fn release_from(
+    http: &reqwest::Client,
+    variant: WineVariant,
+    endpoint: String,
+) -> CoreResult<WineRelease> {
     // GitHub rejects API requests without a user agent, with a 403 that looks like a
     // permissions problem rather than a missing header.
     let response: serde_json::Value = http
-        .get(RELEASES_API)
+        .get(endpoint)
         .header(reqwest::header::USER_AGENT, "Gameyfin-Desktop")
         .send()
         .await?
@@ -428,12 +479,14 @@ mod tests {
         let same = WineStatus {
             installed: Some(installed("11.17", WineVariant::StagingWow64)),
             latest: Some(release("11.17", WineVariant::StagingWow64)),
+            available: Vec::new(),
         };
         assert!(!same.update_available());
 
         let newer = WineStatus {
             installed: Some(installed("11.16", WineVariant::StagingWow64)),
             latest: Some(release("11.17", WineVariant::StagingWow64)),
+            available: Vec::new(),
         };
         assert!(newer.update_available());
 
@@ -441,6 +494,7 @@ mod tests {
         let switched = WineStatus {
             installed: Some(installed("11.17", WineVariant::StagingWow64)),
             latest: Some(release("11.17", WineVariant::Staging)),
+            available: Vec::new(),
         };
         assert!(switched.update_available());
 
@@ -448,6 +502,7 @@ mod tests {
         let offline = WineStatus {
             installed: Some(installed("11.17", WineVariant::StagingWow64)),
             latest: None,
+            available: Vec::new(),
         };
         assert!(!offline.update_available());
     }

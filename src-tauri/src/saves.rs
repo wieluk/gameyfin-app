@@ -210,8 +210,14 @@ async fn ludusavi_for(
     context: &GameContext,
 ) -> CommandResult<LudusaviSession> {
     let guard = state.ludusavi_lock().lock_owned().await;
-    let binary = ludusavi_binary(app)?;
-    let config_dir = state.config_dir().await.join("ludusavi");
+    let app_config = state.config_dir().await;
+    // A version the user installed wins over the one bundled with the app, which is
+    // read-only in a Flatpak and on a system install and so can never be updated in place.
+    let binary = match gameyfin_core::save_tool::installed(&app_config) {
+        Some(installed) => installed.binary,
+        None => ludusavi_binary(app)?,
+    };
+    let config_dir = app_config.join("ludusavi");
 
     let mut builder = ConfigBuilder::new(&context.staging)
         .strategy(context.strategy)
@@ -934,6 +940,152 @@ pub async fn set_save_locked(
     let settings = state.settings().await;
     let store = store_for(&state, &settings).await?;
     store.set_locked(game_id, &save_id, locked).await?;
+    Ok(())
+}
+
+// --- The backup helper itself --------------------------------------------------------
+
+/// Download progress, in the shape the settings screen expects.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolProgress {
+    received_bytes: u64,
+    total_bytes: u64,
+    bytes_per_second: f64,
+}
+
+/// The version bundled with this build, read from the sidecar rather than assumed.
+async fn bundled_version(app: &AppHandle) -> Option<String> {
+    let binary = ludusavi_binary(app).ok()?;
+    let output = tokio::process::Command::new(&binary)
+        .arg("--version")
+        .output()
+        .await
+        .ok()?;
+
+    // "ludusavi 0.31.0"; the releases are tagged with a leading v.
+    let text = String::from_utf8_lossy(&output.stdout);
+    let version = text.split_whitespace().nth(1)?.trim().to_string();
+    Some(if version.starts_with('v') {
+        version
+    } else {
+        format!("v{version}")
+    })
+}
+
+#[tauri::command]
+pub async fn save_tool_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<gameyfin_core::save_tool::SaveToolStatus> {
+    let config_dir = state.config_dir().await;
+    let installed = gameyfin_core::save_tool::installed(&config_dir);
+    let bundled = bundled_version(&app).await;
+
+    // An unreachable feed must not stop the screen showing what is already installed.
+    let releases =
+        match gameyfin_core::save_tool::releases(&state.http().await, crate::ipc::RELEASE_CHOICES)
+            .await
+        {
+            Ok(releases) => releases,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not check for a save helper update");
+                Vec::new()
+            }
+        };
+
+    Ok(gameyfin_core::save_tool::SaveToolStatus {
+        installed,
+        bundled,
+        available: releases.iter().map(|r| r.version.clone()).collect(),
+        latest: releases.into_iter().next(),
+    })
+}
+
+/// Installs a version of the backup helper, or the newest when none is named.
+#[tauri::command]
+pub async fn install_save_tool(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    version: Option<String>,
+) -> CommandResult<gameyfin_core::save_tool::InstalledSaveTool> {
+    let config_dir = state.config_dir().await;
+    let releases =
+        gameyfin_core::save_tool::releases(&state.http().await, crate::ipc::RELEASE_CHOICES)
+            .await
+            .map_err(|e| {
+                CommandError::Message(format!("could not look up the save helper: {e}"))
+            })?;
+
+    let release = match &version {
+        Some(wanted) => releases
+            .into_iter()
+            .find(|r| &r.version == wanted)
+            .ok_or_else(|| {
+                CommandError::Message(format!("no such save helper version: {wanted}"))
+            })?,
+        None => releases
+            .into_iter()
+            .next()
+            .ok_or_else(|| CommandError::Message("no save helper release was found".into()))?,
+    };
+
+    tracing::info!(
+        version = %release.version,
+        size_bytes = release.size_bytes,
+        verified = release.sha256.is_some(),
+        "installing the save helper"
+    );
+
+    // The transfer pool, not the general one: that carries a whole-request timeout a
+    // multi-megabyte download would trip.
+    let downloader = gameyfin_core::Downloader::new(state.transfer_http().await);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let pump = {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+            while let Some((received, total, rate)) = rx.recv().await {
+                if last.elapsed() >= std::time::Duration::from_millis(200) {
+                    last = std::time::Instant::now();
+                    let _ = app.emit(
+                        "save-tool-progress",
+                        ToolProgress {
+                            received_bytes: received,
+                            total_bytes: total,
+                            bytes_per_second: rate,
+                        },
+                    );
+                }
+            }
+        })
+    };
+
+    let installed = gameyfin_core::save_tool::install(&config_dir, &release, &downloader, |p| {
+        let _ = tx.send((
+            p.received_bytes,
+            p.total_bytes.unwrap_or(0),
+            p.bytes_per_second,
+        ));
+    })
+    .await;
+
+    drop(tx);
+    let _ = pump.await;
+
+    let installed =
+        installed.map_err(|e| CommandError::Message(format!("could not install it: {e}")))?;
+    let _ = app.emit("save-tool-changed", ());
+    Ok(installed)
+}
+
+/// Drops a user-installed helper, falling back to the bundled one.
+#[tauri::command]
+pub async fn remove_save_tool(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    gameyfin_core::save_tool::remove(&state.config_dir().await)
+        .await
+        .map_err(|e| CommandError::Message(format!("could not remove it: {e}")))?;
+    let _ = app.emit("save-tool-changed", ());
     Ok(())
 }
 

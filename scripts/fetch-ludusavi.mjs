@@ -30,9 +30,21 @@ if (!target) {
 const suffix = process.platform === "win32" ? ".exe" : "";
 const finalPath = join(OUT_DIR, `ludusavi-${target.triple}${suffix}`);
 
-if (existsSync(finalPath)) {
+// Ask the binary rather than trusting its presence: bumping VERSION used to leave the
+// old build in place, so the app shipped a version nobody had chosen.
+if (existsSync(finalPath) && versionOf(finalPath) === VERSION) {
   console.log(`Ludusavi ${VERSION} already present at ${finalPath}`);
   process.exit(0);
+}
+
+/** The version an installed binary reports, or null if it cannot be run. */
+function versionOf(binary) {
+  try {
+    const out = execFileSync(binary, ["--version"], { encoding: "utf8" });
+    return out.trim().split(/\s+/).pop()?.replace(/^v/, "") ?? null;
+  } catch {
+    return null;
+  }
 }
 
 mkdirSync(OUT_DIR, { recursive: true });

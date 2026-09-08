@@ -166,6 +166,8 @@ export interface WineStatus {
   installed: InstalledWine | null;
   /** Null when the release feed could not be reached, which is not the same as up to date. */
   latest: WineRelease | null;
+  /** Recent versions offering this build, newest first. */
+  available: string[];
 }
 
 /** Everything stored in `settings.json` that the interface can change. */
@@ -229,6 +231,30 @@ export interface ProviderChoice {
   needsTorrentClient: boolean;
 }
 
+/** A published build of the save backup helper. */
+export interface SaveToolRelease {
+  version: string;
+  asset: string;
+  url: string;
+  sizeBytes: number;
+  sha256: string | null;
+}
+
+export interface InstalledSaveTool {
+  version: string;
+  binary: string;
+}
+
+export interface SaveToolStatus {
+  /** A copy the user installed, which takes precedence over the bundled one. */
+  installed: InstalledSaveTool | null;
+  /** What ships with the app, used when nothing was installed. */
+  bundled: string | null;
+  latest: SaveToolRelease | null;
+  /** Recent versions, newest first. */
+  available: string[];
+}
+
 export interface WineProgress {
   receivedBytes: number;
   totalBytes: number;
@@ -272,7 +298,7 @@ export interface Backend {
   getSettings(): Promise<AppSettings>;
   wineStatus(): Promise<WineStatus>;
   /** Download and install Wine, replacing any existing build. Also used to update. */
-  installWine(): Promise<InstalledWine>;
+  installWine(version?: string): Promise<InstalledWine>;
   removeWine(): Promise<void>;
   setWineVariant(variant: WineVariant): Promise<void>;
   /** Stop offering Wine at startup. */
@@ -344,6 +370,10 @@ export interface Backend {
   ): Promise<SaveSyncState>;
   deleteSaveVersion(gameId: number, saveId: string): Promise<void>;
   setSaveSyncSettings(settings: SaveSyncSettings): Promise<void>;
+  saveToolStatus(): Promise<SaveToolStatus>;
+  /** Install a version of the backup helper, or the newest when none is named. */
+  installSaveTool(version?: string): Promise<InstalledSaveTool>;
+  removeSaveTool(): Promise<void>;
   /** Checks the configured location answers. Returns a sentence to show the user. */
   testSaveStore(): Promise<string>;
   setSaveLocked(gameId: number, saveId: string, locked: boolean): Promise<void>;
@@ -423,7 +453,7 @@ const tauriBackend: Backend = {
   setInstallerMemoryLimit: (megabytes) =>
     invoke("set_installer_memory_limit", { megabytes }),
   wineStatus: () => invoke("wine_status"),
-  installWine: () => invoke("install_wine"),
+  installWine: (version) => invoke("install_wine", { version }),
   removeWine: () => invoke("remove_wine"),
   setWineVariant: (variant) => invoke("set_wine_variant", { variant }),
   setWinePromptDismissed: (dismissed) =>
@@ -494,6 +524,9 @@ const tauriBackend: Backend = {
   deleteSaveVersion: (gameId, saveId) =>
     invoke<void>("delete_save_version", { gameId, saveId }),
   setSaveSyncSettings: (settings) => invoke<void>("set_save_sync_settings", { settings }),
+  saveToolStatus: () => invoke<SaveToolStatus>("save_tool_status"),
+  installSaveTool: (version) => invoke<InstalledSaveTool>("install_save_tool", { version }),
+  removeSaveTool: () => invoke<void>("remove_save_tool"),
   testSaveStore: () => invoke<string>("test_save_store"),
   setSaveLocked: (gameId, saveId, locked) =>
     invoke<void>("set_save_locked", { gameId, saveId, locked }),
@@ -617,9 +650,10 @@ const mockBackend: Backend = {
   wineStatus: async () => ({
     installed: { version: "11.17", variant: "staging-wow64" as WineVariant, binary: "/tmp/wine" },
     latest: null,
+    available: ["11.17", "11.16", "11.15"],
   }),
-  installWine: async () => ({
-    version: "11.17",
+  installWine: async (version) => ({
+    version: version ?? "11.17",
     variant: "staging-wow64" as WineVariant,
     binary: "/tmp/wine",
   }),
@@ -733,6 +767,23 @@ const mockBackend: Backend = {
   setSaveSyncSettings: async (settings) =>
     console.info(`[mock] save sync ${settings.enabled} via ${settings.backend}`),
   testSaveStore: async () => "Fixture location is reachable.",
+  saveToolStatus: async () => ({
+    installed: null,
+    bundled: "v0.31.0",
+    latest: {
+      version: "v0.31.0",
+      asset: "ludusavi-v0.31.0-linux.tar.gz",
+      url: "https://example.invalid",
+      sizeBytes: 14_389_479,
+      sha256: null,
+    },
+    available: ["v0.31.0", "v0.30.0", "v0.29.1"],
+  }),
+  installSaveTool: async (version) => ({
+    version: version ?? "v0.31.0",
+    binary: "/tmp/ludusavi",
+  }),
+  removeSaveTool: async () => console.info("[mock] remove save tool"),
   setSaveLocked: async (gameId, saveId, locked) =>
     console.info(`[mock] lock ${saveId} of ${gameId}: ${locked}`),
 

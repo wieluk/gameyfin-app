@@ -493,6 +493,9 @@ pub struct WineProgressEvent {
     pub bytes_per_second: f64,
 }
 
+/// How many past releases to offer when picking a version by hand.
+pub(crate) const RELEASE_CHOICES: usize = 10;
+
 /// What Wine is installed, and what is available. The installed half works offline even
 /// when the release lookup cannot.
 #[tauri::command]
@@ -513,7 +516,21 @@ pub async fn wine_status(
         }
     };
 
-    Ok(gameyfin_core::wine::WineStatus { installed, latest })
+    // Only useful alongside a reachable feed, and a second request when the first already
+    // failed just adds a timeout to the settings screen.
+    let available = if latest.is_some() {
+        gameyfin_core::wine::available_versions(&state.http().await, variant, RELEASE_CHOICES)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    Ok(gameyfin_core::wine::WineStatus {
+        installed,
+        latest,
+        available,
+    })
 }
 
 /// Download and install the current Wine build, replacing any existing one.
@@ -524,16 +541,17 @@ pub async fn wine_status(
 pub async fn install_wine(
     app: AppHandle,
     state: State<'_, AppState>,
+    version: Option<String>,
 ) -> CommandResult<gameyfin_core::wine::InstalledWine> {
     let config_dir = state.config_dir().await;
     let variant = state.settings().await.wine_variant;
     let http = state.http().await;
 
-    let release = gameyfin_core::wine::latest_release(&http, variant)
-        .await
-        .map_err(|e| {
-            CommandError::Message(format!("could not find a Wine build to download: {e}"))
-        })?;
+    let release = match version.as_deref() {
+        Some(version) => gameyfin_core::wine::release_for(&http, variant, version).await,
+        None => gameyfin_core::wine::latest_release(&http, variant).await,
+    }
+    .map_err(|e| CommandError::Message(format!("could not find a Wine build to download: {e}")))?;
 
     tracing::info!(
         version = %release.version,

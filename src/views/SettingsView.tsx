@@ -118,7 +118,12 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
               <PrefixSection />
             </>
           )}
-          {tab === "saves" && <SavesSection />}
+          {tab === "saves" && (
+            <>
+              <SavesSection />
+              <SaveToolSection />
+            </>
+          )}
           {tab === "diagnostics" && <DiagnosticsSection />}
           {tab === "about" && <AboutSection />}
         </div>
@@ -901,26 +906,49 @@ function AppearanceSection() {
   );
 }
 
-/** The Wine runtime the app downloads and keeps up to date. */
-function WineSection() {
-  const queryClient = useQueryClient();
+/** What a downloadable helper looks like to the section below. */
+interface VersionInfo {
+  /** The version in use, or null when nothing is installed. */
+  installed: string | null;
+  /** True when what is in use ships with the app, so it cannot be removed. */
+  builtIn: boolean;
+  /** Null when the release feed could not be reached, which is not "up to date". */
+  latest: string | null;
+  /** Download size of the latest release, when known. */
+  downloadBytes: number | null;
+  /** Recent versions, newest first. */
+  available: string[];
+  updatable: boolean;
+}
+
+interface VersionTool {
+  /** Section heading, and the noun the buttons use. */
+  title: string;
+  /** Query key for the status, also used to namespace the form controls. */
+  statusKey: string;
+  /** Tauri event carrying download progress. */
+  progressEvent: string;
+  load(): Promise<VersionInfo>;
+  install(version?: string): Promise<void>;
+  remove(): Promise<void>;
+  /** Refresh whatever else depended on the tool being present. */
+  after?(): Promise<void>;
+}
+
+/** Install, update, remove and pin a helper the app downloads for itself. */
+function VersionSection({ tool, children }: { tool: VersionTool; children?: React.ReactNode }) {
   const [busy, setBusy] = useState<"install" | "remove" | null>(null);
   const [progress, setProgress] = useState<WineProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [chosen, setChosen] = useState("");
 
   const status = useQuery({
-    queryKey: ["wine-status"],
-    queryFn: () => backend.wineStatus(),
+    queryKey: [tool.statusKey],
+    queryFn: tool.load,
     // The release lookup hits the network; don't refetch on every window focus.
     staleTime: 5 * 60 * 1000,
   });
-
-  const settings = useAppSettings();
-  const variant: WineVariant = settings.data?.wineVariant ?? "staging-wow64";
-  const installed = status.data?.installed ?? null;
-  const latest = status.data?.latest ?? null;
-  const updatable =
-    installed && latest && (installed.version !== latest.version || installed.variant !== latest.variant);
+  const info = status.data;
 
   useEffect(() => {
     // Subscribed only while a download is running.
@@ -930,7 +958,7 @@ function WineSection() {
 
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      const off = await listen<WineProgress>("wine-progress", (event) => {
+      const off = await listen<WineProgress>(tool.progressEvent, (event) => {
         if (!cancelled) setProgress(event.payload);
       });
       // Drop the listener if the download finished before it attached.
@@ -942,18 +970,17 @@ function WineSection() {
       cancelled = true;
       unlisten?.();
     };
-  }, [busy]);
+  }, [busy, tool.progressEvent]);
 
   async function run(action: "install" | "remove") {
     setBusy(action);
     setError(null);
     setProgress(null);
     try {
-      if (action === "install") await backend.installWine();
-      else await backend.removeWine();
+      if (action === "install") await tool.install(chosen || undefined);
+      else await tool.remove();
       await status.refetch();
-      // The install options screen greys out without a runtime; tell it one exists now.
-      await queryClient.invalidateQueries({ queryKey: ["install-options"] });
+      await tool.after?.();
     } catch (e) {
       setError(messageOf(e));
     } finally {
@@ -962,29 +989,30 @@ function WineSection() {
     }
   }
 
-  async function changeVariant(next: WineVariant) {
-    await backend.setWineVariant(next);
-    await settings.refetch();
-    await status.refetch();
-  }
+  // A pinned version that is not the one in use is the action to offer, ahead of any update.
+  const pinned = chosen && chosen !== info?.installed ? chosen : null;
 
   return (
-    <Section title="Wine">
+    <Section title={tool.title}>
       <Row
         label="Installed"
-        value={installed ? `${installed.version} (${labelFor(installed.variant)})` : "Not installed"}
-        tone={installed ? "good" : undefined}
+        value={
+          info?.installed
+            ? info.builtIn
+              ? `${info.installed} (bundled)`
+              : info.installed
+            : "Not installed"
+        }
+        tone={info?.installed ? "good" : undefined}
       />
       <Row
         label="Latest available"
         value={
           status.isLoading
             ? "Checking…"
-            : latest
-              ? latest.version
-              : "Could not check, no connection"
+            : (info?.latest ?? "Could not check, no connection")
         }
-        tone={updatable ? "bad" : undefined}
+        tone={info?.updatable ? "bad" : undefined}
       />
 
       {busy === "install" && (
@@ -1016,13 +1044,15 @@ function WineSection() {
         >
           {busy === "install"
             ? "Downloading…"
-            : !installed
-              ? `Download Wine${latest ? ` (${formatBytes(latest.sizeBytes)})` : ""}`
-              : updatable
-                ? `Update to ${latest?.version}`
-                : "Redownload"}
+            : pinned
+              ? `Install ${pinned}`
+              : !info?.installed || info.builtIn
+                ? `Download ${tool.title}${info?.downloadBytes ? ` (${formatBytes(info.downloadBytes)})` : ""}`
+                : info.updatable
+                  ? `Update to ${info.latest}`
+                  : "Redownload"}
         </button>
-        {installed && (
+        {info?.installed && !info.builtIn && (
           <button
             type="button"
             disabled={busy !== null}
@@ -1036,6 +1066,86 @@ function WineSection() {
 
       {error && <p className="text-[11px] leading-relaxed text-danger">{error}</p>}
 
+      {(info?.available.length ?? 0) > 0 && (
+        <>
+          <label className="pt-2 text-xs text-foreground/55" htmlFor={`${tool.statusKey}-version`}>
+            Version
+          </label>
+          <select
+            id={`${tool.statusKey}-version`}
+            value={chosen}
+            onChange={(e) => setChosen(e.target.value)}
+            className="rounded-lg border border-default-200 bg-content2 px-3 py-2 text-sm outline-none focus:border-primary"
+          >
+            <option value="">Latest{info?.latest ? ` (${info.latest})` : ""}</option>
+            {info?.available.map((version) => (
+              <option key={version} value={version}>
+                {version}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] leading-relaxed text-foreground/45">
+            Pick an older version only to work around a problem with the newest one. The
+            choice applies to the next download, not to what is installed now.
+          </p>
+        </>
+      )}
+
+      {children}
+    </Section>
+  );
+}
+
+/** The Wine runtime the app downloads and keeps up to date. */
+function WineSection() {
+  const queryClient = useQueryClient();
+  const settings = useAppSettings();
+  const variant: WineVariant = settings.data?.wineVariant ?? "staging-wow64";
+  // The same query the section runs, shared from cache, to word the note below.
+  const installed = useQuery({
+    queryKey: ["wine-status"],
+    queryFn: () => backend.wineStatus(),
+    staleTime: 5 * 60 * 1000,
+  }).data?.installed;
+
+  const tool: VersionTool = {
+    title: "Wine",
+    statusKey: "wine-status",
+    progressEvent: "wine-progress",
+    load: async () => {
+      const status = await backend.wineStatus();
+      return {
+        installed: status.installed
+          ? `${status.installed.version} (${labelFor(status.installed.variant)})`
+          : null,
+        builtIn: false,
+        latest: status.latest?.version ?? null,
+        downloadBytes: status.latest?.sizeBytes ?? null,
+        available: status.available,
+        // A variant change counts: switching build is an install to perform, not a
+        // version comparison.
+        updatable: Boolean(
+          status.installed &&
+            status.latest &&
+            (status.installed.version !== status.latest.version ||
+              status.installed.variant !== status.latest.variant),
+        ),
+      };
+    },
+    install: async (version) => void (await backend.installWine(version)),
+    remove: () => backend.removeWine(),
+    // The install options screen greys out without a runtime; tell it one exists now.
+    after: () => queryClient.invalidateQueries({ queryKey: ["install-options"] }),
+  };
+
+  async function changeVariant(next: WineVariant) {
+    await backend.setWineVariant(next);
+    await settings.refetch();
+    await queryClient.invalidateQueries({ queryKey: ["wine-status"] });
+  }
+
+  return (
+    <VersionSection tool={tool}>
       <label className="pt-2 text-xs text-foreground/55" htmlFor="wine-variant">
         Build
       </label>
@@ -1060,7 +1170,46 @@ function WineSection() {
           Removing Wine leaves your game prefixes and saves untouched.
         </p>
       )}
-    </Section>
+    </VersionSection>
+  );
+}
+
+/** Ludusavi, which finds and packs the save files. One ships with the app. */
+function SaveToolSection() {
+  const tool: VersionTool = {
+    title: "Ludusavi",
+    statusKey: "save-tool-status",
+    progressEvent: "save-tool-progress",
+    load: async () => {
+      const status = await backend.saveToolStatus();
+      return {
+        installed: status.installed?.version ?? status.bundled,
+        builtIn: !status.installed && status.bundled !== null,
+        latest: status.latest?.version ?? null,
+        downloadBytes: status.latest?.sizeBytes ?? null,
+        available: status.available,
+        updatable: Boolean(
+          status.latest &&
+            (status.installed?.version ?? status.bundled) !== status.latest.version,
+        ),
+      };
+    },
+    install: async (version) => void (await backend.installSaveTool(version)),
+    remove: () => backend.removeSaveTool(),
+  };
+
+  return (
+    <VersionSection tool={tool}>
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        Gameyfin uses Ludusavi to find where each game keeps its saves. A copy ships with
+        the app; download a newer one when a game you own has only just been added to its
+        list of known save locations.
+      </p>
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        Removing a downloaded copy falls back to the bundled one. Your backups are not
+        touched either way.
+      </p>
+    </VersionSection>
   );
 }
 
