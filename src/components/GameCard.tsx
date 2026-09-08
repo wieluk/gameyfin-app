@@ -18,8 +18,7 @@ export function GameCard({
   const action = primaryAction(entry.state);
 
   return (
-    // `content-visibility` skips offscreen cards; the Flatpak webview often has no GPU
-    // driver and composites on the CPU, where a full grid of cover art stutters.
+    // `content-visibility` skips offscreen cards; keeps scrolling smooth in the CPU-composited Flatpak webview.
     <article className="group relative flex flex-col gap-2 [contain-intrinsic-size:auto_320px] [content-visibility:auto]">
       <div
         role="button"

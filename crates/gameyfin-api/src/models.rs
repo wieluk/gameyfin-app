@@ -1,9 +1,5 @@
-//! DTOs mirroring the Gameyfin server's Hilla types.
-//!
-//! Field names follow the server's `GameDto` / `LibraryDto` / `ImageDto` (see
-//! `app/src/main/kotlin/org/gameyfin/app/games/dto/`). Everything optional is genuinely
-//! optional on the wire: the server annotates its DTOs `@JsonInclude(NON_NULL)`, so absent
-//! fields are omitted rather than sent as null.
+//! DTOs mirroring the server's Hilla types (`GameDto`/`LibraryDto`/`ImageDto`). Optional
+//! fields are omitted on the wire, not null (`@JsonInclude(NON_NULL)`).
 
 use serde::{Deserialize, Deserializer, Serialize};
 

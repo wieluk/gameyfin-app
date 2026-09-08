@@ -1,9 +1,6 @@
-//! Commands for the places Gameyfin reaches outside its own window.
-//!
-//! Steam shortcuts, desktop and menu entries, per-game compatibility prefixes, and the umu
-//! fix database. Grouped together because they share a shape: each one touches something
-//! the user also owns through another program, so each one is careful about what it
-//! changes and reports precisely what it did.
+//! Commands for the places Gameyfin reaches outside its own window: Steam shortcuts,
+//! desktop and menu entries, per-game compatibility prefixes, the umu fix database. Each
+//! touches something another program also owns, so each is careful and reports what it did.
 
 use std::path::PathBuf;
 

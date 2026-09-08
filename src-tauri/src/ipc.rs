@@ -1783,12 +1783,9 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The uninstaller found in a game's install folder, if there is one.
-///
-/// Reported to the UI before anything is removed, so the confirmation can say which
-/// program will run, or offer to be pointed at it when detection came up empty. The
-/// names an uninstaller goes by are a convention, not a rule, and a game that named
-/// its own `cleanup.exe` used to be uninstalled by deleting the folder underneath it.
+/// The uninstaller found in a game's install folder, if there is one. Reported to the UI
+/// before anything is removed; detection is by naming convention, so the user can point at
+/// one when it comes up empty.
 #[tauri::command]
 pub async fn find_game_uninstaller(
     state: State<'_, AppState>,
@@ -2033,12 +2030,8 @@ pub async fn run_setup_path(
     run_program_as_installer(&app, &state, game_id, &program, &install_dir, false).await
 }
 
-/// Run the setup program again, this time as administrator.
-///
-/// Windows will not let a process quietly elevate a child of its own, so the request goes
-/// back out through the shell and the user confirms in the system's own consent dialog.
-/// Only reachable after an attempt has actually been refused, which is what records which
-/// program to run: guessing would mean asking for administrator rights speculatively.
+/// Run the setup program again as administrator, through the shell's consent dialog. Only
+/// reachable after an attempt was refused, so the app never asks for elevation speculatively.
 #[tauri::command]
 pub async fn run_setup_elevated(
     app: AppHandle,
@@ -2082,13 +2075,9 @@ pub async fn open_path(app: AppHandle, path: String) -> CommandResult<()> {
         .map_err(|e| CommandError::Message(format!("could not open {path}: {e}")))
 }
 
-/// Reveal a game's folder in the desktop file manager.
-///
-/// `folder` says which of the game's two folders was asked for. The Downloads list must
-/// open the download even for a game that is also installed, and, more to the point, for
-/// one whose install *failed*: nothing was recorded as installed, extracting with
-/// "delete the archive" cleared the archive path too, and the button was left with
-/// nothing to open at all while the unpacked files sat in Downloads the whole time.
+/// Reveal a game's folder in the desktop file manager. `folder` picks which of the game's
+/// two folders, since the Downloads list must open the download even when a game is also
+/// installed or its install failed.
 #[tauri::command]
 pub async fn open_game_folder(
     app: AppHandle,
@@ -2304,15 +2293,9 @@ async fn copy_executable(
     Ok(())
 }
 
-/// Run a setup program and adopt whatever it installs.
-///
-/// The app cannot drive a setup wizard, so it cannot know where files will land. It runs
-/// the program, then checks the suggested folder; if the user chose elsewhere they can
-/// point the app at it afterwards.
-///
-/// `elevated` asks Windows to run the program as administrator, which puts a consent
-/// dialog on screen. It is never set on the first attempt: the app finds out that a
-/// particular installer needs it by being refused, then offers the retry.
+/// Run a setup program and adopt whatever it installs. The app cannot drive the wizard, so
+/// it runs the program then checks the suggested folder. `elevated` (never on the first
+/// attempt) reruns as administrator after a refusal.
 async fn run_program_as_installer(
     app: &AppHandle,
     state: &State<'_, AppState>,

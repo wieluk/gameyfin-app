@@ -1,17 +1,5 @@
-//! Resumable HTTP downloads.
-//!
-//! ## Resume on a server that does not support it
-//!
-//! Gameyfin 2.4's download endpoint streams a `StreamingResponseBody` with no
-//! `Accept-Ranges` header and no `Range` handling, so a resumed request is answered with
-//! `200 OK` and the *whole* file. Appending that to a partial file would silently corrupt
-//! it, the file would end up the right size only by coincidence, and wrong everywhere.
-//!
-//! So the status code is treated as the contract: only `206 Partial Content` with a
-//! matching `Content-Range` is accepted as a resume. A `200` means "start over", which is
-//! handled by truncating and restarting rather than by producing a broken file.
-//! This keeps the client correct today and makes it faster the moment the server gains
-//! `Range` support, with no client change.
+//! Resumable HTTP downloads. Gameyfin 2.4 ignores `Range`, so only a `206` with a matching
+//! `Content-Range` is trusted as a resume; a `200` restarts rather than corrupting.
 
 use std::path::{Path, PathBuf};
 
@@ -63,9 +51,8 @@ pub struct DownloadOutcome {
     pub mode: StartMode,
 }
 
-/// Decide how to begin, given a stored checkpoint and a probe of the server.
-///
-/// Split out from the transfer loop so the decision is testable without a network.
+/// Decide how to begin, given a stored checkpoint and a probe of the server. Split out so
+/// it is testable without a network.
 pub fn plan_start(
     checkpoint: Option<&Checkpoint>,
     current_etag: Option<&str>,
@@ -77,10 +64,8 @@ pub fn plan_start(
     }
 }
 
-/// Verify that a `206` response actually continues from where we asked.
-///
-/// A server may legitimately answer a range request with a *different* range than
-/// requested; appending it blindly would corrupt the file.
+/// Verify a `206` continues from where we asked: a server may answer with a different
+/// range, and appending it blindly would corrupt the file.
 pub fn content_range_starts_at(header: &str, expected_start: u64) -> bool {
     // Format: `bytes <start>-<end>/<total>`
     let Some(rest) = header.trim().strip_prefix("bytes ") else {
@@ -95,10 +80,8 @@ pub fn content_range_starts_at(header: &str, expected_start: u64) -> bool {
     start.trim().parse::<u64>() == Ok(expected_start)
 }
 
-/// Filename from a `Content-Disposition` header.
-///
-/// Gameyfin emits both an ASCII fallback and an RFC 5987 `filename*`, so the encoded form
-/// is preferred when present, that is the one carrying non-ASCII titles correctly.
+/// Filename from a `Content-Disposition` header, preferring the RFC 5987 `filename*` form
+/// that carries non-ASCII titles correctly.
 pub fn filename_from_disposition(header: &str) -> Option<String> {
     if let Some(idx) = header.find("filename*=") {
         let value = &header[idx + "filename*=".len()..];
@@ -150,8 +133,7 @@ pub fn available_space(path: &Path) -> Option<u64> {
     }
 
     let c_path = CString::new(probe.as_os_str().as_bytes()).ok()?;
-    // SAFETY: `c_path` is a valid NUL-terminated string and `stat` is only read after a
-    // successful call.
+    // SAFETY: `c_path` is a valid NUL-terminated string; `stat` is read only after success.
     unsafe {
         let mut stat: libc_statvfs = std::mem::zeroed();
         if statvfs(c_path.as_ptr(), &mut stat) != 0 {
@@ -177,9 +159,7 @@ pub fn available_space(path: &Path) -> Option<u64> {
     let wide: Vec<u16> = probe.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut free_to_caller: u64 = 0;
 
-    // SAFETY: `wide` is NUL-terminated, and the out-parameter is only read after the call
-    // reports success. The two totals we do not need are passed as null, which the API
-    // documents as allowed.
+    // SAFETY: `wide` is NUL-terminated; out-param read only after success, and null is allowed for the totals we skip.
     let ok = unsafe {
         GetDiskFreeSpaceExW(
             wide.as_ptr(),
@@ -247,12 +227,8 @@ pub fn check_space(target: &Path, needed: u64) -> CoreResult<()> {
     Ok(())
 }
 
-/// A speed cap that can be changed while a transfer is running.
-///
-/// The limit used to be captured when a download started, so changing it did nothing
-/// until the next one, which is not what a speed control means when a user drags it
-/// during an eight-gigabyte transfer. Sharing one atomic between the settings command and
-/// every running download makes a change take effect on the next chunk.
+/// A speed cap that can be changed while a transfer is running, shared between the settings
+/// command and every running download so a change takes effect on the next chunk.
 #[derive(Debug, Clone, Default)]
 pub struct RateLimit(std::sync::Arc<std::sync::atomic::AtomicU64>);
 
@@ -274,14 +250,8 @@ impl RateLimit {
     }
 }
 
-/// A stop signal for a running transfer.
-///
-/// Cooperative rather than an abort: the loop notices, flushes what it has and saves its
-/// checkpoint, leaving a consistent partial file rather than one truncated mid-write.
-///
-/// Whether restarting then resumes depends on the server. Gameyfin 2.4 does not implement
-/// `Range`, so it answers with the whole file and the transfer starts over; the checkpoint
-/// is what makes resuming work the moment the server supports it.
+/// A cooperative stop signal: the loop flushes and checkpoints on notice, leaving a
+/// consistent partial file rather than one truncated mid-write.
 #[derive(Debug, Clone, Default)]
 pub struct Cancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
@@ -299,18 +269,12 @@ impl Cancel {
     }
 }
 
-/// Paces a transfer to a byte-per-second budget.
-///
-/// Gameyfin has no server-side throttle, so the limit is applied by reading more slowly:
-/// the socket's receive window closes behind us and TCP backpressure does the rest, which
-/// genuinely reduces bandwidth rather than merely delaying it.
+/// Paces a transfer to a byte-per-second budget by reading more slowly, letting TCP
+/// backpressure genuinely reduce bandwidth rather than merely delay it.
 #[derive(Debug)]
 struct RateLimiter {
     limit: RateLimit,
-    /// The limit the current budget window was measured against.
-    ///
-    /// Kept so a change can be noticed: the budget is "bytes since `started`", which is
-    /// meaningless once the rate it was computed from has moved.
+    /// The limit the current budget window was measured against, kept so a rate change can be noticed.
     window_limit: u64,
     started: std::time::Instant,
     transferred: u64,
@@ -320,8 +284,7 @@ struct RateLimiter {
 const MIN_DELAY: std::time::Duration = std::time::Duration::from_millis(2);
 
 impl RateLimiter {
-    /// A limiter with a fixed rate. Only the shared form is used in practice; this keeps
-    /// the pacing arithmetic testable without a shared handle.
+    /// A limiter with a fixed rate, to keep the pacing arithmetic testable without a shared handle.
     #[cfg(test)]
     fn new(bytes_per_second: u64) -> Self {
         Self::shared(RateLimit::new(bytes_per_second))
@@ -336,18 +299,12 @@ impl RateLimiter {
         }
     }
 
-    /// How long to wait before accepting more, having just taken `bytes`.
-    ///
-    /// Delays below [`MIN_DELAY`] are skipped: a chunk arrives every few hundred
-    /// microseconds, and sleeping for less than a timer tick each time costs more in
-    /// scheduling than it saves in bandwidth.
+    /// How long to wait before accepting more, having just taken `bytes`. Delays below
+    /// [`MIN_DELAY`] are skipped as not worth the scheduling cost.
     fn delay_after(&mut self, bytes: u64) -> Option<std::time::Duration> {
         let current = self.limit.get();
 
-        // A changed limit restarts the accounting window. Without this, lowering the cap
-        // mid-transfer would re-measure every byte already moved against the new, slower
-        // rate and demand one enormous catch-up sleep; raising it would hand out a burst
-        // of free bandwidth for the same reason.
+        // A changed limit restarts the accounting window, else a lowered cap would demand one enormous catch-up sleep.
         if current != self.window_limit {
             self.window_limit = current;
             self.started = std::time::Instant::now();
@@ -359,9 +316,7 @@ impl RateLimiter {
         }
         self.transferred += bytes;
 
-        // Where the transfer *should* be by now, measured from its own start rather than
-        // per chunk, so a burst is repaid over the following chunks instead of being
-        // smoothed away.
+        // Measured from the transfer's own start, so a burst is repaid over following chunks.
         let earned = std::time::Duration::from_secs_f64(self.transferred as f64 / current as f64);
         earned
             .checked_sub(self.started.elapsed())
@@ -406,9 +361,7 @@ impl Downloader {
     }
 
     /// Transfer `url` into `destination`, reporting progress through `on_progress`.
-    ///
-    /// `authorize` attaches credentials; it is a closure rather than a stored strategy so
-    /// this crate stays independent of how the caller authenticates.
+    /// `authorize` is a closure so this crate stays independent of how the caller authenticates.
     pub async fn download<F, A>(
         &self,
         url: &str,
@@ -473,15 +426,13 @@ impl Downloader {
                     (StartMode::RestartedByServer, 0)
                 }
             } else if resume_from > 0 {
-                // The server sent the whole file despite the Range header, expected against
-                // Gameyfin 2.4, which has no Range support.
+                // Whole file despite the Range header; expected against Gameyfin 2.4, which has no Range support.
                 (StartMode::RestartedByServer, 0)
             } else {
                 (StartMode::Fresh, 0)
             };
 
-        // `Content-Length` is the remaining bytes, so a resumed transfer must add the
-        // offset back to recover the true total.
+        // `Content-Length` is the remaining bytes, so a resumed transfer adds the offset back for the true total.
         let total_bytes = response.content_length().map(|len| len + written);
 
         let mut file = if written > 0 {
@@ -504,24 +455,20 @@ impl Downloader {
         let mut last_flush = std::time::Instant::now();
         let baseline = written;
 
-        // Record the transfer before any bytes move, so even an immediate failure leaves
-        // enough behind to resume from rather than starting over.
+        // Record the transfer before any bytes move, so even an immediate failure can be resumed from.
         cp.save(destination).await?;
 
         let mut limiter = RateLimiter::shared(self.rate_limit.clone());
 
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            // Checked before taking the chunk so a cancel during a stalled transfer is
-            // still noticed, and before any further writing so nothing is half-applied.
+            // Checked before the chunk so a cancel during a stall is noticed and nothing is half-applied.
             if self.cancel.is_cancelled() {
                 persist(&mut file, &mut cp, destination, written).await;
                 return Err(CoreError::Cancelled);
             }
 
-            // A dropped connection must not also lose the progress already on disk: the
-            // periodic flush may be up to FLUSH_INTERVAL behind, and for a transfer that
-            // fails quickly it will not have run at all.
+            // A dropped connection must not lose progress already on disk; the periodic flush can be behind.
             let chunk = match chunk {
                 Ok(chunk) => chunk,
                 Err(e) => {
@@ -565,8 +512,7 @@ impl Downloader {
 
         if let Some(expected) = total_bytes {
             if written != expected {
-                // Leave the partial file and its checkpoint in place so the next attempt
-                // can resume rather than starting over.
+                // Leave the partial file and checkpoint so the next attempt can resume.
                 cp.received_bytes = written;
                 cp.save(destination).await?;
                 return Err(CoreError::SizeMismatch {
@@ -586,10 +532,8 @@ impl Downloader {
     }
 }
 
-/// Flush what has been written and record it, ignoring secondary failures.
-///
-/// This runs on an error path, where the transfer has already failed. A checkpoint that
-/// cannot be written is unfortunate but must not mask the original cause.
+/// Flush and record progress on an error path, ignoring secondary failures so they cannot
+/// mask the original cause.
 async fn persist(
     file: &mut tokio::fs::File,
     cp: &mut Checkpoint,

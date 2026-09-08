@@ -1,12 +1,5 @@
-//! The system tray icon, and closing the window without quitting.
-//!
-//! The window is not the application. A download runs in this process, so closing the
-//! window during one used to abandon a transfer that may have had an hour left in it.
-//! With a tray icon the window becomes a view onto something that keeps running, which is
-//! what a user who pressed the close button while a game downloaded already assumed.
-//!
-//! The quit path is therefore explicit: the tray's Quit item, and nothing else. A window
-//! close is a hide.
+//! The system tray icon. Downloads run in this process, so a window close is a hide;
+//! quitting is explicit, via the tray's Quit item.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

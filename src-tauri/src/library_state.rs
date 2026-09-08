@@ -1,7 +1,5 @@
-//! What the client knows about each game locally.
-//!
-//! A download and an install are different things, and conflating them was wrong: a
-//! finished download is an *archive on disk*, not a playable game. The states are
+//! What the client knows about each game locally. A download and an install are separate:
+//! a finished download is an archive on disk, not a playable game.
 //!
 //! ```text
 //! NotInstalled → Downloading → Downloaded → Installing → Installed
@@ -9,14 +7,9 @@
 //!                   Failed        Failed       Failed
 //! ```
 //!
-//! `Downloaded` is a resting state, not a transition: the archive sits in the Downloads
-//! folder with an Install action against it, so the user chooses when (and whether) to
-//! unpack it.
-//!
-//! Durable facts, where the archive is, where the game was installed, which executable
-//! was chosen, are written to disk so they survive a restart. Progress of an in-flight
-//! transfer is deliberately not persisted; it is meaningless after a restart, and the
-//! download's own checkpoint file is what allows it to resume.
+//! `Downloaded` is a resting state with an Install action against it. Durable facts (paths,
+//! chosen executable) are persisted; in-flight progress is not (the download's own
+//! checkpoint handles resume).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

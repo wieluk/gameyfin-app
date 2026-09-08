@@ -1,16 +1,10 @@
-//! Generating Ludusavi's `config.yaml`.
+//! Generating Ludusavi's `config.yaml` into a private `--config` directory. Bidirectional
+//! redirects map the account name and install directory onto synthetic targets that are
+//! identical on every machine, so a backup restores under a different username.
 //!
-//! Written into a private directory (passed as `--config`) so the user's own
-//! `~/.config/ludusavi` is never touched.
-//!
-//! Save paths embed the account name and the install directory, so a backup taken as
-//! `C:/Users/alice/...` will not restore for `bob`. Bidirectional redirects map both onto
-//! synthetic targets that are identical on every machine.
-//!
-//! Ludusavi does not translate save locations across operating systems. A Windows game
-//! under Proton keeps Windows-shaped paths inside the prefix, so Windows to Proton
-//! round-trips work; a Windows game and a native Linux build of the same game do not, and
-//! the caller is expected to warn rather than restore across that boundary.
+//! Ludusavi does not translate save paths across OSes: Windows ↔ Proton round-trips work
+//! (Windows-shaped paths inside the prefix), Windows ↔ native Linux does not, and the
+//! caller warns rather than restoring across that boundary.
 
 use std::path::{Path, PathBuf};
 

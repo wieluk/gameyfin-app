@@ -8,31 +8,18 @@
 
 ## Context
 
-Gameyfin's existing desktop client ([Gameyfin-Desktop](https://github.com/gameyfin/Gameyfin-Desktop)) is PyQt6 wrapping a
-`QWebEngineView` of the server's web UI. It works, and its native layer is genuinely useful
-(umu/Proton prefixes, Steam shortcut registration, stream-extract downloads, gamepad nav), but
-the UI *is* the website in a window, so it reads as a browser rather than an application.
-
-GameVault ([gamevault-app](https://github.com/Phalcode/gamevault-app)) shows the bar: a real MVVM desktop app with custom
-chrome, a resumable download manager, install/launch pipelines, playtime tracking, offline mode,
-Steam integration and ludusavi-backed cloud saves. It is Windows-only and WPF-bound.
-
-We want that class of application, cross-platform, deeply integrated into both Windows and Linux.
+The existing client ([Gameyfin-Desktop](https://github.com/gameyfin/Gameyfin-Desktop)) is PyQt6 around a `QWebEngineView`;
+its native layer is useful but the UI *is* the website. [gamevault-app](https://github.com/Phalcode/gamevault-app) shows the
+bar (custom chrome, resumable downloads, install/launch pipelines, playtime, offline, Steam,
+ludusavi saves) but is Windows-only WPF. We want that class of app, cross-platform.
 
 ### The controlling constraint
 
-Gameyfin's API is almost entirely **Vaadin Hilla RPC**, `POST /connect/<Endpoint>/<method>`,
-authenticated by **session cookie + CSRF**, with CORS disabled
-(`app/.../core/security/SecurityConfig.kt`). Only three plain REST controllers exist:
-`/download/{gameId}`, `/images/**`, and a login redirect.
-
-There is no token or API-key auth. This is exactly why the current client embeds Chromium: it
-needs a real browser session to hold cookies and mint CSRF tokens, then proxies RPC calls
-*through the page*. Any serious native client either repeats that hack or gets a token endpoint
-added server-side. We are doing the latter, see `02-save-sync-plan.md`, PR A.
-
-Until PR A lands, the client ships a fallback cookie-session strategy so development is never
-blocked on server review.
+Gameyfin's API is almost entirely **Vaadin Hilla RPC** (`POST /connect/<Endpoint>/<method>`),
+authenticated by **session cookie + CSRF**, CORS disabled. Only `/download/{gameId}`,
+`/images/**` and a login redirect are plain REST. There is no token auth, which is why the
+current client embeds Chromium. We add a token endpoint server-side (`02-save-sync-plan.md`
+PR A) and ship a cookie-session fallback until it lands.
 
 ---
 
@@ -59,14 +46,11 @@ gameyfin-app/
    └─ state/             TanStack Query + Zustand
 ```
 
-**Why this split:** everything stateful, privileged or long-running lives in Rust and survives
-UI reloads. The webview is a pure view layer that subscribes to Rust events. This is the
-structural difference from the old client, where the web page *was* the app.
+**Why this split:** everything stateful, privileged or long-running lives in Rust and
+survives UI reloads; the webview is a pure view layer subscribing to Rust events.
 
-**Design language:** Gameyfin's web frontend already uses HeroUI + Tailwind
-(the server's `app/src/main/frontend/heroui.ts`, with themes in `theming/themes`).
-We reuse its tokens for brand continuity, but the layout is app-shaped, persistent sidebar,
-custom title bar, no browser affordances, no page reloads.
+**Design language:** reuse Gameyfin's HeroUI + Tailwind tokens for brand continuity, but
+an app-shaped layout: persistent sidebar, custom title bar, no browser affordances.
 
 ---
 
@@ -101,11 +85,9 @@ Two implementations:
 1. **`DeviceTokenAuth`** (target), `Authorization: Bearer <token>` against the new
    `/api/auth/device` endpoints from PR A. Token stored in the OS keychain
    (`keyring` crate: Credential Manager / libsecret).
-2. **`CookieSessionAuth`** (fallback, ships first), a Tauri webview window loads
-   `/login`, we harvest the session cookie once authenticated, and derive the CSRF token the
-   way Hilla does (Spring `XSRF-TOKEN` cookie → `_csrf` meta → Vaadin `csrfToken`). This
-   mirrors what `Gameyfin-Desktop/gameyfin_frontend/services/gameyfin_api.py` already proves
-   works, including SSO/OIDC flows.
+2. **`CookieSessionAuth`** (fallback, ships first), a webview window loads `/login`, we
+   harvest the session cookie and derive the CSRF token as Hilla does (Spring `XSRF-TOKEN`
+   cookie → `_csrf` meta → Vaadin `csrfToken`). Proven by the Python client, SSO included.
 
 The client is written against the trait, so PR A landing is a config change, not a rewrite.
 
@@ -126,18 +108,13 @@ authenticated user):
 
 ### Local catalog
 
-Mirror the catalog into SQLite so the app opens instantly and works offline (GameVault's
-offline mode, done properly with a real database rather than compressed JSON blobs). Cover art
-cached to disk, keyed by image id, with blurhash placeholders, the server already returns
-`blurhash` on `ImageDto`, so we get progressive loading for free.
+Mirror the catalog to disk so the app opens instantly and works offline. Cover art cached
+by image id, with `blurhash` placeholders the server already returns.
 
 ### Live updates
 
-Gameyfin pushes changes over Hilla reactive `Flux` subscriptions (`GameEndpoint.subscribe()`,
-`LibraryEndpoint.subscribeToLibraryEvents()`), transported by Atmosphere. Subscribe in Rust,
-reconcile into SQLite, emit Tauri events to the UI. If the Atmosphere handshake proves awkward
-outside a browser, fall back to polling `getAll()` on an interval, the UI contract is
-unchanged either way.
+Subscribe to Hilla `Flux` subscriptions in Rust, reconcile locally, emit Tauri events. Fall
+back to polling `getAll()` if the Atmosphere handshake is awkward outside a browser.
 
 **Done when:** log in, browse the full library with artwork, offline, with live updates.
 
@@ -150,38 +127,29 @@ unchanged either way.
 `GET /download/{gameId}?provider=<key>` streams the file
 (`core/download/files/DownloadEndpoint.kt`).
 
-**Known gap:** the endpoint uses `StreamingResponseBody` with no `Accept-Ranges` and no
-`Range` handling, so *resume is impossible today*, an interrupted 80 GB download restarts.
-PR B fixes this. Client-side we implement it as GameVault does, which works the moment the
-server supports it:
+**Known gap:** the endpoint has no `Accept-Ranges`/`Range` handling, so resume is impossible
+until PR B. Client-side we implement it anyway so it works the moment the server supports it:
 
 - Checkpoint sidecar (`resume_position`, `total_size`, `etag`) written every ~2s.
-- On resume, send `Range: bytes=<pos>-`; if the server answers `200` instead of `206`,
-  transparently fall back to restarting.
-- Verify size on completion; keep `Content-Disposition` filename (server already emits
-  RFC 5987 encoded names).
+- On resume send `Range: bytes=<pos>-`; fall back to restarting if the server answers `200`.
+- Verify size on completion; keep the `Content-Disposition` filename.
 
-Queue with configurable concurrency (GameVault has no limiter and just spawns parallel
-downloads, we do better), pause/resume/cancel, per-drive free-space preflight, exponential
-backoff retry, and taskbar/progress integration.
+Queue with configurable concurrency, pause/resume/cancel, per-drive free-space preflight,
+backoff retry, taskbar progress.
 
 ### Extraction and install
 
-- Extract via the `sevenz-rust2` / `zip` / `unrar` crates in Rust rather than shelling to
-  `7z.exe`, so Linux gets identical behaviour without a native dependency. Bundle the 7z
-  sidecar only as a fallback for exotic formats.
-- Stream-extract while downloading where the format allows (the old Python client already does
-  this with `stream-unzip`, and it halves peak disk usage), otherwise extract on completion.
+- Extract via Rust crates, not a shelled `7z.exe`, so Linux matches without a native dep;
+  7z sidecar as a fallback for exotic formats.
+- Stream-extract while downloading where the format allows, otherwise on completion.
 - Encrypted archives: detect and prompt for a password.
-- Layout: `<root>/Gameyfin/Downloads/(<id>) <Title>/` and
-  `<root>/Gameyfin/Installations/(<id>) <Title>/`. The `(id)` prefix is GameVault's trick for
-  recovering game identity from a bare directory, worth keeping.
-- Install record in SQLite (not a file in the game folder), plus a small
-  `gameyfin-install.json` in the directory so a moved/copied install is still recognisable.
-- Executable detection: walk for candidates, score them (root-level, name similarity to title,
-  size, not in `redist/`/`_CommonRedist`/`DirectX`), auto-pick a confident single match,
-  otherwise prompt. Remember the choice; allow override in game settings.
-- Windows installers (`setup.exe`): run with `%INSTALLDIR%` templating, as GameVault does.
+- Layout: `<root>/Gameyfin/Downloads/(<id>) <Title>/` and `.../Installations/(<id>) <Title>/`;
+  the `(id)` prefix recovers game identity from a bare directory.
+- Install record kept locally plus a `gameyfin-install.json` in the directory so a
+  moved install is still recognisable.
+- Executable detection: score candidates (root-level, title similarity, size, not in
+  redist dirs), auto-pick a confident match else prompt, remember the choice.
+- Windows installers (`setup.exe`): run with `%INSTALLDIR%` templating.
 
 **Done when:** download → extract → install → correct executable is detected, with resume
 surviving an app restart.
@@ -197,40 +165,25 @@ surviving an app restart.
 - **Linux, Windows games:** **Wine**, with a **per-game Wine prefix** at
   `~/.local/share/gameyfin/prefixes/<id>/`.
 
-  *Revised from the original plan, which called for `umu-run` with GE-Proton throughout,
-  what the current Python client does (`services/game_launcher.py`, `umu_database.py`) and
-  what Heroic and Lutris do.* Proton has better per-title compatibility, but it arrives
-  through umu or Steam, each with its own installation, download and failure modes, and umu
-  inside a Flatpak would have to bring a Python stack with it. Wine is packaged by every
-  distribution and is the same runtime across the deb, rpm, AppImage and Flatpak, which
-  means one thing for a user to install and one thing to diagnose. Proton is still used when
-  Wine is absent and umu or a Steam build happens to be there; the umu id and GE-Proton
-  handling remain in `Runtime::Proton` for that path.
+  *Revised from the original umu/GE-Proton plan.* Proton has better per-title compat but
+  arrives through umu or Steam, each with its own failure modes, and umu in a Flatpak needs
+  a Python stack. Wine is one runtime across every package format. Proton stays as a
+  fallback (`Runtime::Proton`, with umu id and GE-Proton handling) when Wine is absent.
 - Per-game launch config: environment variables, Proton version, prefix, launch arguments,
   gamescope/MangoHud toggles on Linux.
 
-### Process supervision, beating GameVault
+### Process supervision
 
-GameVault polls every 60 seconds, enumerating *every* process on the system and string-matching
-`MainModule.FileName` against install directories, with a user-maintained ignore list for
-launcher subprocesses (`Helper/GameTimeTracker.cs`). Playtime is therefore quantised to the
-minute and misattributed whenever a game spawns a launcher that exits.
+GameVault polls every 60s, string-matching every process against install dirs with a
+user-maintained ignore list. We do it event-driven:
 
-We do it properly, event-driven:
+- **Windows:** a **Job Object** waited on via IO completion port for
+  `JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO`, capturing the whole tree including bootstrappers.
+- **Linux:** a new process group / `PR_SET_CHILD_SUBREAPER`, reaping the group; for
+  `umu-run`, wait on the wrapper that owns the Proton tree.
 
-- **Windows:** assign the launched process to a **Job Object** with
-  `JOB_OBJECT_ALL_ACCESS`, and wait on an IO completion port for
-  `JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO`. This captures the entire process tree, including
-  games that relaunch themselves through a bootstrapper, and tells us exactly when the last
-  descendant exits.
-- **Linux:** launch in a new process group / `PR_SET_CHILD_SUBREAPER`, and reap the group.
-  For `umu-run`, wait on the umu wrapper process which already owns the Proton tree.
-
-This gives exact wall-clock playtime, a reliable "game exited" signal (which is what triggers
-save backup), and no ignore list.
-
-Playtime is written to SQLite immediately and synced to the server via PR D, buffering while
-offline and flushing on reconnect.
+Exact wall-clock playtime, a reliable exit signal (which triggers save backup), no ignore
+list. Playtime is stored immediately and synced via PR D, buffering while offline.
 
 **Done when:** launching a game shows accurate live playtime, and exit is detected within a
 second even for bootstrapper-based titles.
@@ -247,37 +200,22 @@ Bundled as a Tauri sidecar, invoked with an **isolated config directory** via th
 `--config <dir>` flag so we never touch the user's own `~/.config/ludusavi`. We write that
 config ourselves (roots, redirects, backup path, custom games).
 
-Integration is by **subprocess + `--api` JSON**, not the Rust `lib` target: ludusavi's
-`src/lib.rs` carries an explicit "the API will be unstable" warning, whereas the CLI's JSON
-contract is documented and schema-generated (`docs/schema/general-output.yaml`). Version pinning
-plus a stable contract beats tight coupling here.
-
-**We do not use `ludusavi wrap`.** It blocks the caller until the game exits and owns process
-launching as a black box, which is incompatible with Phase 3's supervision (we need the PID,
-the exit signal, and control over the tree). Manual `restore` before launch and `backup` after
-exit gives identical behaviour with full control.
+Integration is by **subprocess + `--api` JSON**, not the Rust `lib` target, which is
+explicitly unstable. We do **not** use `ludusavi wrap`: it owns process launching as a black
+box, incompatible with Phase 3's supervision. Manual `restore` before, `backup` after.
 
 ### Game matching
 
-This is where GameVault is weakest: it runs `find <title> --fuzzy --api` and accepts a match if
-the score exceeds 0.9. Ludusavi's own precedence is **Steam ID → GOG ID → exact name →
-normalized name**, and ID lookup is deterministic.
+Ludusavi's precedence is **Steam ID → GOG ID → exact name → normalized name**; ID lookup is
+deterministic. The Steam plugin writes the AppID as `originalId`, but `GameMetadataUserDto`
+exposes only `fileSize`, so exposing external IDs to normal users is PR C1. The ladder:
 
-Gameyfin already stores exactly what we need. The Steam metadata plugin writes the **Steam
-AppID** as `originalId` (`plugins/steam/.../SteamPlugin.kt:212`), kept in
-`GameMetadata.originalIds: Map<PluginManagementEntry, String>`.
-
-**But `GameMetadataUserDto` exposes only `fileSize`**, `originalIds` is admin-only
-(`games/dto/GameMetadataDto.kt`). So exposing external IDs to normal users is a necessary
-server change (PR C1, three lines). With it, our resolution ladder becomes:
-
-1. `find --steam-id <appid> --api`, exact, when the game was matched by the Steam plugin.
+1. `find --steam-id <appid> --api` when matched by the Steam plugin.
 2. `find "<title>" --normalized --api`, forgiving on edition/year suffixes.
-3. `find "<title>" --fuzzy --multiple --api`, last resort, and we **ask the user to confirm**
-   rather than silently trusting a score.
-4. Manual override, plus a ludusavi `customGames` entry for titles absent from the manifest.
+3. `find "<title>" --fuzzy --multiple --api`, last resort, **with user confirmation**.
+4. Manual override plus a `customGames` entry for titles absent from the manifest.
 
-The resolved title is cached in SQLite and mirrored to the server so every device agrees.
+The resolved title is cached and mirrored to the server so every device agrees.
 
 ### Backup and restore
 
@@ -287,17 +225,13 @@ ludusavi --config <appcfg> backup  --force --api --format zip --compression zstd
 ludusavi --config <appcfg> restore --force --api --path <staging> "<Title>"
 ```
 
-The sync unit is **one game folder**, `mapping.yaml` plus the zip(s) it indexes. `mapping.yaml`
-is authoritative (per-file hashes and sizes, backup timestamps) and restore ignores folders
-without it, so it must be included in the uploaded bundle.
+The sync unit is **one game folder**, `mapping.yaml` (authoritative: per-file hashes, sizes,
+timestamps) plus the zip(s) it indexes. Restore ignores folders without it.
 
-### Cross-machine portability, the redirects problem
+### Cross-machine portability
 
-GameVault makes saves portable by writing `redirects` that map the user profile and the install
-directory onto fixed fake paths (`G:\gamevault\currentuser`, `G:\gamevault\installation`), so a
-save taken on one PC restores on another with a different username. That trick is Windows-only.
-
-Our config generalises it:
+GameVault makes saves portable with `redirects` mapping the profile and install dir onto
+fixed fake paths, so a save restores under a different username. Windows-only; we generalise:
 
 ```yaml
 roots:
@@ -312,16 +246,12 @@ redirects:
   - { kind: bidirectional, source: "<actual install dir>", target: "/gameyfin/install" }
 ```
 
-The `<game>` placeholder in a root path lets one entry cover our whole per-game prefix
-collection without globbing every prefix for every game.
+The `<game>` placeholder lets one root entry cover the whole per-game prefix collection.
 
-**Windows ↔ Linux is the honest caveat.** Ludusavi does not translate save locations across
-operating systems (`docs/help/transfer-between-operating-systems.md`); the experimental
-`scan.redirectWine` is unfinished. However, a Windows game run under Proton on Linux keeps its
-Windows-shaped paths *inside the prefix*, so **Windows ↔ Proton sync works** through the
-redirects above, which covers the overwhelmingly common case for a Gameyfin library. We tag
-each save with its platform and warn, rather than silently corrupting, on a genuine
-Windows↔native-Linux mismatch.
+**Windows ↔ Linux caveat.** Ludusavi does not translate save locations across OSes. But a
+Windows game under Proton keeps Windows-shaped paths inside its prefix, so **Windows ↔ Proton
+works**, which covers the common case. Saves are platform-tagged; a genuine
+Windows↔native-Linux mismatch warns rather than corrupting.
 
 ### When sync runs
 
@@ -338,23 +268,17 @@ a choice rather than silent data loss.
 
 ## Phase 5, Deep desktop integration
 
-**Both platforms:** system tray with quick-launch, native notifications, global settings,
-single-instance with deep links (`gameyfin://game/<id>`), gamepad navigation (the current
-Python client's full-app gamepad support is a genuinely nice feature worth keeping, `gilrs`
-crate), and auto-update via Tauri's updater.
+**Both platforms:** tray with quick-launch, notifications, single-instance with deep links
+(`gameyfin://game/<id>`), gamepad navigation (`gilrs`), Tauri auto-update.
 
-**Windows:** custom chrome with proper snap/aero behaviour, taskbar progress and jump list of
-installed games, Start Menu and desktop shortcuts, MSI/NSIS installer, optional Start-with-Windows.
+**Windows:** custom chrome with snap/aero, taskbar progress and jump list, Start Menu and
+desktop shortcuts, MSI/NSIS, optional Start-with-Windows.
 
-**Linux:** `.desktop` entries in `~/.local/share/applications` with icons, MPRIS-style tray via
-`ksni`, Flatpak (using the **host's Wine** through `flatpak-spawn`, rather than bundling a
-runtime) plus AppImage and `.deb`/`.rpm`, and XDG base-directory compliance.
+**Linux:** `.desktop` entries, tray via `ksni`, Flatpak plus AppImage and `.deb`/`.rpm`,
+XDG compliance.
 
-**Both:** register installed games as **non-Steam shortcuts** in
-`~/.local/share/Steam/userdata/<id>/config/shortcuts.vdf` (and the Windows equivalent) so they
-appear in Steam Big Picture / Steam Deck gaming mode. The current Python client already
-implements this correctly across native/Flatpak/legacy Steam locations
-(`services/steam_integration.py`), port that logic.
+**Both:** register installed games as non-Steam shortcuts in `shortcuts.vdf` (parsing the
+whole file, changing only our entry) so they appear in Steam Big Picture.
 
 ---
 
@@ -378,14 +302,12 @@ implements this correctly across native/Flatpak/legacy Steam locations
 | 4 | Save on machine A → restore on machine B; force a conflict by playing offline on both → dialog appears |
 | 5 | Game appears in Steam Big Picture; tray, notifications and deep links work on both OSes |
 
-Rust: unit tests per module, `mockito` for the Gameyfin API, and a fixture ludusavi output
-corpus so the JSON parsing is tested without the binary. Frontend: Vitest + Testing Library.
-End-to-end smoke test against a real Gameyfin instance in Docker (the server repo's `docker/` compose setup).
+Rust: per-module unit tests, `mockito` for the API, a fixture ludusavi corpus. Frontend:
+Vitest. End-to-end smoke test against a real Gameyfin instance in Docker.
 
 ---
 
 ## Sequencing note
 
-Phases 1-3 depend on **no** server changes (using the cookie fallback). Phase 4 depends on
-PR A + PR C. So client work can start immediately and in parallel with server review, which is
-the main reason for the auth strategy trait in Phase 1.
+Phases 1-3 need no server changes (cookie fallback); Phase 4 needs PR A + PR C. Client work
+runs in parallel with server review, which is why Phase 1 has the auth strategy trait.

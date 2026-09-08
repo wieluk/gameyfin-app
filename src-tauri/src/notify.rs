@@ -1,11 +1,5 @@
-//! Desktop notifications.
-//!
-//! The events worth interrupting someone for are the ones they are not watching: a
-//! download that took twenty minutes, an install that finished while they were in another
-//! window, a failure that would otherwise sit as red text on a tab nobody is looking at.
-//!
-//! Every notification is filtered twice, by category and by whether the user asked for
-//! that category at all, so turning the routine ones off still leaves failures audible.
+//! Desktop notifications, for events the user is not watching. Filtered by category and by
+//! the per-category setting, so turning the routine ones off still leaves failures audible.
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
@@ -16,11 +10,8 @@ use crate::state::AppState;
 /// What kind of event a notification reports, which decides the setting that gates it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
-    /// A download or an install reached the end.
     Transfer,
-    /// Something went wrong.
     Failure,
-    /// A new version of the app exists.
     Update,
 }
 
@@ -34,11 +25,8 @@ impl Category {
     }
 }
 
-/// Show a notification, if the user wants this kind.
-///
-/// Best effort throughout. A desktop with no notification daemon, a Flatpak whose portal
-/// is unavailable, a Windows session with focus assist on: none of these are reasons to
-/// fail the download that triggered the message.
+/// Show a notification, if the user wants this kind. Best effort: a missing daemon or portal
+/// is never a reason to fail the download that triggered the message.
 pub async fn send(app: &AppHandle, category: Category, title: &str, body: &str) {
     let settings = app.state::<AppState>().settings().await;
     if !category.enabled_in(&settings) {
@@ -46,8 +34,7 @@ pub async fn send(app: &AppHandle, category: Category, title: &str, body: &str) 
         return;
     }
 
-    // Suppressed while the user is looking at the window: telling someone what they can
-    // already see is the fastest way to get every notification turned off.
+    // Suppressed while the window is focused: don't tell someone what they can already see.
     if category != Category::Failure && is_focused(app) {
         tracing::debug!(?category, "notification suppressed: the window is focused");
         return;
@@ -92,11 +79,8 @@ pub async fn install_finished(app: &AppHandle, title: &str) {
     .await;
 }
 
-/// Something failed.
-///
-/// The stage is in the title rather than the body because a notification is often read as
-/// one line on a lock screen, and "Install failed" alone is more use than a truncated
-/// sentence about which file could not be written.
+/// Something failed. Stage goes in the title, not the body, since a notification is often
+/// read as one line on a lock screen.
 pub async fn failed(app: &AppHandle, stage: &str, title: &str, reason: &str) {
     send(
         app,
@@ -131,7 +115,6 @@ mod tests {
 
         settings.notify_transfers = false;
         assert!(!Category::Transfer.enabled_in(&settings));
-        // Turning the routine ones off must leave failures alone.
         assert!(Category::Failure.enabled_in(&settings));
         assert!(Category::Update.enabled_in(&settings));
 

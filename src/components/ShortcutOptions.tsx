@@ -5,11 +5,9 @@ import { backend, type ShortcutLocation } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 
 /**
- * Where an installed game can be launched from, besides this app.
- *
- * All three shortcuts run Gameyfin with `--launch <id>` rather than the game's executable,
- * so the prefix is prepared, the right runtime is picked and playtime is still recorded.
- * A shortcut straight to the `.exe` would do none of that.
+ * Where an installed game can be launched from, besides this app. Every shortcut runs
+ * Gameyfin with `--launch <id>`, not the `.exe`, so the prefix, runtime and playtime
+ * tracking still apply.
  */
 export function ShortcutOptions({ gameId }: { gameId: number }) {
   const [error, setError] = useState<string | null>(null);
@@ -40,9 +38,7 @@ export function ShortcutOptions({ gameId }: { gameId: number }) {
     setError(null);
     setNote(null);
     try {
-      // The message matters here: Steam reads its shortcuts file at startup, so the game
-      // does not appear until it is restarted, and without saying so the button looks
-      // like it failed.
+      // Steam only reads its shortcuts file at startup, so say to restart it.
       setNote(await backend.setSteamShortcut(gameId, enabled));
       await status.refetch();
     } catch (e) {

@@ -1,11 +1,5 @@
-//! Resume state for an in-flight download.
-//!
-//! A large game is tens of gigabytes, so losing progress to a crash, a dropped connection
-//! or a closed laptop lid is expensive. GameVault solves this by writing a small sidecar
-//! next to the partial file every couple of seconds and resuming with an HTTP `Range`
-//! request; this is the same idea with two additions, the expected total is recorded so a
-//! truncated file is detected, and the server's `ETag` is kept so a file that changed
-//! underneath us is not silently spliced together from two different versions.
+//! Resume state for an in-flight download: a sidecar next to the partial file recording
+//! progress, expected total, and the server `ETag` so a changed file is never spliced.
 
 use std::path::{Path, PathBuf};
 
@@ -13,22 +7,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CoreResult;
 
-/// How often progress is flushed to disk.
-///
-/// Two seconds bounds the worst-case loss to a couple of seconds of transfer while keeping
-/// the write rate negligible even on a slow disk.
+/// How often progress is flushed to disk; bounds worst-case loss while keeping writes cheap.
 pub const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Checkpoint {
-    /// Bytes already written to the partial file.
     pub received_bytes: u64,
-    /// Total size the server reported when the transfer began, if it reported one.
     pub total_bytes: Option<u64>,
-    /// The server's `ETag`, used to detect the file changing between attempts.
+    /// Server `ETag`, used to detect the file changing between attempts.
     pub etag: Option<String>,
-    /// Filename parsed from `Content-Disposition`, so a resume keeps the original name.
+    /// Filename from `Content-Disposition`, so a resume keeps the original name.
     pub filename: Option<String>,
 }
 
@@ -51,8 +40,7 @@ impl Checkpoint {
 
     pub async fn load(partial: &Path) -> Option<Self> {
         let bytes = tokio::fs::read(Self::sidecar_path(partial)).await.ok()?;
-        // A corrupt sidecar is not worth failing over: restarting the download is always
-        // a valid fallback, so treat it as absent.
+        // A corrupt sidecar is treated as absent; restarting the download is a valid fallback.
         serde_json::from_slice(&bytes).ok()
     }
 
@@ -71,29 +59,24 @@ impl Checkpoint {
         }
     }
 
-    /// Whether a stored checkpoint can be used to continue against the current response.
-    ///
-    /// A changed `ETag` means the server's copy is not the one we started, so resuming
-    /// would splice two different files together.
+    /// Whether a stored checkpoint can continue against the current response; a changed or
+    /// mismatched `ETag` blocks the resume to avoid splicing two different files.
     pub fn is_resumable_against(&self, current_etag: Option<&str>) -> bool {
         if self.received_bytes == 0 {
             return false;
         }
         match (&self.etag, current_etag) {
             (Some(stored), Some(current)) => stored == current,
-            // With no ETag on either side there is nothing to contradict the resume.
             (None, None) => true,
             // One side has a validator and the other does not: too weak to trust.
             _ => false,
         }
     }
 
-    /// Reconcile a checkpoint against the partial file actually on disk.
+    /// Reconcile a checkpoint against the partial file on disk.
     ///
-    /// The sidecar is written after the bytes, so a crash between the two leaves the file
-    /// *longer* than the checkpoint claims. Trusting the checkpoint in that case would
-    /// re-request bytes already present and duplicate them. The file length is the
-    /// authority; the checkpoint only carries the metadata.
+    /// The sidecar is written after the bytes, so after a crash the file can be longer than
+    /// the checkpoint claims; the file length is the authority.
     pub fn reconcile(&mut self, file_len: u64) {
         self.received_bytes = file_len;
     }

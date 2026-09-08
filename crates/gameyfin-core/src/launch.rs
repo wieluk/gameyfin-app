@@ -1,11 +1,6 @@
-//! Launching games.
-//!
-//! Windows and native Linux builds are executed directly. Windows games on Linux go
-//! through Wine: one runtime for every package format, available from any distribution's
-//! repositories, so there is one thing for a user to install and one thing to diagnose.
-//! Proton, through umu-launcher or a Steam build, is used only when Wine is absent and
-//! it happens to be present. Each game gets its own Wine prefix so one game's
-//! configuration or crash cannot disturb another's.
+//! Launching games. Windows and native Linux builds run directly; Windows games on Linux
+//! go through Wine, with Proton (umu or Steam) only as a fallback when Wine is absent.
+//! Each game gets its own Wine prefix.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;

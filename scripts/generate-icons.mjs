@@ -1,13 +1,7 @@
 #!/usr/bin/env node
 /**
- * Renders the Gameyfin logo into the app's icon set.
- *
- * The logo is an SVG with a non-square viewBox, while an app icon must be square with
- * breathing room around the artwork. The root `viewBox` is therefore widened to a padded
- * square before rendering, the artwork itself is untouched.
- *
- * The rendered PNG is handed to `tauri icon`, which produces every size the platforms
- * need, including the Windows `.ico` and macOS `.icns`.
+ * Renders the Gameyfin logo into the app's icon set. The logo's non-square viewBox is
+ * widened to a padded square (artwork untouched), then `tauri icon` produces every size.
  */
 
 import { execFileSync } from "node:child_process";

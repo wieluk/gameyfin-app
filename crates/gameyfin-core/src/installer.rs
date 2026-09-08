@@ -1,12 +1,6 @@
-//! Recognising installer toolkits, and telling them where to install.
-//!
-//! Most Windows installers accept the destination on the command line. Passing it removes
-//! the step where the user has to paste a path into a dialog, and, more importantly,
-//! stops them installing somewhere the app will never find. The path is still offered for
-//! copying, because a toolkit we do not recognise will ask anyway.
-//!
-//! Detection reads the file's bytes rather than trusting its name: every toolkit stamps
-//! an identifying string into the executable, and the filename says nothing.
+//! Recognising installer toolkits (from an identifying string in the executable, not the
+//! name) so the destination can be passed on the command line, keeping the game where the
+//! app can find it. The path is still offered for copying, for an unrecognised toolkit.
 
 use std::io::Read;
 use std::path::Path;

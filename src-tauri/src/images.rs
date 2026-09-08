@@ -1,13 +1,7 @@
-//! Serving game artwork to the webview.
-//!
-//! Artwork cannot simply be linked to directly. Gameyfin's `/images/**` controller carries
-//! `@DynamicPublicAccess`, so on an instance that does not allow anonymous browsing it
-//! answers 401, and an `<img>` tag cannot authenticate, because the session cookies live
-//! in this process rather than in the webview's own jar.
-//!
-//! So the app registers its own URI scheme. The webview asks for `gfimg://…`, this fetches
-//! the bytes with the authenticated client, and hands them back. The webview never needs
-//! credentials, and the content security policy stays narrow.
+//! Serving game artwork to the webview over a `gfimg://` scheme. An `<img>` tag cannot
+//! authenticate to Gameyfin's access-controlled `/images/**` (the session cookies are in
+//! this process, not the webview's jar), so this fetches the bytes with the authenticated
+//! client and hands them back.
 
 use tauri::http::{Request, Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeContext, UriSchemeResponder, Wry};

@@ -1,12 +1,6 @@
 /**
- * Writes one version into every file that carries it.
- *
- * The release workflow runs this from the git tag, so the tag is the single source of
- * truth and the committed numbers are only a placeholder. Without it a tag names the
- * release while the artifacts inside keep whatever version was last committed, which
- * fails silently: nothing errors, the files are just wrong.
- *
- * Usage: node scripts/set-version.mjs 1.2.3
+ * Writes one version into every file that carries it, so the git tag is the single
+ * source of truth for a release. Usage: node scripts/set-version.mjs 1.2.3
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -43,8 +37,7 @@ const today = new Date().toISOString().slice(0, 10);
 
 console.log(`Setting version ${version}:`);
 
-// The one that decides what the built artifacts are called: src-tauri inherits it, and
-// Tauri reads it from there because tauri.conf.json deliberately carries no version.
+// Names the built artifacts: src-tauri inherits it, and tauri.conf.json carries no version.
 edit("Cargo.toml", /^version = "\d+\.\d+\.\d+[^"]*"$/m, `version = "${version}"`);
 
 edit("package.json", /^  "version": "\d+\.\d+\.\d+[^"]*",$/m, `  "version": "${version}",`);

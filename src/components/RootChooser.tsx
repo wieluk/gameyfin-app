@@ -13,14 +13,8 @@ export function useLibraryRoots() {
 const LAST_ROOT_KEY = "gameyfin.lastRoot";
 
 /**
- * Asks which games folder a download should go to.
- *
- * Only shown when there is more than one, so anyone with a single folder never sees it:
- * a chooser with one option is a dialog that exists to be dismissed.
- *
- * Free space is the reason this is a dialog rather than a dropdown. Choosing where a
- * 90 GB download goes without being told which drive has room for it is not a choice, and
- * a full disk surfaces hours later as a failed transfer.
+ * Asks which games folder a download should go to. Shown only when there is more than
+ * one; a dialog rather than a dropdown so the free space on each is visible.
  */
 export function RootChooser({
   title,
@@ -37,8 +31,7 @@ export function RootChooser({
   const roots = useLibraryRoots();
   const [selected, setSelected] = useState<string | null>(null);
 
-  // Preselect where the last download went, which is nearly always where this one should
-  // go too.
+  // Preselect where the last download went; nearly always right for this one too.
   useEffect(() => {
     if (!roots.data || roots.data.length === 0 || selected) return;
     let remembered: string | null = null;
@@ -134,8 +127,7 @@ function RootOption({
   selected: boolean;
   onSelect: () => void;
 }) {
-  // Called out rather than disabled: the size is the server's estimate, the drive may be
-  // freed up in a moment, and refusing outright would be presumptuous.
+  // Called out rather than disabled: the size is only the server's estimate.
   const tooSmall =
     requiredBytes !== undefined && root.freeBytes !== null && root.freeBytes < requiredBytes;
 
@@ -164,7 +156,7 @@ function RootOption({
             : root.freeBytes === null
               ? "Free space unknown"
               : `${formatBytes(root.freeBytes)} free`}
-          {root.isDefault ? " · default" : ""}
+          {root.isDefault ? " (default)" : ""}
         </span>
       </span>
       {tooSmall && (

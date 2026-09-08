@@ -1,13 +1,5 @@
-//! Picking the executable to launch from an extracted game directory.
-//!
-//! The old Gameyfin desktop client collects every `.exe` under the folder and, if there is
-//! more than one, shows the user a list (`services/launcher_resolver.py`). For a typical
-//! game that list is dozens of entries long, redistributables, crash handlers, tooling,
-//! so the user has to know which one is the game.
-//!
-//! This module scores candidates instead, and only asks when the result is genuinely
-//! unclear. The scoring is deliberately conservative: it prefers being unsure over being
-//! confidently wrong, because launching the wrong binary can run an installer.
+//! Picking the executable to launch from an extracted game directory by scoring candidates,
+//! conservatively: it prefers asking over being confidently wrong.
 
 use std::path::{Path, PathBuf};
 
@@ -55,9 +47,6 @@ const EXCLUDED_STEMS: &[&str] = &[
 ];
 
 /// Filename stems that identify a setup program rather than the game.
-///
-/// These are excluded from launch candidates, but they are exactly what has to be *found*
-/// when an archive turns out to contain an installer instead of a ready-to-run game.
 const INSTALLER_STEMS: &[&str] = &["setup", "install", "installer", "autorun"];
 
 /// Whether a filename names a runtime redistributable rather than a game.
@@ -80,11 +69,7 @@ fn is_redistributable(stem: &str) -> bool {
     MARKERS.iter().any(|marker| stem.contains(marker))
 }
 
-/// Whether a filename looks like a setup program *for the game*.
-///
-/// Redistributables are installers too, `vcredist_x64.exe`, `dxwebsetup.exe`,
-/// `oalinst.exe`, but offering one as "the setup program" sends the user to install
-/// DirectX instead of their game.
+/// Whether a filename looks like a setup program *for the game* (redistributables excluded).
 pub fn looks_like_installer(path: &Path) -> bool {
     let Some(stem) = path
         .file_stem()
@@ -93,9 +78,8 @@ pub fn looks_like_installer(path: &Path) -> bool {
         return false;
     };
 
-    // Note: EXCLUDED_STEMS is deliberately *not* consulted here. It exists to keep setup
-    // programs out of the *launch* candidates, and it contains "setup", exactly what
-    // this function is looking for.
+    // EXCLUDED_STEMS is deliberately not consulted here: it contains "setup", which is
+    // exactly what this function looks for.
     if is_redistributable(&stem) {
         return false;
     }
@@ -111,7 +95,6 @@ pub fn looks_like_installer(path: &Path) -> bool {
         return false;
     }
 
-    // `setup.exe`, but also `setup_game_1.2.exe` and `GameSetup.exe`.
     INSTALLER_STEMS.iter().any(|marker| {
         stem == *marker || stem.starts_with(&format!("{marker}_")) || stem.ends_with(marker)
     })
@@ -129,14 +112,11 @@ pub fn looks_like_uninstaller(path: &Path) -> bool {
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
 
-    // `unins000.exe` is Inno Setup's; the others cover NSIS and common variants.
     is_exe && (stem.starts_with("unins") || stem == "uninstall" || stem == "uninstaller")
 }
 
-/// Find an uninstaller in a game's install directory.
-///
-/// Running the game's own uninstaller removes registry entries and shortcuts that simply
-/// deleting the folder would leave behind.
+/// Find an uninstaller in a game's install directory, so registry entries and shortcuts
+/// that deleting the folder would leave behind get cleaned up.
 pub fn find_uninstaller(root: &Path) -> Option<PathBuf> {
     let entries = std::fs::read_dir(root).ok()?;
     let mut found: Vec<PathBuf> = entries
@@ -148,11 +128,8 @@ pub fn find_uninstaller(root: &Path) -> Option<PathBuf> {
     found.into_iter().next()
 }
 
-/// Find setup programs under a directory.
-///
-/// Some libraries hold an archive *containing* an installer: extracting it produces a
-/// setup program, not a playable game. Surfacing those lets the app offer to run one
-/// instead of leaving the user with a folder and no launchable file.
+/// Find setup programs under a directory, for archives that contain an installer rather
+/// than a ready-to-run game.
 pub fn find_installers(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut found = Vec::new();
     walk(root, 0, 3, &mut |path| {
@@ -320,11 +297,7 @@ fn score_file(root: &Path, path: &Path, title: &str) -> Option<i32> {
     Some(score)
 }
 
-/// Whether a file looks launchable on either platform.
-///
-/// On Windows the extension decides. On Linux there is no reliable extension, so this
-/// accepts Windows executables (played through Proton) and extensionless files, which is
-/// what native Linux builds normally ship.
+/// Whether a file looks launchable on either platform (Windows executables run via Proton).
 fn is_executable(path: &Path) -> bool {
     match path
         .extension()
@@ -357,16 +330,8 @@ fn normalize(value: &str) -> String {
         .collect()
 }
 
-/// Whether a file starts with the `MZ` signature every Windows executable carries.
-///
-/// Wine's own diagnosis of a file that is not a PE is `ShellExecuteEx failed: Bad format`,
-/// buried under a page of startup chatter, which reads as "Wine is broken" rather than
-/// "that file is not a program". Checking two bytes first turns it into a sentence the
-/// user can act on.
-///
-/// Deliberately shallow: this rejects what is obviously not a program (a truncated
-/// download, a text file, a stub) rather than validating the PE format. A file that passes
-/// here can still fail to run for reasons only Wine can determine.
+/// Whether a file starts with the `MZ` signature, checked up front so a non-PE file gets an
+/// actionable message instead of Wine's buried `Bad format`. Shallow: not a PE validation.
 pub fn looks_like_windows_program(path: &std::path::Path) -> bool {
     use std::io::Read;
 
@@ -376,7 +341,6 @@ pub fn looks_like_windows_program(path: &std::path::Path) -> bool {
     let mut signature = [0u8; 2];
     match file.read_exact(&mut signature) {
         Ok(()) => &signature == b"MZ",
-        // Shorter than two bytes: certainly not a program.
         Err(_) => false,
     }
 }

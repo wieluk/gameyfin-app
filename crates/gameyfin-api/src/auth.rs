@@ -1,17 +1,10 @@
-//! Authentication strategies for the Gameyfin server.
+//! Authentication strategies. Gameyfin 2.4 has no token path, only a Spring session cookie
+//! plus CSRF, so two strategies exist behind [`AuthStrategy`]:
 //!
-//! Gameyfin 2.4 authenticates browsers with a Spring session cookie plus a CSRF token and
-//! has no token or API-key path (`core/security/SecurityConfig.kt`; CORS is disabled).
-//! Two strategies are therefore provided:
-//!
-//! * [`DeviceTokenAuth`], the target. Sends `Authorization: Bearer <secret>` against the
-//!   device-token endpoints proposed in the server plan (PR A). Trivial and stateless.
-//! * [`CookieSessionAuth`], the fallback that works against an unmodified server today.
-//!   A webview performs the (possibly SSO) login, we harvest its cookies, and derive the
-//!   CSRF token exactly the way Hilla's own client does.
-//!
-//! The rest of the crate is written against [`AuthStrategy`], so moving from one to the
-//! other is a construction-site change rather than a rewrite.
+//! * [`DeviceTokenAuth`], the target: `Authorization: Bearer <secret>` against the PR A
+//!   endpoints. Stateless.
+//! * [`CookieSessionAuth`], the fallback for an unmodified server: a webview logs in, we
+//!   harvest its cookies and derive the CSRF token as Hilla's own client does.
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -1,16 +1,9 @@
-//! Registering installed games with Steam as non-Steam shortcuts.
+//! Registering installed games with Steam as non-Steam shortcuts in `shortcuts.vdf`, a
+//! binary key/value file, so they appear in Big Picture.
 //!
-//! Steam keeps non-Steam games in `shortcuts.vdf`, a binary key/value file under
-//! `userdata/<steamid>/config/`. Adding entries there is what makes a game appear in Big
-//! Picture, which is the whole point of doing it: a couch launcher that cannot be reached
-//! from the couch interface everyone already uses is only half a feature.
-//!
-//! **The file is not ours.** Other launchers (Heroic, Lutris, Bottles) write to it too,
-//! and a user may have dozens of hand-made entries. So this parses the whole document
-//! into a generic tree, changes only the entry it owns, and writes the tree back, rather
-//! than serialising a fixed set of fields it happens to know about. Keys this code has
-//! never heard of survive untouched, which is the difference between adding a shortcut
-//! and quietly truncating someone's library.
+//! The file is shared with other launchers, so this parses the whole document into a
+//! generic tree, changes only its own entry, and writes it back, leaving unknown keys
+//! untouched.
 //!
 //! # The format
 //!
@@ -23,9 +16,8 @@
 //! | 0x02 | little-endian `i32`                         |
 //! | 0x08 | end of the current map                      |
 //!
-//! Steam writes a few other tags (0x03 for a 64-bit int, 0x07 for a `u64`) in other
-//! files; they are parsed and preserved here so a document containing them round-trips
-//! rather than failing.
+//! Tags 0x03 and 0x07 (seen in other files) are parsed and preserved so a document
+//! containing them round-trips.
 
 use std::path::{Path, PathBuf};
 

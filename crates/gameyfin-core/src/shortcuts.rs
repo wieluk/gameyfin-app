@@ -1,15 +1,8 @@
-//! Desktop and application-menu shortcuts for installed games.
+//! Desktop and application-menu shortcuts for installed games. Linux gets freedesktop
+//! `.desktop` entries; Windows a `.url`-style shim, since a real `.lnk` needs COM.
 //!
-//! A launcher that can only be launched from inside itself is a worse launcher. On Linux
-//! this writes freedesktop `.desktop` entries; on Windows it writes a `.url`-style shim,
-//! because a real `.lnk` needs COM and the shell's `IShellLink`, which is a lot of unsafe
-//! code for a file whose only job is to start a process.
-//!
-//! Every shortcut launches **the app**, not the game's executable directly, with a
-//! `--launch <id>` argument. That indirection is the point: launching through Gameyfin
-//! means the Wine prefix is prepared, the right runtime is chosen, and the play session is
-//! supervised so playtime is still recorded. A shortcut straight to the `.exe` would run
-//! under whatever the desktop happened to do with it, usually nothing.
+//! Every shortcut runs **the app** with `--launch <id>`, not the `.exe`, so the prefix,
+//! runtime choice and playtime supervision still apply.
 
 use std::path::{Path, PathBuf};
 

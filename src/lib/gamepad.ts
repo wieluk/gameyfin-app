@@ -129,8 +129,7 @@ export function activateFocused(): boolean {
   const active = document.activeElement;
   if (!(active instanceof HTMLElement)) return false;
 
-  // A text field should take the button as "start typing", not as a click, and there is
-  // no on-screen keyboard to offer, so focus is simply left where it is.
+  // In a text field, leave focus where it is: there is no on-screen keyboard to offer.
   if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
     return false;
   }
@@ -165,8 +164,7 @@ function scrollContainer(): HTMLElement | null {
     if (scrolls && node.scrollHeight > node.clientHeight) return node;
     node = node.parentElement;
   }
-  // The app's panes each scroll internally, so fall back to the largest one on screen
-  // rather than the document, which never scrolls.
+  // Panes scroll internally, so use the largest one on screen, not the document.
   const panes = Array.from(document.querySelectorAll<HTMLElement>(".overflow-y-auto"));
   return panes.find((pane) => pane.scrollHeight > pane.clientHeight) ?? null;
 }
@@ -200,8 +198,7 @@ export const TAB_ORDER = ["/", "/downloads", "/installed", "/settings"] as const
 
 /** The route a bumper press should go to, given where we are. */
 export function nextTab(current: string, step: 1 | -1): string {
-  // An unknown route (a dialog's own path, say) starts from the library rather than
-  // refusing to move.
+  // An unknown route starts from the library rather than refusing to move.
   const index = TAB_ORDER.indexOf(current as (typeof TAB_ORDER)[number]);
   const from = index === -1 ? 0 : index;
   const next = (from + step + TAB_ORDER.length) % TAB_ORDER.length;

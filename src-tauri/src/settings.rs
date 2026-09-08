@@ -1,10 +1,5 @@
-//! Persisted client settings.
-//!
-//! Stored as JSON in the platform config directory. The session cookies live here too so
-//! the user is not asked to sign in on every launch, they are written with owner-only
-//! permissions on Unix. Moving them into the OS keyring (Credential Manager / libsecret)
-//! is the intended next step; the device-token work makes that simpler, because a single
-//! long-lived token is a far better fit for a keyring entry than a cookie jar.
+//! Persisted client settings, JSON in the platform config directory. Session cookies live
+//! here too (owner-only on Unix); moving them to the OS keyring is the intended next step.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

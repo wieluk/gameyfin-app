@@ -59,8 +59,7 @@ export function App() {
   const needsSetup = ready && !(status.data?.configured && status.data?.authenticated);
   const offline = Boolean(status.data?.offline);
 
-  // Everything fetched while the server was down came from the local cache, so the moment
-  // it answers again the whole lot is worth re-reading.
+  // Once the server answers again, everything fetched from cache while it was down is worth re-reading.
   const wasOffline = useRef(offline);
   useEffect(() => {
     if (wasOffline.current && !offline) void queryClient.invalidateQueries();
@@ -93,18 +92,15 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   const settings = useAppSettings();
   const couch = useCouch((state) => state.couch);
 
-  // Controller bindings are mounted once, here, rather than per view: what a button does
-  // depends on what is on screen, which this reads at the time of the press.
+  // Bindings mount once here; what a button does is resolved at press time from what is on screen.
   useGamepad();
 
-  // The layout switch is an attribute on the root element so it can be expressed in CSS
-  // once, rather than as a prop every component has to accept and forward.
+  // A root-element attribute so the layout switch lives in CSS, not a prop threaded everywhere.
   useEffect(() => {
     document.documentElement.dataset.couch = couch ? "true" : "false";
   }, [couch]);
 
-  // Tailwind and HeroUI both key off a `dark` class on the root element, so the palette
-  // is one class toggle rather than anything the components see.
+  // Tailwind and HeroUI both key off a `dark` class on the root element.
   const theme = settings.data?.theme ?? "dark";
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -120,8 +116,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     return () => media.removeEventListener("change", apply);
   }, [theme]);
 
-  // The tray's menu items navigate the window that is already open, rather than
-  // reloading it at a URL and losing every in-flight query.
+  // Tray items navigate the open window rather than reloading it and losing in-flight queries.
   useEffect(() => {
     if (isMockBackend) return;
     let cancelled = false;
@@ -145,9 +140,8 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     ["downloading", "extracting", "extracted", "installing"].includes(e.state.kind),
   ).length;
 
-  // `game-state` is patched into the cache directly; refetching the whole catalogue
-  // several times a second left progress bars appearing frozen. `library-changed`
-  // is for structural changes and does refetch.
+  // `game-state` is patched into the cache directly (refetching the catalogue that often
+  // froze progress bars); `library-changed` is structural and does refetch.
   useEffect(() => {
     if (isMockBackend) return;
     const unlisteners: Array<() => void> = [];
@@ -200,13 +194,8 @@ function Splash() {
   );
 }
 
-/**
- * Shown while the server cannot be reached.
- *
- * Deliberately a banner and not a blocking screen. Installed games live on this machine
- * and still launch, so the app carries on working from what it cached and says plainly
- * which parts cannot work until the server is back.
- */
+/** Shown while the server is unreachable. A banner, not a blocking screen: cached data
+ * and installed games still work. */
 function OfflineBanner({ serverUrl }: { serverUrl: string | null }) {
   return (
     <div

@@ -36,8 +36,7 @@ function centre(box: Box): Point {
  * yours unreachable in both directions.
  */
 function distanceAhead(from: Box, to: Box, direction: Direction): number | null {
-  // A small tolerance stops rounding on a scaled display from making two items in the
-  // same row look staggered.
+  // Tolerance absorbs sub-pixel rounding on scaled displays.
   const slack = 1;
   switch (direction) {
     case "right":
@@ -57,8 +56,7 @@ function crossAxisOffset(from: Box, to: Box, direction: Direction): number {
   const b = centre(to);
   const horizontal = direction === "left" || direction === "right";
   if (horizontal) {
-    // Overlapping vertically counts as perfectly aligned, which is what makes a row of
-    // differently sized buttons feel like a row.
+    // Vertical overlap counts as aligned, so a row of differently sized buttons feels like a row.
     if (to.bottom > from.top && to.top < from.bottom) return 0;
     return Math.abs(b.y - a.y);
   }

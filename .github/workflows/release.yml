@@ -5,15 +5,13 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-# tauri-action needs write access to create the draft release, and the Flatpak repository
-# is published to the gh-pages branch of this same repository.
+# Draft release creation, and Pages for the Flatpak repository.
 permissions:
   contents: write
   pages: write
 
 jobs:
-  # Nothing is built for release until the same checks a push runs have passed, on both
-  # platforms. A tag can point at any commit, so this is not redundant with the push run.
+  # A tag can point at any commit, so re-run CI before building the release.
   test:
     uses: ./.github/workflows/ci.yml
 
@@ -44,9 +42,7 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
             librsvg2-dev libsoup-3.0-dev patchelf libudev-dev
 
-      # The tag is the only source of truth for the version. The numbers committed in
-      # Cargo.toml, package.json and the metainfo are a placeholder, and without this the
-      # release is named after the tag while the files inside keep the committed version.
+      # The tag is the only source of truth for the version.
       - name: Set the version from the tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: node scripts/set-version.mjs "${{ github.ref_name }}"
@@ -55,12 +51,8 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signs the AppImage, MSI and NSIS bundles and writes `latest.json` beside
-          # them, which is what the in-app updater verifies against. Generate the pair
-          # once with `npm run tauri signer generate`, put the private half in this
-          # secret and the public half in `tauri.conf.json`. Without the secret the build
-          # still succeeds and simply produces no updater artifacts, so those users fall
-          # back to being told a release exists.
+          # Signs the updater artifacts. Absent, the build still succeeds with no updater
+          # bundles and those users just get told a release exists.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -97,9 +89,7 @@ jobs:
             https://flathub.org/repo/flathub.flatpakrepo
           flatpak install -y --user flathub org.gnome.Platform//48 org.gnome.Sdk//48
 
-      # The tag is the only source of truth for the version. The numbers committed in
-      # Cargo.toml, package.json and the metainfo are a placeholder, and without this the
-      # release is named after the tag while the files inside keep the committed version.
+      # The tag is the only source of truth for the version.
       - name: Set the version from the tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: node scripts/set-version.mjs "${{ github.ref_name }}"
@@ -115,21 +105,14 @@ jobs:
           name: flatpak-bundle
           path: build/*.flatpak
 
-      # Without this the Flatpak stays a 90-day CI artifact and never reaches users.
       - name: Attach the Flatpak to the draft release
         if: startsWith(github.ref, 'refs/tags/')
         run: gh release upload "$GITHUB_REF_NAME" build/*.flatpak --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # A single-file bundle cannot update itself: `flatpak install` on a `.flatpak` is a
-      # one-off with no remote to check later. Exporting the same build into a real
-      # repository is what lets `flatpak update`, and therefore GNOME Software and the
-      # user's ordinary update routine, see new versions at all.
-      #
-      # The existing repository is fetched first. An ostree repo is a running history, and
-      # building a fresh one each release would rewrite the summary to contain only the
-      # newest commit, which breaks the delta from any older version a user is actually on.
+      # A `.flatpak` bundle cannot update itself, so also export into an ostree repo that
+      # `flatpak update` can track. Fetch the existing one first to keep its history.
       - name: Fetch the published Flatpak repository
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/checkout@v5
@@ -143,13 +126,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p pages/repo
-          # Creates the repository on the first release and adds a commit on every one
-          # after, so upgrades stay incremental.
           flatpak build-import-bundle pages/repo build/*.flatpak
           flatpak build-update-repo --generate-static-deltas --prune pages/repo
 
-          # The file a user opens to add the remote. Unsigned: a GPG key would have to
-          # live in CI, and the transport is HTTPS from a fixed origin either way.
+          # The file a user opens to add the remote. Unsigned: HTTPS from a fixed origin.
           cat > pages/repo/gameyfin.flatpakrepo <<'EOF'
           [Flatpak Repo]
           Title=Gameyfin

@@ -64,7 +64,7 @@ export function InstalledView() {
       <>
         {header}
         <Empty icon="installed" title="Nothing installed yet">
-          Download a game, extract it, then install it from the Downloads tab.
+          Download a game and install it from the Downloads tab.
         </Empty>
       </>
     );
@@ -90,8 +90,7 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const queryClient = useQueryClient();
 
-  // A rejected launch used to be discarded, so a failure looked like the button doing
-  // nothing at all.
+  // Awaited, so a failed launch shows an error instead of looking like nothing happened.
   async function play() {
     setError(null);
     try {
@@ -105,9 +104,7 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
     setConfirmUninstall(false);
     setError(null);
     try {
-      // The game's own uninstaller runs first when it has one, so registry entries and
-      // shortcuts go too rather than being orphaned. Which one that is comes from the
-      // dialog, because detection can miss an oddly named program.
+      // The uninstaller (chosen in the dialog) runs first to clear registry entries and shortcuts.
       await backend.uninstall(entry.game.id, options.runUninstaller, options.uninstaller);
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     } catch (e) {
@@ -118,17 +115,14 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
   const path = entry.state.kind === "installed" ? entry.state.path : null;
   const executable = entry.state.kind === "installed" ? entry.state.executable : null;
   const setups = entry.state.kind === "installed" ? (entry.state.setupCandidates ?? []) : [];
-  // An installed game does not need its archive any more, but deleting it silently would
-  // be presumptuous, so it is offered, dismissably, rather than done.
+  // Offered dismissably, not done: deleting the leftover archive silently would be presumptuous.
   const [dismissedCleanup, setDismissedCleanup] = useState(false);
   const stagingSetups =
     entry.state.kind === "installed" ? (entry.state.stagingSetups ?? []) : [];
   const stagingPresent = entry.state.kind === "installed" && Boolean(entry.state.stagingPresent);
-  // Either the archive or the unpacked files can be reclaimed once a game is installed.
   const canReclaim =
     entry.state.kind === "installed" && (entry.archivePresent || stagingPresent) && !dismissedCleanup;
-  // An archive that unpacked to an installer is not finished: there is nothing to play
-  // until setup has run.
+  // Nothing to play until setup has run.
   const needsSetup = setups.length > 0 && !executable;
 
   return (
@@ -299,8 +293,7 @@ function Options({
   onUninstall: () => void;
 }) {
   const gameId = entry.game.id;
-  // Its own error line: this component is rendered inside an expanded row, far from the
-  // page-level error, and a failure to open a folder belongs next to the button.
+  // Its own error line: the page-level error is far from this expanded row.
   const [folderError, setFolderError] = useState<string | null>(null);
   const executables = useQuery({
     queryKey: ["executables", gameId],
@@ -372,8 +365,7 @@ function Options({
         <button
           type="button"
           onClick={async () => {
-            // The promise used to be discarded with `void`, so a rejection disappeared:
-            // the click did nothing and explained nothing.
+            // Awaited, so a rejection surfaces instead of the click doing nothing silently.
             setFolderError(null);
             try {
               await backend.openFolder(gameId, "installations");

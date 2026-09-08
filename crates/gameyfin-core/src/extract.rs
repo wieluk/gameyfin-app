@@ -1,12 +1,8 @@
 //! Unpacking a downloaded game.
 //!
-//! Formats are detected from the file's own bytes rather than its extension: servers and
-//! providers are not consistent about naming, and unpacking the wrong way round produces a
-//! confusing failure much later.
-//!
-//! Archive entry paths are attacker-controlled in principle, they come from a file the
-//! server handed us, so every path is checked to stay inside the destination. Without
-//! that, an entry named `../../.bashrc` would escape and overwrite files elsewhere.
+//! Formats are detected from the file's own bytes rather than its extension, since naming
+//! is inconsistent. Archive entry paths are attacker-controlled, so every one is checked
+//! to stay inside the destination.
 
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
@@ -19,9 +15,7 @@ use crate::error::{CoreError, CoreResult};
 pub enum ArchiveKind {
     Zip,
     SevenZip,
-    /// RAR. Unpacked with an external tool: the only complete RAR implementations carry
-    /// licence terms that forbid redistributing them inside another application, so this
-    /// uses whatever the system already has.
+    /// RAR. Unpacked with an external tool: complete RAR implementations cannot be redistributed.
     Rar,
     /// A tar, optionally compressed. How Linux builds of a game usually arrive.
     Tar(TarCompression),
@@ -65,9 +59,7 @@ pub fn detect(path: &Path) -> CoreResult<ArchiveKind> {
         return Ok(kind);
     }
 
-    // A plain tar has no signature at the start: the first 257 bytes are the first
-    // member's name, mode and owner, and only then comes the format marker. Checked last
-    // so it costs a seek only for a file nothing else claimed.
+    // A plain tar has no signature at offset zero; the `ustar` marker is at byte 257. Checked last.
     if file.seek(SeekFrom::Start(TAR_MAGIC_OFFSET)).is_ok() {
         let mut marker = [0u8; 5];
         if file.read_exact(&mut marker).is_ok() && &marker == b"ustar" {
@@ -89,14 +81,11 @@ pub(crate) fn detect_bytes(magic: &[u8]) -> ArchiveKind {
     if magic.starts_with(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) {
         return ArchiveKind::SevenZip;
     }
-    // "Rar!\x1a\x07\x00" is RAR 1.5-4.x; the 5.x signature adds a byte. Both start the
-    // same way, which is enough to identify the format.
+    // RAR 1.5-4.x and 5.x share this prefix, which is enough to identify the format.
     if magic.starts_with(b"Rar!\x1a\x07") {
         return ArchiveKind::Rar;
     }
-    // Compression wrappers. What is inside is assumed to be a tar, which is what these
-    // are used for in practice; a stream that turns out not to be one is reported when it
-    // fails to parse rather than guessed at here.
+    // Compression wrappers; the contents are assumed to be a tar.
     if magic.starts_with(&[0x1F, 0x8B]) {
         return ArchiveKind::Tar(TarCompression::Gzip);
     }
@@ -123,11 +112,8 @@ pub struct ExtractProgress {
 }
 
 impl ExtractProgress {
-    /// Completion, by bytes where possible.
-    ///
-    /// Entry counts are a poor proxy: a game archive is frequently one enormous file, so
-    /// counting entries leaves the bar at zero until it snaps to done. Bytes move
-    /// smoothly regardless of how the archive is laid out.
+    /// Completion, by bytes where possible: a game archive is often one huge file, so entry
+    /// counts leave the bar stuck at zero.
     pub fn percent(&self) -> f64 {
         if self.bytes_total > 0 {
             return ((self.bytes_written as f64 / self.bytes_total as f64) * 100.0)

@@ -1,24 +1,13 @@
 import { create } from "zustand";
 
-/**
- * How the library is currently being viewed.
- *
- * Kept in a store rather than component state so it survives navigating to another tab
- * and back, losing a search and sort every time you check a download is needlessly
- * annoying, and persisted so it also survives a restart.
- */
+/** How the library is being viewed. In a persisted store so it survives tab changes and restarts. */
 
 export type SortKey = "title" | "recent" | "size" | "playtime";
 export type SortDirection = "asc" | "desc";
 /** Which games to show, by whether they are on this machine. */
 export type PresenceFilter = "all" | "installed" | "not-installed";
 
-/**
- * A filter on one of the game's list-valued fields.
- *
- * Null means "any". These are separate from the library filter because a library is where
- * a game lives, while these describe what it is.
- */
+/** A filter on one of the game's list-valued fields. Null means "any". */
 export interface FacetFilters {
   genre: string | null;
   developer: string | null;
@@ -115,13 +104,7 @@ export const useLibraryView = create<LibraryView>((set, get) => ({
     set(persisting({ facets: { genre: null, developer: null, publisher: null } }, get)),
 }));
 
-/**
- * Apply a change and write the whole view out.
- *
- * One place rather than a `save(...)` call in every setter: those each had to name every
- * persisted field, so adding one meant editing all of them and any that was missed simply
- * stopped saving, silently.
- */
+/** Apply a change and persist the whole view, so a new field cannot be left unsaved. */
 function persisting(
   change: Partial<Persisted>,
   get: () => LibraryView,

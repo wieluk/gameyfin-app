@@ -34,12 +34,9 @@ impl CommandRunner for ProcessRunner {
         let mut command = tokio::process::Command::new(program);
         command.args(args);
 
-        // Ludusavi opens a console window on Windows unless told otherwise, which would
-        // flash on screen every time a save is backed up.
+        // Suppress the console window Ludusavi would flash on Windows every backup.
         #[cfg(windows)]
         {
-            // tokio's Command exposes creation_flags directly; the std CommandExt trait
-            // is not needed and importing it is an unused import.
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             command.creation_flags(CREATE_NO_WINDOW);
         }

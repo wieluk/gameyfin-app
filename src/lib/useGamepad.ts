@@ -35,9 +35,7 @@ export function useGamepad() {
 
   const couchAuto = settings.data?.couchModeAuto ?? true;
 
-  // Read through a ref so the listeners can stay mounted for the life of the shell.
-  // Re-subscribing on every navigation would drop presses during the resubscribe, which
-  // reads as the pad intermittently not working.
+  // Read through a ref so listeners stay mounted; re-subscribing on nav would drop presses.
   const context = useRef({ pathname: location.pathname, couchAuto });
   context.current = { pathname: location.pathname, couchAuto };
 
@@ -58,8 +56,7 @@ export function useGamepad() {
       const connection = await listen<ConnectionEvent>("gamepad-connection", (event) => {
         const { connected, name } = event.payload;
         setConnected(connected, name);
-        // The large layout follows the pad by default, which is the behaviour someone
-        // who has just picked up a controller expects.
+        // The large layout follows the pad by default.
         if (connected && context.current.couchAuto) setCouch(true);
       });
 
@@ -82,8 +79,7 @@ export function useGamepad() {
           return;
 
         case "south":
-          // A held A must not activate repeatedly: that would start a download, or a
-          // game, several times over from one press.
+          // A held A must not repeat: one press should not start a download or game twice.
           if (!repeat) activateFocused();
           return;
 
@@ -117,8 +113,7 @@ export function useGamepad() {
           if (!repeat) toggleHelp();
           return;
 
-        // Select is deliberately unbound: there is nothing it obviously means here, and
-        // an accidental binding on a button people press by mistake is worse than none.
+        // Select is deliberately unbound: nothing here it obviously means.
         case "select":
         case "west":
           return;
@@ -129,7 +124,7 @@ export function useGamepad() {
       cancelled = true;
       unlisteners.forEach((off) => off());
     };
-    // Mounted once. Everything that changes is read through `context` or from the store.
+    // Mounted once; changing values are read through `context` or the store.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

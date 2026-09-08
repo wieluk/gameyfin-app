@@ -1,9 +1,5 @@
-//! Finding the tools needed to run Windows games on Linux.
-//!
-//! A missing `umu-run` previously surfaced as `No such file or directory (os error 2)`,
-//! which tells the user nothing about what to install. This locates the runtime up front
-//! so the app can say what is missing and how to get it, and so a game can be launched
-//! through whatever the machine actually has.
+//! Finding the tools needed to run Windows games on Linux, up front, so the app can name
+//! what is missing rather than failing later with `os error 2`.
 
 use std::path::{Path, PathBuf};
 

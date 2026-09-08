@@ -4,17 +4,8 @@ import { Icon } from "@/components/Icon";
 import { backend } from "@/lib/backend";
 
 /**
- * Gameplay videos on a game's page.
- *
- * The server has been sending these all along in `videoUrls` and the app discarded them.
- *
- * Nothing is loaded until the user asks. A page that embedded every trailer on open would
- * contact YouTube for each one the moment a game was looked at, which is a request the
- * user did not make, on a page they may have opened by accident. The placeholder is drawn
- * locally and the embed replaces it on click.
- *
- * `youtube-nocookie.com` for the same reason: it is the variant that does not set
- * tracking cookies until playback starts.
+ * Gameplay videos on a game's page. Nothing contacts YouTube until the user clicks a
+ * placeholder, and the embed uses `youtube-nocookie.com`.
  */
 export function Trailers({ urls, title }: { urls: string[]; title: string }) {
   const [playing, setPlaying] = useState<string | null>(null);
@@ -77,11 +68,8 @@ export function Trailers({ urls, title }: { urls: string[]; title: string }) {
 }
 
 /**
- * The video id in a YouTube URL, or null when it is not one.
- *
- * Both the long and short forms appear in metadata, and an `embed/` link occasionally
- * does too. Parsed with `URL` rather than a regular expression so a lookalike host such as
- * `youtube.com.example.com` cannot match.
+ * The video id in a YouTube URL, or null. Parsed with `URL`, not a regex, so a lookalike
+ * host like `youtube.com.example.com` cannot match.
  */
 export function youtubeId(raw: string): string | null {
   let url: URL;

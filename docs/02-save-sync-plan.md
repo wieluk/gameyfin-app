@@ -7,43 +7,27 @@
 
 ## Context
 
-The desktop client needs to back up and restore game saves through the Gameyfin server. This
-document specifies the smallest set of server changes that makes that possible, ordered so each
-PR stands alone and is useful on its own merits.
+The desktop client needs to back up and restore game saves through the server. This is the
+smallest set of server changes that makes it possible, as four independently reviewable PRs.
 
-### Why this cannot be a plugin
+**Not a plugin.** PF4J exposes only `GameMetadataProvider` and `DownloadProvider`, and
+plugins load into a classloader Spring never component-scans and Hibernate never
+entity-scans, so a plugin cannot add a controller, endpoint, entity or repository. Save
+sync has to be core server work.
 
-Gameyfin has a PF4J plugin system, and a save-sync plugin would be the ideal blast radius. It is
-not possible. `plugin-api/` exposes exactly two extension points, `GameMetadataProvider` and
-`DownloadProvider`. Plugins are loaded by `GameyfinPluginManager` into a PF4J classloader that
-Spring never component-scans and Hibernate never entity-scans, so a plugin **cannot** contribute
-a REST controller, a Hilla endpoint, a JPA entity or a repository. The only persistence a plugin
-gets is a private JSON state file and host-owned key/value config.
-
-Save sync therefore has to be core server work. The plan below keeps it contained.
-
-### Why existing state cannot be reused
-
-There is no per-user, per-game state in Gameyfin at all, no playtime, no last-played, no
-progress. The nearest thing is `UserPreference`, a generic encrypted key/value table where
-`FavouriteGames` and `RecentDownloads` are stored as a **single serialized string per user**.
-That is not joinable, not queryable, and obviously not a place for binary save data.
-
-New entities are unavoidable. Schema is H2 + **Flyway** with `ddl-auto: validate`, so every new
-table needs a hand-written migration under `app/src/main/resources/db/migration/`.
+**New entities are unavoidable.** There is no per-user per-game state; `FavouriteGames` and
+`RecentDownloads` are a single serialized string in `UserPreference`. Schema is H2 + Flyway
+with `ddl-auto: validate`, so every new table needs a hand-written migration.
 
 ---
 
 ## PR A, Device token authentication
 
-**Problem.** Auth is session-cookie + CSRF only, CORS disabled. There is no way for a native
-client to authenticate. This is why the current desktop client embeds Chromium purely to hold a
-session, a workaround every third-party client has to reinvent.
+**Problem.** Session-cookie + CSRF only, CORS disabled: no native client can authenticate,
+which is why the current one embeds Chromium.
 
-**Change.** Reuse the existing generic token infrastructure. `core/token/` already has
-`Token<T : TokenType>` (encrypted secret, creator, payload map, creation timestamp, expiry) and
-an abstract `TokenService<T>` with `generate` / `generateWithPayload` / `get` / `delete`. Adding
-a type is idiomatic and small.
+**Change.** Reuse `core/token/`, which already has `Token<T : TokenType>` and an abstract
+`TokenService<T>`. Adding a type is small:
 
 ```kotlin
 // core/token/TokenType.kt
@@ -59,17 +43,13 @@ New `DeviceTokenService : TokenService<TokenType.Device>`, and a REST controller
 | `/api/auth/device/revoke` | DELETE | revoke this device |
 | `/api/auth/devices` | GET | list the user's paired devices |
 
-Use the **OAuth 2.0 Device Authorization Grant** shape (RFC 8628): the client shows a code, the
-user approves it in their already-authenticated browser session. This avoids ever handling the
-user's password in the client, works unchanged with OIDC/SSO (which the current cookie hack
-struggles with), and is a familiar pattern for anyone reviewing it.
+Use the **OAuth 2.0 Device Authorization Grant** (RFC 8628): the client shows a code, the
+user approves it in their authenticated browser. No password in the client, works with
+OIDC/SSO.
 
 Then a `DeviceTokenAuthenticationFilter` in the `SecurityConfig` chain accepting
-`Authorization: Bearer <secret>`, resolving to the token's creator, ahead of the existing
-session auth. Hilla endpoints keep working unchanged, they just see an authenticated principal.
-
-`payload` on the token carries device name, platform and last-seen, so the device list is
-useful.
+`Authorization: Bearer <secret>`, ahead of session auth. Hilla endpoints are unchanged. The
+token `payload` carries device name, platform and last-seen for the device list.
 
 **Files:** `core/token/TokenType.kt`, new `core/token/DeviceTokenService.kt`, new
 `core/security/DeviceTokenAuthenticationFilter.kt`, `core/security/SecurityConfig.kt`, new
@@ -83,14 +63,12 @@ worth upstreaming regardless of save sync.
 
 ## PR B, Range support on game downloads
 
-**Problem.** `core/download/files/DownloadEndpoint.kt` returns a `StreamingResponseBody` with no
-`Accept-Ranges` header and no `Range` request handling. An interrupted download of a large game
-restarts from zero. GameVault has had resumable downloads for years.
+**Problem.** `DownloadEndpoint.kt` returns a `StreamingResponseBody` with no `Accept-Ranges`
+or `Range` handling, so an interrupted download restarts from zero.
 
-**Change.** Where the resolved `Download` is a `FileDownload` with a known `size`, parse the
-`Range` header, emit `206 Partial Content` with `Content-Range` and `Accept-Ranges: bytes`, and
-skip to the offset before streaming. Where size is unknown or the provider yields a
-`LinkDownload`, behave exactly as today.
+**Change.** For a `FileDownload` with a known `size`, parse `Range`, emit `206` with
+`Content-Range` and `Accept-Ranges: bytes`, skip to the offset. Unknown size or a
+`LinkDownload` behaves as today.
 
 Keep it conservative: single-range requests only (`bytes=N-` and `bytes=N-M`), respond `416` on
 an unsatisfiable range, and leave the existing bandwidth monitoring and download-count logic
@@ -108,10 +86,9 @@ The core of the feature. Three pieces: expose external IDs, add the entity, add 
 
 ### C1, Expose external IDs to users (three lines)
 
-Reliable ludusavi matching needs the Steam AppID. Gameyfin already stores it, the Steam plugin
-writes it as `originalId` (`plugins/steam/.../SteamPlugin.kt:212`) into
-`GameMetadata.originalIds`. But `GameMetadataUserDto` exposes only `fileSize`; `originalIds` is
-admin-only.
+Reliable ludusavi matching needs the Steam AppID. The Steam plugin already writes it as
+`originalId` into `GameMetadata.originalIds`, but `GameMetadataUserDto` exposes only
+`fileSize`; `originalIds` is admin-only.
 
 ```kotlin
 data class GameMetadataUserDto(
@@ -184,15 +161,10 @@ Hilla, `SaveSyncEndpoint`, `@PermitAll`: `getSavesForGame(gameId)`, `deleteSave(
 Authorization: a user may only touch their own saves; admins may delete any. Follow the existing
 `SecurityUtils.getCurrentAuth()` pattern.
 
-### C4, Conflict detection (where we beat GameVault)
+### C4, Conflict detection
 
-GameVault's server is pure last-write-wins: `findSavefilesByUserIdAndGameIdOrFail` sorts by
-filename timestamp and always serves the newest. The client's only defence is comparing the
-installation id embedded in the filename, which tells it a save came from *a different machine*
-but nothing about whether it would lose data. Play offline on two PCs and one save is silently
-gone.
-
-We add optimistic concurrency, at the cost of one header:
+GameVault's server is pure last-write-wins, so playing offline on two PCs silently loses one
+save. We add optimistic concurrency at the cost of one header:
 
 - The client sends `X-Base-Save-Id`: the version it restored from.
 - If the newest server-side save for that (user, game) is **not** that id, the server responds
@@ -207,9 +179,8 @@ Retention: after a successful upload, prune to `MaxVersionsPerGame` newest, skip
 
 ### C5, Configuration
 
-Declaring a `ConfigProperties` object is all that is needed, `ConfigEndpoint.getAll()`
-reflectively collects them and the admin UI renders the right control automatically, with **zero
-frontend code**.
+Declaring a `ConfigProperties` object is all that is needed; `ConfigEndpoint.getAll()`
+collects them reflectively and the admin UI renders the control, with zero frontend code.
 
 ```kotlin
 sealed class SaveSync {
@@ -220,9 +191,8 @@ sealed class SaveSync {
 }
 ```
 
-Disabled by default, matching GameVault (`SAVEFILES_ENABLED` defaults false). When disabled the
-routes return `405`, which is the status GameVault's client already understands, a small
-courtesy for ecosystem consistency.
+Disabled by default. When disabled the routes return `405`, the status GameVault's client
+already understands.
 
 **Files:** new package `app/src/main/kotlin/org/gameyfin/app/saves/` (entity, repository,
 service, REST controller, Hilla endpoint, DTOs), `config/ConfigProperties.kt`,
@@ -270,9 +240,9 @@ the existing `FavouriteGames` preference string.
 | C, save sync | A | Phase 4 |
 | D, user game state | A | playtime, favourites |
 
-A and B are independent and can go up immediately; both are defensible on their own merits
-without mentioning the desktop client, which makes them easy to review. C is the substantive
-one. D is optional for a first release, the client can hold playtime locally until it lands.
+A and B are independent and defensible without mentioning the desktop client. C is the
+substantive one. D is optional for a first release; the client holds playtime locally until
+it lands.
 
 ---
 

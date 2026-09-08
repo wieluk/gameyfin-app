@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 /**
- * Downloads the pinned Ludusavi release and places it where Tauri expects a sidecar.
- *
- * Tauri resolves sidecars by target triple, so the binary must be named
- * `ludusavi-<triple>[.exe]`. Ludusavi is MIT licensed, so bundling it is permitted;
- * `LUDUSAVI-LICENSE.txt` is written alongside it to carry the notice.
+ * Downloads the pinned Ludusavi release as a Tauri sidecar (named `ludusavi-<triple>`).
+ * MIT licensed; `LUDUSAVI-LICENSE.txt` is written alongside to carry the notice.
  */
 
 import { execFileSync } from "node:child_process";
@@ -12,7 +9,7 @@ import { mkdirSync, existsSync, writeFileSync, renameSync, rmSync, readdirSync }
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Pin the version: a silently-changing save-backup engine is not something we want. */
+/** Pinned: the save-backup engine must not change under us. */
 const VERSION = "0.31.0";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -53,8 +50,7 @@ if (!response.ok) {
 const archive = join(tmpDir, target.asset);
 writeFileSync(archive, Buffer.from(await response.arrayBuffer()));
 
-// bsdtar reads zip archives and ships with both modern Windows and the Linux runners,
-// which avoids adding an extraction dependency just for this.
+// `tar` reads zip on modern Windows and the Linux runners, so no extra dependency.
 execFileSync("tar", ["-xf", archive, "-C", tmpDir], { stdio: "inherit" });
 
 const extracted = readdirSync(tmpDir).find((f) => f === target.exe);

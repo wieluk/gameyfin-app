@@ -1,13 +1,6 @@
 /**
- * Resolves a working Rust environment.
- *
- * Some containers ship a system rustup in a read-only prefix whose only toolchain is a
- * pinned version, while `rust-toolchain.toml` asks for `stable`. Cargo then tries to
- * download the missing toolchain into a directory it cannot write and fails with a
- * permission error that has nothing to do with the project.
- *
- * If a user-local rustup exists and the configured one is not writable, prefer the local
- * one. Otherwise the environment is left exactly as it is.
+ * Prefers a user-local rustup when the configured `RUSTUP_HOME` is read-only, so cargo
+ * doesn't fail trying to install a toolchain into a directory it cannot write.
  */
 
 import { accessSync, constants, existsSync } from "node:fs";

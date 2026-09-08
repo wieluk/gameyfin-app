@@ -1,41 +1,21 @@
-//! Turning a typed-in argument string into an argument list.
-//!
-//! Per-game launch and installer options are one text box, because that is how everyone
-//! writes them down and how every guide and forum post presents them: `-windowed -dx11`,
-//! `/VERYSILENT /DIR="C:\Games\Thing"`. They have to become a real argument vector, since
-//! the process is spawned directly rather than through a shell.
-//!
-//! Deliberately **not** a shell. No variable expansion, no globbing, no command
-//! substitution, no operators: a `$HOME` or a `;` in this box is a literal, because the
-//! box is for arguments and treating it as a command line is how a text field becomes an
-//! execution vector. Quoting is the only syntax, and only because paths contain spaces.
+//! Split a typed argument string into an argv, deliberately not a shell: no expansion,
+//! globbing, substitution or operators, so a text field cannot become an execution vector.
 
 /// Split a typed argument string into individual arguments.
 ///
-/// Single and double quotes both group. A backslash escapes the following character
-/// **outside** quotes, and inside double quotes only when it precedes a quote or another
-/// backslash.
-///
-/// That last rule is the important one, and it differs from a POSIX shell on purpose. The
-/// arguments people paste here are overwhelmingly Windows installer flags, and
-/// `/DIR="C:\Program Files\Thing"` has to survive with its separators intact. Treating
-/// every backslash in a quoted string as an escape would silently turn that into
-/// `C:Program FilesThing`, which fails at install time with an error that points nowhere
-/// near this text box.
+/// Backslash-in-double-quotes is kept literal (unlike POSIX) so pasted Windows paths like
+/// `/DIR="C:\Program Files\Thing"` survive with their separators intact.
 pub fn split(input: &str) -> Vec<String> {
     let mut arguments = Vec::new();
     let mut current = String::new();
-    // Whether anything has been contributed to `current`, so an explicitly empty argument
-    // (`""`) survives while ordinary whitespace does not produce a blank one.
+    // Tracks whether `current` got any input, so an explicit `""` survives but whitespace
+    // does not produce a blank argument.
     let mut started = false;
     let mut quote: Option<char> = None;
     let mut chars = input.chars();
 
     while let Some(c) = chars.next() {
         match c {
-            // Outside quotes a backslash escapes whatever follows; inside double quotes
-            // it only does so for a quote or another backslash, leaving Windows path
-            // separators alone. Inside single quotes nothing is special at all.
             '\\' if quote.is_none() => {
                 if let Some(next) = chars.next() {
                     current.push(next);
@@ -48,7 +28,7 @@ pub fn split(input: &str) -> Vec<String> {
                         chars.next();
                         current.push(next);
                     }
-                    // A separator, not an escape.
+                    // Windows path separator, not an escape.
                     _ => current.push('\\'),
                 }
                 started = true;
@@ -77,10 +57,7 @@ pub fn split(input: &str) -> Vec<String> {
     arguments
 }
 
-/// Render an argument list back into something a person can edit.
-///
-/// The inverse of [`split`] for every list it produces, so a value can be shown, edited
-/// and stored without drifting.
+/// Render an argument list back into an editable string; the inverse of [`split`].
 pub fn join(arguments: &[String]) -> String {
     arguments
         .iter()
@@ -127,8 +104,7 @@ mod tests {
 
     #[test]
     fn a_windows_path_keeps_its_separators_inside_quotes() {
-        // The rule that differs from a shell, and the reason for it: this is what people
-        // paste, and eating the backslashes fails far from where the mistake was made.
+        // The rule that differs from a shell: this is what people paste.
         assert_eq!(
             split(r#""C:\Program Files\Thing\setup.exe""#),
             vec![r"C:\Program Files\Thing\setup.exe"]
@@ -141,8 +117,6 @@ mod tests {
 
     #[test]
     fn single_quotes_take_a_backslash_literally() {
-        // Long-standing shell convention, and what a Windows path pasted between single
-        // quotes needs in order to survive.
         assert_eq!(split(r"'C:\Games\Thing'"), vec![r"C:\Games\Thing"]);
     }
 
@@ -154,8 +128,6 @@ mod tests {
 
     #[test]
     fn shell_syntax_is_not_interpreted() {
-        // The box is for arguments. Treating it as a command line would make a text field
-        // an execution vector, and none of this has any business running.
         assert_eq!(split("-a; rm -rf /"), vec!["-a;", "rm", "-rf", "/"]);
         assert_eq!(split("$HOME"), vec!["$HOME"]);
         assert_eq!(split("`id`"), vec!["`id`"]);

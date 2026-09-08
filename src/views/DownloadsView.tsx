@@ -14,12 +14,7 @@ import { Empty } from "@/components/Empty";
 import { useEntries } from "@/lib/queries";
 import { useRescanOnOpen } from "@/lib/rescan";
 
-/**
- * Transfers in progress, and finished downloads awaiting installation.
- *
- * A completed download stays here rather than disappearing: the archive exists but the
- * game does not, and installing it is a separate decision the user makes.
- */
+/** Transfers in progress, and finished downloads awaiting the separate decision to install. */
 export function DownloadsView() {
   const entries = useEntries();
   const [installing, setInstalling] = useState<LibraryEntry | null>(null);
@@ -85,7 +80,7 @@ export function DownloadsView() {
         {header}
         {errorLine}
         <Empty icon="download" title="No downloads">
-          Downloads you start from your library appear here, and stay until you install them.
+          Downloads appear here and stay until you install them.
         </Empty>
       </>
     );
@@ -161,8 +156,8 @@ export function DownloadsView() {
           title={`Delete the download for ${deleting.game.title}?`}
           body={
             <>
-              The downloaded file will be removed from your disk. Anything already
-              installed stays where it is, and you can download the game again later.
+              The downloaded file will be removed. Installed games stay, and you can
+              download again later.
             </>
           }
           confirmLabel="Delete download"
@@ -327,11 +322,11 @@ function statusText(entry: LibraryEntry): string {
     case "downloading":
       return `${formatBytes(state.receivedBytes)} of ${formatBytes(state.totalBytes)}`;
     case "downloaded":
-      return `Ready to extract · ${formatBytes(state.bytes)}`;
+      return `Ready to extract (${formatBytes(state.bytes)})`;
     case "extracting":
       return "Extracting";
     case "extracted":
-      return state.setupCandidates.length > 0 ? "Unpacked · setup found" : "Unpacked";
+      return state.setupCandidates.length > 0 ? "Unpacked, setup found" : "Unpacked";
     case "installing":
       return "Installing";
     case "preparing":

@@ -1,13 +1,7 @@
-//! Supervising a running game.
-//!
-//! The game is spawned by us, so it can be watched directly rather than by sampling the
-//! process table. Polling needs an ignore list for launcher subprocesses, quantises
-//! playtime, and cannot say exactly when a game exited, which is the moment a save backup
-//! must be taken.
-//!
-//! The whole process *tree* has to be tracked, because many games start through a
-//! bootstrapper that exits immediately: Windows assigns the child to a Job Object, Linux
-//! puts it in its own process group and waits for the group to empty.
+//! Supervising a running game. Watched directly rather than by polling the process table,
+//! for an exact exit time (when a save backup must be taken). The whole process *tree* is
+//! tracked, since many games start via a bootstrapper that exits immediately: Windows uses
+//! a Job Object, Linux a process group.
 
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -34,28 +28,19 @@ pub enum SessionEnd {
 pub struct Session {
     pub duration: Duration,
     pub end: SessionEnd,
-    /// The last of the game's error output, with Wine's routine chatter removed.
-    ///
-    /// A game that exits immediately says why on stderr. Discarding that left "ran for
-    /// 1.4s and exited with code 1" as the entire diagnosis: true, useless, and identical
-    /// for a missing library, an unsupported binary and a bad prefix.
+    /// The last of the game's error output, with Wine's routine chatter removed, so a game
+    /// that exits immediately still says why.
     #[serde(default)]
     pub error_output: String,
 }
 
 impl Session {
-    /// Playtime in whole minutes.
-    ///
-    /// Rounds rather than truncates, so a 90-second session counts as 2 minutes instead
-    /// of 1 and a 20-second one counts as nothing.
+    /// Playtime in whole minutes, rounded so a 90-second session counts as 2.
     pub fn minutes_played(&self) -> u32 {
         (self.duration.as_secs_f64() / 60.0).round() as u32
     }
 
-    /// Whether the session is long enough to be worth recording.
-    ///
-    /// A game that dies immediately, a missing dependency, the wrong executable, should
-    /// not add playtime or trigger a save backup.
+    /// Whether the session ran long enough to record playtime or trigger a save backup.
     pub fn is_meaningful(&self) -> bool {
         self.duration >= MEANINGFUL_SESSION
     }
@@ -64,16 +49,8 @@ impl Session {
 /// Below this, a launch is treated as a failure rather than a session.
 pub const MEANINGFUL_SESSION: Duration = Duration::from_secs(10);
 
-/// Output that never explains a failure.
-///
-/// Only lines that Wine and Mesa emit on a *healthy* run. Each `err:`-tagged entry below
-/// was observed in a run that succeeded: `wine cmd /c echo` prints all four before its
-/// output. Treating them as diagnostic is worse than useless, because they once made up
-/// the entire error message shown for a failed install, describing nothing that failed.
-///
-/// Kept deliberately literal. A pattern broad enough to cover "driver errors" would also
-/// swallow the one that mattered, so each entry names a specific thing this Wine build is
-/// simply known not to ship or need.
+/// Lines Wine and Mesa emit even on a healthy run, so they never explain a failure. Kept
+/// literal: a broader pattern would also swallow the message that mattered.
 fn is_noise(line: &str) -> bool {
     const BENIGN: [&str; 8] = [
         // Not shipped by the builds we download; wineboot always tries to run it.
@@ -111,20 +88,8 @@ impl CapturedRun {
         self.status == Some(0)
     }
 
-    /// The last few lines of output, for a log line or an error message.
-    ///
-    /// Wine and setup programs can be extremely verbose; the tail is where the actual
-    /// failure appears.
-    /// The last few lines worth reading, with known noise removed.
-    ///
-    /// Wine emits `fixme:` and `winediag:` lines on every process start, and a driver
-    /// stack that cannot reach the GPU adds pages of `libEGL warning` on top. Those arrive
-    /// *after* whatever actually failed, so a plain tail is mostly chatter and the real
-    /// error scrolls out of it, which is exactly how an installer failure came back as
-    /// twelve lines of "please mention your exact version when filing bug reports".
-    ///
-    /// Falls back to the unfiltered tail when filtering leaves nothing, so a program whose
-    /// only output happens to look like noise still reports something.
+    /// The last few lines worth reading, with known Wine/driver noise removed (it arrives
+    /// after whatever failed). Falls back to the unfiltered tail when filtering leaves nothing.
     pub fn diagnostic_tail(&self, lines: usize) -> String {
         let source = if self.stderr.trim().is_empty() {
             &self.stdout
@@ -166,33 +131,19 @@ impl CapturedRun {
     }
 }
 
-/// Run a program to completion, capturing its output.
-///
-/// Used for installers rather than [`Supervisor`], which discards output: when a setup
-/// program fails instantly the reason is in its stderr, and throwing that away leaves
-/// nothing to diagnose.
+/// Run a program to completion, capturing output. Used for installers, whose failure
+/// reason is in stderr, rather than [`Supervisor`], which discards output.
 pub async fn run_capturing(command: &ResolvedCommand) -> CoreResult<CapturedRun> {
     run_capturing_limited(command, None).await
 }
 
 /// Run a program with an optional cap on its address space.
 ///
-/// The cap exists for a long-standing bug in FreeArc's `unarc.dll`, which repack
-/// installers use for decompression. Its `LargestMemoryBlock` binary search computes the
-/// midpoint as `(a + b) / 2`; once `a` reaches `0x7FFFFFFF` that overflows in 32-bit
-/// arithmetic and it spins forever on one core. The overflow is only reachable when a
-/// 32-bit process can obtain a contiguous 2 GB block, which a 64-bit host provides.
-/// Capping below that stops the first allocation ever growing large enough to trigger it.
-/// See github.com/kash7an/wine-fitgirl-unarc-largestmemoryblock-overflow.
-///
-/// The limit applies to the whole process tree, which is what makes it effective against
-/// a helper DLL loaded by a child of the setup program.
-///
-/// It reaches that tree by being set between `fork` and `exec`, so it only covers a
-/// program we spawn ourselves. A command that crosses a sandbox boundary, Wine reached
-/// through `flatpak-spawn`, is spawned on the host by someone else and inherits nothing
-/// from us; use [`ResolvedCommand::cap_address_space`] to decide which mechanism a given
-/// command needs rather than passing a limit here unconditionally.
+/// The cap works around a bug in FreeArc's `unarc.dll` (used by repack installers): its
+/// `LargestMemoryBlock` search overflows in 32-bit arithmetic and spins forever once a
+/// contiguous 2 GB block is available, which a 64-bit host provides. Set between `fork`
+/// and `exec`, so it covers only a program we spawn ourselves, not one reached through
+/// `flatpak-spawn`; use [`ResolvedCommand::cap_address_space`] to pick the mechanism.
 ///
 /// [`ResolvedCommand::cap_address_space`]: crate::ResolvedCommand::cap_address_space
 pub async fn run_capturing_limited(
@@ -239,11 +190,8 @@ pub async fn run_capturing_limited(
     })
 }
 
-/// Windows' `ERROR_ELEVATION_REQUIRED`.
-///
-/// `CreateProcess` returns it for a program whose manifest asks for administrator rights.
-/// Windows will not quietly elevate a child process, by design, so the request has to be
-/// made again through the shell, which is what shows the consent dialog.
+/// Windows' `ERROR_ELEVATION_REQUIRED`: `CreateProcess` returns it for a program whose
+/// manifest asks for admin rights, which must instead be requested through the shell.
 pub const ERROR_ELEVATION_REQUIRED: i32 = 740;
 
 /// Turn a failure to spawn into an error the caller can act on.
@@ -259,20 +207,10 @@ fn spawn_error(command: &ResolvedCommand, source: std::io::Error) -> CoreError {
     ))
 }
 
-/// Run a program with administrator rights, waiting for it to finish.
-///
-/// Windows has no way to elevate a child process from inside this one: the request must
-/// go through the shell, which puts the User Account Control dialog on screen and starts
-/// the program in a new, elevated process. That dialog *is* the consent step; there is no
-/// programmatic way around it, and asking for it without warning is why the call site
-/// confirms with the user first.
-///
-/// The elevated process is not our child, so its output cannot be captured. Only the exit
-/// code comes back, and [`CapturedRun::stdout`] and [`CapturedRun::stderr`] are empty.
-///
-/// This goes through PowerShell rather than `ShellExecuteEx` so that the whole thing is
-/// ordinary, reviewable code: the alternative is an `unsafe` FFI call with a hand-built
-/// struct, for a code path that cannot be exercised anywhere except on Windows.
+/// Run a program with administrator rights, waiting for it to finish. Goes through the
+/// shell (the UAC dialog is the consent step), via PowerShell rather than an `unsafe`
+/// `ShellExecuteEx` FFI call. The elevated process is not our child, so only its exit code
+/// comes back and [`CapturedRun`]'s output fields are empty.
 pub async fn run_elevated(command: &ResolvedCommand) -> CoreResult<CapturedRun> {
     #[cfg(not(windows))]
     {
@@ -284,10 +222,7 @@ pub async fn run_elevated(command: &ResolvedCommand) -> CoreResult<CapturedRun> 
 
     #[cfg(windows)]
     {
-        // Passed base64-encoded so nothing in the script has to survive two rounds of
-        // command-line quoting, PowerShell's own being famously not the same as everyone
-        // else's. A game folder called `(76) Metal Slug Tactics` is exactly the sort of
-        // thing that does not survive.
+        // Base64-encoded so nothing in the script has to survive PowerShell's quoting.
         let script = elevation_script(command);
         let output = Command::new("powershell.exe")
             .args([
@@ -363,8 +298,7 @@ fn elevation_script(command: &ResolvedCommand) -> String {
     }
 
     script.push_str(" -Verb RunAs -Wait -PassThru }");
-    // Dismissing the consent dialog is a refusal, not a failure of the program, and the
-    // two need to be told apart: one is worth reporting, the other the user just did.
+    // Distinguish a dismissed consent dialog (a refusal) from a program failure.
     script.push_str(&format!(
         " catch {{ exit {EXIT_UAC_REFUSED} }}; if ($null -eq $process.ExitCode) {{ exit 0 }}; exit $process.ExitCode"
     ));
@@ -382,9 +316,7 @@ fn encode_command(script: &str) -> String {
 }
 
 #[cfg(any(windows, test))]
-/// Standard base64, written out rather than pulled in.
-///
-/// One caller, thirty lines, and no other use for the dependency anywhere in the app.
+/// Standard base64, written out rather than pull in a dependency for one caller.
 fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -418,12 +350,8 @@ pub struct Supervisor {
     started: Instant,
     /// Bounded tail of the child's stderr, filled by a reader task.
     stderr: SharedTail,
-    /// The task filling `stderr`, awaited before the tail is read.
-    ///
-    /// The child exiting does not mean its output has been consumed: `wait` can return
-    /// while the last of stderr is still in the pipe, and reading the tail then yields
-    /// nothing. That is the exact case the tail exists for, a program that dies
-    /// immediately, so the reader has to be joined first.
+    /// The task filling `stderr`, joined before the tail is read: `wait` can return while
+    /// the last of stderr is still in the pipe.
     reader: Option<tokio::task::JoinHandle<()>>,
     #[cfg(windows)]
     job: windows_job::Job,
@@ -432,11 +360,7 @@ pub struct Supervisor {
 /// A bounded, shared buffer holding the most recent error output.
 type SharedTail = std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>;
 
-/// How many lines of error output to keep.
-///
-/// Wine is extremely chatty, a normal run emits pages of `fixme:` lines, so this keeps
-/// the *last* lines rather than the first: the failure is at the end, and an unbounded
-/// buffer would grow for the whole session.
+/// How many lines of error output to keep. The last lines, since the failure is at the end.
 const ERROR_TAIL_LINES: usize = 40;
 
 impl Supervisor {
@@ -451,13 +375,11 @@ impl Supervisor {
             cmd.current_dir(dir);
         }
 
-        // stdout is genuinely uninteresting and can be enormous, so it is discarded. The
-        // pipe stderr goes to is drained continuously by the task below: a pipe nobody
-        // reads fills up and blocks the game, which is why this was not simply inherited.
+        // stdout discarded; stderr piped and drained continuously by the task below, since
+        // a full pipe would block the game.
         cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
-        // Put the child in its own process group so the whole tree can be waited on and,
-        // if needed, signalled together.
+        // Own process group, so the whole tree can be waited on and signalled together.
         #[cfg(unix)]
         {
             // SAFETY: `setsid` is async-signal-safe and valid between fork and exec.
@@ -494,9 +416,7 @@ impl Supervisor {
                 use tokio::io::AsyncBufReadExt;
                 let mut lines = tokio::io::BufReader::new(pipe).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    // Filtered on the way in rather than on the way out: a game that runs
-                    // for hours would otherwise fill the buffer with GPU warnings and
-                    // push out the failure that ended it.
+                    // Filtered on the way in, so hours of GPU warnings don't push out the failure.
                     if line.trim().is_empty() || is_noise(&line) {
                         continue;
                     }
@@ -550,8 +470,7 @@ impl Supervisor {
 
         #[cfg(unix)]
         if let Some(pid) = self.child.id() {
-            // Signal the whole group, not just the leader, so a bootstrapped game does
-            // not survive as an orphan.
+            // Signal the whole group so a bootstrapped game does not survive as an orphan.
             // SAFETY: `killpg` with a valid pid; a failure here is not fatal.
             unsafe {
                 libc_killpg(pid as i32, 15); // SIGTERM
@@ -567,11 +486,8 @@ impl Supervisor {
         })
     }
 
-    /// Wait for the stderr reader to finish, so the tail is complete.
-    ///
-    /// Bounded, because a descendant that inherited the pipe and outlived the process we
-    /// waited on would otherwise hold it open indefinitely. A truncated tail is worth far
-    /// more than a launch that never reports a result.
+    /// Wait for the stderr reader to finish so the tail is complete, with a timeout in case
+    /// a descendant inherited the pipe and outlived the process.
     async fn drain_stderr(&mut self) {
         let Some(reader) = self.reader.take() else {
             return;
@@ -618,18 +534,9 @@ extern "C" {
     fn setrlimit(resource: i32, rlim: *const RLimit) -> i32;
 }
 
-/// Windows process handling.
-///
-/// **Tree tracking is not implemented yet.** The design calls for a Job Object, which
-/// captures every descendant and signals when the last one exits; that needs the
-/// `windows` crate and, to be trustworthy, testing on Windows. Until then this waits on
-/// the process actually spawned, which is correct for the common case and wrong only for
-/// a game that hands off to a bootstrapper and exits, there the session ends early and
-/// playtime is undercounted.
-///
-/// This is deliberately a working limitation rather than an error: a client that refuses
-/// to launch anything on Windows would be far worse than one that occasionally
-/// mismeasures a session.
+/// Windows process handling. **Tree tracking is not implemented yet**: this waits on the
+/// spawned process only, so a game that hands off to a bootstrapper undercounts playtime.
+/// A Job Object is the fix, pending testing on Windows.
 #[cfg(windows)]
 mod windows_job {
     use crate::error::CoreResult;

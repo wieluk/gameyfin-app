@@ -1,12 +1,5 @@
-//! Working out what a download actually *is*, and therefore how to install it.
-//!
-//! A Gameyfin library holds whatever the owner put in it: a zip of a portable game, a
-//! Windows installer, a native Linux build, a disc image. Extension names are unreliable,
-//! the file may arrive with no extension at all, so classification reads the file's own
-//! leading bytes.
-//!
-//! This matters because the install step differs completely per kind. Unpacking an
-//! installer produces nothing useful, and extracting a native binary is meaningless.
+//! Classifying a download (archive, Windows installer, native build, disc image) from its
+//! leading bytes, since extensions are unreliable and the install step differs per kind.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};

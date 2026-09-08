@@ -1,14 +1,6 @@
-//! First-run connection and sign-in.
-//!
-//! Gameyfin authenticates browsers with a session cookie and offers no token endpoint, so
-//! the only way in today is to *be* a browser for the duration of the login. A dedicated
-//! webview window is opened on the server's login page; the user completes whatever the
-//! server asks, a local password, or a full redirect to an OIDC provider such as
-//! Authentik, and the resulting cookies are read back out of that window.
-//!
-//! Doing it this way means SSO needs no special handling at all: any provider, any number
-//! of redirects, MFA included, all happen inside a real browser engine. We only look at
-//! the end state, which is "does the Gameyfin origin now have cookies that authenticate".
+//! First-run connection and sign-in. Gameyfin offers no token endpoint, so we open a real
+//! webview on its login page and read the session cookies back out; SSO then needs no
+//! special handling since any provider chain happens inside a real browser engine.
 
 use std::collections::HashMap;
 
@@ -31,24 +23,19 @@ pub struct ServerProbe {
     pub message: Option<String>,
 }
 
-/// Normalise user input into a base URL.
-///
-/// People type `games.example.com`, `https://games.example.com/`, or paste a deep link.
-/// All of those should work rather than producing an obscure failure later.
+/// Normalise user input (bare host, full URL, or a pasted deep link) into a base origin.
 pub fn normalize_url(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    // The scheme must be detected on the raw input. Stripping a trailing slash first
-    // turns "https://" into "https:", which no longer looks like it carries a scheme and
-    // would then be treated as the *hostname* of an invented https:// URL.
+    // Detect the scheme on the raw input: stripping a trailing slash first would turn
+    // "https://" into "https:" and then be read as a hostname.
     let with_scheme = if trimmed.contains("://") {
         trimmed.to_string()
     } else {
-        // Default to HTTPS: a self-hosted server on the open internet should not be
-        // downgraded silently, and http:// still works if typed explicitly.
+        // Default to HTTPS; http:// still works if typed explicitly.
         format!("https://{trimmed}")
     };
 
@@ -57,18 +44,14 @@ pub fn normalize_url(input: &str) -> Option<String> {
         return None;
     }
 
-    // Rebuilding from the parsed parts drops any path, query or trailing slash, so the
-    // result is a bare origin whatever was pasted in.
+    // Rebuild from parsed parts to drop any path, query or trailing slash.
     let host = parsed.host_str().filter(|h| !h.is_empty())?;
     let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
     Some(format!("{}://{}{}", parsed.scheme(), host, port))
 }
 
 /// Ask a URL whether it is a Gameyfin server, and whether we are already signed in.
-///
-/// `UserEndpoint.getUserInfo` is `@AnonymousAllowed`, so it answers for an anonymous
-/// caller instead of rejecting, which makes it both a liveness probe and a session
-/// check in one call.
+/// `getUserInfo` is `@AnonymousAllowed`, so one call serves as both liveness and session check.
 pub async fn probe(http: &reqwest::Client, url: &str) -> ServerProbe {
     let Some(normalized) = normalize_url(url) else {
         return ServerProbe {
@@ -91,9 +74,8 @@ pub async fn probe(http: &reqwest::Client, url: &str) -> ServerProbe {
     match response {
         Ok(resp) => {
             let status = resp.status();
-            // 401/403 still proves this is Gameyfin, it means the endpoint exists and
-            // is refusing an anonymous caller, which is a correct answer for a private
-            // instance and exactly what signing in will fix.
+            // 401/403 still proves this is Gameyfin: the endpoint exists and is refusing an
+            // anonymous caller, which is what signing in fixes.
             if status.is_success() {
                 let body = resp.text().await.unwrap_or_default();
                 let authenticated = !body.trim().is_empty() && body.trim() != "null";
@@ -143,12 +125,8 @@ fn friendly_transport_error(e: &reqwest::Error) -> String {
     }
 }
 
-/// A user agent that identity providers recognise.
-///
-/// WebKitGTK and WebView2 announce themselves with their own product tokens, and several
-/// identity providers, Google most famously, but others follow suit, refuse logins from
-/// anything they read as an embedded webview. Presenting a mainstream desktop browser
-/// string avoids being turned away for the wrong reason.
+/// A mainstream desktop browser user agent: several identity providers (Google especially)
+/// refuse logins from anything they read as an embedded webview.
 #[cfg(target_os = "linux")]
 const LOGIN_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0";
@@ -159,24 +137,17 @@ const LOGIN_USER_AGENT: &str =
 const LOGIN_USER_AGENT: &str =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0";
 
-/// Progress of the sign-in window, forwarded to the wizard so it can show what is
-/// happening instead of an opaque spinner.
+/// Progress of the sign-in window, forwarded to the wizard so it can show what is happening.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginProgress {
-    /// Host currently loaded, e.g. the identity provider's domain.
     pub host: String,
     /// True once the window is back on the Gameyfin origin.
     pub on_server: bool,
 }
 
-/// Open the sign-in window on the server's login page.
-///
-/// The window is configured to behave like an ordinary browser: a mainstream user agent,
-/// a persistent profile directory so the provider's own session survives, and no
-/// restriction on where it may navigate. That last point matters, a login can cross
-/// several origins (the server, an identity provider, sometimes a proxy in front of both)
-/// before returning, and blocking any of them breaks the flow.
+/// Open the sign-in window on the server's login page, configured to behave like an ordinary
+/// browser with no navigation restriction (an SSO login can cross several origins).
 pub fn open_login_window(app: &AppHandle, base_url: &str, direct: bool) -> Result<(), String> {
     // Re-opening should focus the existing window rather than stacking another.
     if let Some(existing) = app.get_webview_window(LOGIN_WINDOW) {
@@ -184,13 +155,8 @@ pub fn open_login_window(app: &AppHandle, base_url: &str, direct: bool) -> Resul
         return Ok(());
     }
 
-    // `/loginredirect` is the server's own entry point: when SSO is configured it
-    // forwards to `/oauth2/authorization/oidc`, and otherwise to the password form
-    // (`core/security/LoginRedirectController.kt`). Opening `/login` directly, as this
-    // did originally, lands on the password form even on an SSO-only instance, because
-    // that page renders no identity-provider button of its own.
-    //
-    // `?direct=1` is the documented way to demand the password form regardless, which is
+    // `/loginredirect` is the server's own entry point: it forwards to the SSO provider when
+    // configured, else the password form. `?direct=1` demands the password form regardless,
     // the escape hatch for a local account on a server that also has SSO.
     let path = if direct {
         "/loginredirect?direct=1"
@@ -213,8 +179,8 @@ pub fn open_login_window(app: &AppHandle, base_url: &str, direct: bool) -> Resul
         .focused(true)
         .user_agent(LOGIN_USER_AGENT);
 
-    // Keep the login profile out of the main app's store, but persist it: an identity
-    // provider that offers "remember this device" should be able to honour it.
+    // Persist the login profile (separate from the main app's store) so "remember this
+    // device" can be honoured.
     if let Ok(dir) = app.path().app_data_dir() {
         builder = builder.data_directory(dir.join("login-profile"));
     }
@@ -223,8 +189,7 @@ pub fn open_login_window(app: &AppHandle, base_url: &str, direct: bool) -> Resul
     let host_for_nav = server_host.clone();
     builder = builder.on_navigation(move |url| {
         let host = url.host_str().unwrap_or_default().to_string();
-        // Logged because a failed sign-in is otherwise invisible: this shows exactly
-        // which host the flow stopped at.
+        // Logged so a failed sign-in shows which host the flow stopped at.
         tracing::info!("sign-in window navigating to {url}");
         let _ = handle.emit(
             "login-progress",
@@ -233,7 +198,7 @@ pub fn open_login_window(app: &AppHandle, base_url: &str, direct: bool) -> Resul
                 host,
             },
         );
-        // Never block. Any origin may legitimately appear in an SSO chain.
+        // Never block: any origin may legitimately appear in an SSO chain.
         true
     });
 
@@ -259,9 +224,7 @@ pub fn harvest_cookies(app: &AppHandle, base_url: &str) -> HashMap<String, Strin
                 .into_iter()
                 .map(|c| (c.name().to_string(), c.value().to_string()))
                 .collect();
-            // Names only, the values are session secrets. Which cookies arrived is
-            // exactly what is needed to tell "the provider set its own" from "the server
-            // issued a session".
+            // Names only; the values are session secrets.
             tracing::debug!(
                 names = ?harvested.keys().collect::<Vec<_>>(),
                 "harvested cookies from the sign-in window"
@@ -280,11 +243,8 @@ pub fn login_window_open(app: &AppHandle) -> bool {
     app.get_webview_window(LOGIN_WINDOW).is_some()
 }
 
-/// Delete the sign-in window's stored profile.
-///
-/// A provider session can get into a state the user cannot clear from inside the window,
-/// a half-finished flow, a stale cookie, and with the profile persisted that survives
-/// restarts. This is the escape hatch.
+/// Delete the sign-in window's stored profile: the escape hatch when a persisted provider
+/// session gets into a state the user cannot clear from inside the window.
 pub async fn reset_login_profile(app: &AppHandle) -> Result<(), String> {
     close_login_window(app);
     let dir = app
@@ -295,7 +255,7 @@ pub async fn reset_login_profile(app: &AppHandle) -> Result<(), String> {
 
     match tokio::fs::remove_dir_all(&dir).await {
         Ok(()) => Ok(()),
-        // Nothing to clear is a success, not a failure.
+        // Nothing to clear is a success.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!("could not clear the sign-in profile: {e}")),
     }
@@ -329,7 +289,6 @@ mod tests {
 
     #[test]
     fn strips_paths_and_trailing_slashes() {
-        // Pasting a deep link from the web UI should still configure the server.
         assert_eq!(
             normalize_url("https://games.example.com/game/12").as_deref(),
             Some("https://games.example.com")
@@ -349,8 +308,6 @@ mod tests {
 
     #[test]
     fn rejects_a_scheme_with_no_host() {
-        // Stripping the trailing slash before looking for a scheme used to turn these
-        // into a URL whose *host* was "https".
         assert_eq!(normalize_url("https://"), None);
         assert_eq!(normalize_url("http://"), None);
         assert_eq!(normalize_url("https:///"), None);

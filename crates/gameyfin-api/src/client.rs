@@ -1,11 +1,6 @@
-//! The Gameyfin HTTP client.
-//!
-//! Gameyfin exposes two interfaces (see `core/security/SecurityConfig.kt`):
-//!
-//! * **Hilla RPC**, `POST /connect/<Endpoint>/<method>` with a JSON object of named
-//!   parameters. This is nearly the whole API surface.
-//! * **Plain REST**, `/images/**` for artwork and `/download/{gameId}` for game files.
-//!   These are the only endpoints that serve bytes.
+//! The Gameyfin HTTP client. Two interfaces: **Hilla RPC**
+//! (`POST /connect/<Endpoint>/<method>`, nearly the whole API) and **plain REST**
+//! (`/images/**`, `/download/{gameId}`, the only byte-serving endpoints).
 
 use std::sync::Arc;
 

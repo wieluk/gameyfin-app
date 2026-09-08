@@ -1,8 +1,5 @@
-//! Errors crossing the IPC boundary.
-//!
-//! Tauri commands must return something serializable, so API errors are flattened into a
-//! tagged shape the UI can branch on, in particular it needs to tell "you are signed out"
-//! apart from "the server broke", because only the first is actionable by the user.
+//! Errors crossing the IPC boundary, flattened into a tagged shape so the UI can tell
+//! "you are signed out" (actionable) apart from "the server broke".
 
 use serde::Serialize;
 

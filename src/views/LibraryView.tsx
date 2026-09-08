@@ -44,8 +44,7 @@ export function LibraryView() {
   const [choosingRoot, setChoosingRoot] = useState<LibraryEntry | null>(null);
   const roots = useLibraryRoots();
 
-  // Same as Downloads and Installed: a game installed or removed outside the app should
-  // show its real state here too, not the one recorded whenever the app last looked.
+  // As in Downloads and Installed: reflect changes made outside the app.
   useRescanOnOpen();
 
   const entries = useEntries();
@@ -60,8 +59,7 @@ export function LibraryView() {
     const action = primaryAction(entry.state);
     if (action.disabled) return;
 
-    // Starting a download is the one action that needs to know *where*, and only when
-    // there is more than one games folder to choose between.
+    // Starting a download needs a destination, but only when there is more than one folder.
     if (entry.state.kind === "not-installed" && (roots.data?.length ?? 0) > 1) {
       setChoosingRoot(entry);
       return;
@@ -103,9 +101,7 @@ export function LibraryView() {
     return sortEntries(filtered, sort, direction);
   }, [entries.data, search, sort, direction, libraryId, presence, facets]);
 
-  // Built from what is actually in the library rather than from a fixed list, so a filter
-  // never offers a value that would match nothing. Narrowed by the other filters for the
-  // same reason: after picking a developer, only their genres are worth offering.
+  // Built from the current library, and narrowed by the other filters, so no option ever matches nothing.
   const options = useMemo(() => {
     const all = entries.data ?? [];
     const inScope = all.filter(
@@ -284,12 +280,7 @@ export function LibraryView() {
 
 
 
-/**
- * One of the value filters.
- *
- * Hidden when there is nothing to choose from. A dropdown whose only entry is "All" is a
- * control that cannot do anything, and the header has enough in it already.
- */
+/** One of the value filters. Hidden when there is nothing to choose from. */
 function Facet({
   label,
   value,
@@ -301,8 +292,7 @@ function Facet({
   options: string[];
   onChange: (value: string | null) => void;
 }) {
-  // Kept when it is the current selection even if nothing matches any more, so a filter
-  // can always be undone from the control that set it.
+  // The current selection is kept even if nothing matches, so it can always be undone.
   if (options.length === 0 && !value) return null;
 
   return (
@@ -330,8 +320,7 @@ function sortEntries(
   sort: SortKey,
   direction: SortDirection,
 ): LibraryEntry[] {
-  // Compare in a fixed "natural" order, then reverse, so the toggle means the same thing
-  // for every field rather than each having its own idea of which way is up.
+  // Fixed natural order then reverse, so the direction toggle means the same for every field.
   const compare = (a: LibraryEntry, b: LibraryEntry): number => {
     switch (sort) {
       case "recent":

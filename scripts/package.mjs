@@ -1,14 +1,7 @@
 #!/usr/bin/env node
 /**
- * Builds the app and collects the installers into `build/` at the project root.
- *
- * Tauri writes bundles into the Cargo target directory, which is a deep path that varies
- * by profile and bundle type. This gathers whatever was produced into one predictable
- * place so the artifacts are easy to find and easy to publish.
- *
- * Only the host platform's packages can be produced: Linux bundles need dpkg/rpm and
- * linuxdeploy, Windows installers need WiX and NSIS on Windows. Cross-building installers
- * is not supported, CI builds each platform on its own runner.
+ * Builds the app and gathers the installers Tauri scatters through the target directory
+ * into `build/`. Host platform only; CI builds each platform on its own runner.
  */
 
 import { execFileSync } from "node:child_process";
@@ -47,8 +40,7 @@ try {
     env: rustEnv(),
   });
 } catch {
-  // A single bundle type can fail (a missing packaging tool) while others succeed, so
-  // carry on and report what actually landed rather than aborting.
+  // One bundle type can fail while others succeed; report what landed.
   console.warn("\nBundling reported an error; collecting whatever was produced.");
 }
 

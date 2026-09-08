@@ -1,12 +1,7 @@
 import { create } from "zustand";
 
-/**
- * Whether a controller is driving the app, and whether the big-format layout is on.
- *
- * Kept in a store rather than in App's state because the overlay, the sidebar and the
- * library grid all need it, and threading it through every one of them would mean passing
- * a prop to components that otherwise take none.
- */
+/** Whether a controller is driving the app and whether the big-format layout is on. In a
+ * store because the overlay, sidebar and grid all read it. */
 interface CouchState {
   /** A controller is attached and being read. */
   connected: boolean;

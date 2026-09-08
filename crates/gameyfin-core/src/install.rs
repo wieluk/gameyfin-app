@@ -1,7 +1,5 @@
-//! Where games live on disk, and what is remembered about an install.
-//!
-//! The game id is encoded in the directory name, as `(123) Celeste`, so a library can be
-//! reconstructed from a bare folder after a reinstall or a lost config.
+//! Where games live on disk. The game id is encoded in the directory name (`(123) Celeste`)
+//! so a library can be reconstructed from bare folders after a lost config.
 
 use std::path::{Path, PathBuf};
 
@@ -17,9 +15,6 @@ impl InstallLayout {
     }
 
     /// The folder every download lands in, one directory per game beneath it.
-    ///
-    /// Named separately from [`Self::downloads_dir`] because it is a destination in its
-    /// own right: the UI opens it, and a rescan walks it.
     pub fn downloads_root(&self) -> PathBuf {
         self.root.join("Gameyfin").join("Downloads")
     }

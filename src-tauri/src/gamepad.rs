@@ -1,20 +1,11 @@
-//! Reading controllers, so the app can be driven from a sofa.
+//! Reading controllers. `gilrs` (evdev/XInput) wants polling and isn't thread-safe, so it
+//! runs on a dedicated OS thread turning device state into events.
 //!
-//! `gilrs` sits on evdev on Linux and XInput on Windows and maps every common pad onto one
-//! canonical layout, so there are no per-device button tables here. It is not thread-safe
-//! and wants to be polled, so it lives on a dedicated OS thread that turns device state
-//! into events the webview can act on.
+//! - **Buttons** are edge triggered, with direction auto-repeat applied here (a busy
+//!   webview cannot keep a steady cadence).
+//! - **Axes** are sampled and sent only outside the dead zone, for scrolling.
 //!
-//! Two kinds of signal go to the frontend, and the split matters:
-//!
-//! - **Buttons** are edge triggered, with auto-repeat applied here for the directions.
-//!   Repeat belongs on this side because it is timing, and a webview that is busy
-//!   rendering a library grid cannot keep a steady 150ms cadence.
-//! - **Axes** are sampled and sent only while they are outside the dead zone, for
-//!   scrolling, which wants a rate rather than a sequence of steps.
-//!
-//! Nothing here decides what a button *does*. The frontend owns that, because what "back"
-//! means depends on whether a dialog is open, and this thread has no idea.
+//! Nothing here decides what a button *does*; the frontend owns that.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

@@ -1,19 +1,8 @@
 #!/usr/bin/env node
 /**
- * Builds a Flatpak bundle from the packaged `.deb`.
- *
- * Requires `flatpak` and `flatpak-builder`, plus the GNOME runtime and SDK:
- *
- *   flatpak remote-add --if-not-exists --user flathub \
- *     https://flathub.org/repo/flathub.flatpakrepo
- *   flatpak install --user flathub org.gnome.Platform//48 org.gnome.Sdk//48
- *
- * The result is `build/Gameyfin_<version>.flatpak`, installable with
- * `flatpak install --user ./Gameyfin_<version>.flatpak`.
- *
- * Pass `--install` to install straight from the build directory instead. That skips the
- * repository commit and the bundle round-trip, which is most of the time a bundle install
- * spends, worth using while iterating, since only the changed objects are written.
+ * Builds a Flatpak bundle from the packaged `.deb`. Needs `flatpak`, `flatpak-builder`
+ * and the GNOME 48 runtime/SDK. Output: `build/Gameyfin_<version>.flatpak`.
+ * `--install` installs straight from the build tree instead (faster while iterating).
  */
 
 import { execFileSync } from "node:child_process";
@@ -63,8 +52,7 @@ const installDirectly = process.argv.includes("--install");
 console.log(`Building ${APP_ID} ${version}...`);
 
 if (installDirectly) {
-  // Installs from the build tree. Only changed objects are written, so this is far
-  // quicker than committing to a repo, packing a bundle and importing it again.
+  // Installs from the build tree: only changed objects are written.
   execFileSync(
     "flatpak-builder",
     ["--force-clean", "--user", "--install", buildDir, join(FLATPAK_DIR, `${APP_ID}.yml`)],

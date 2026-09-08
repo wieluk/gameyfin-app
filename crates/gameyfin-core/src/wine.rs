@@ -1,30 +1,11 @@
-//! A Wine runtime the app downloads and owns.
+//! A Wine runtime the app downloads and owns. One runtime and version across every package
+//! format, with no `flatpak-spawn` boundary for settings to fail to cross, unlike the
+//! host's Wine (absent in a Flatpak sandbox, an rpm-layer-and-reboot on atomic distros).
 //!
-//! The alternative is the host's Wine, which is what this client used to rely on. That
-//! works on a normal distribution and fails badly everywhere else: a Flatpak has no Wine
-//! inside the sandbox, and on an atomic distribution like Bazzite or Silverblue
-//! "install Wine" means layering an rpm and rebooting. Telling someone to reboot their
-//! operating system to install a game is not an answer.
-//!
-//! Downloading a self-contained build instead means one runtime, one version, and one set
-//! of commands across the deb, rpm, AppImage and Flatpak, and it removes the
-//! `flatpak-spawn` boundary entirely, so environment variables and process limits reach
-//! Wine the same way in every package. That boundary is where a long series of bugs came
-//! from: settings applied to our own process that silently never crossed it.
-//!
-//! ## Why the WoW64 build
-//!
-//! Repack installers run 32-bit code, FreeArc's `unarc.dll` in particular, so 32-bit
-//! support is not optional. Classic Wine provides it by loading 32-bit *Linux* libraries,
-//! which needs multilib on the host: `libc6:i386` on Debian, a parallel library set on
-//! Fedora, and the `org.freedesktop.Platform.Compat.i386` extension in a Flatpak. Three
-//! different problems, which is exactly what owning the runtime is supposed to avoid.
-//!
-//! New WoW64 translates 32-bit Windows calls inside a pure 64-bit process and needs no
-//! 32-bit host libraries at all, so one tarball behaves identically in all three packages.
-//! It is younger than the classic path and a minority of 32-bit programs still misbehave
-//! under it, which is why [`WineVariant`] exists: a user who hits one can switch to the
-//! classic build without waiting for a release.
+//! The default is the WoW64 build: it translates 32-bit Windows calls inside a 64-bit
+//! process and needs no 32-bit host libraries, so one tarball behaves the same everywhere.
+//! [`WineVariant`] lets a user switch to the classic build for the minority of 32-bit
+//! programs that still misbehave under WoW64.
 
 use std::path::{Path, PathBuf};
 

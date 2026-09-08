@@ -1,21 +1,10 @@
-//! Resolving a game's umu id, so per-title Proton fixes actually apply.
+//! Resolving a game's umu id (umu-launcher keys its workarounds off `GAMEID`), so per-title
+//! Proton fixes apply instead of the generic `umu-default`.
 //!
-//! umu-launcher keys its workarounds off `GAMEID`. Passing the generic `umu-default`, as
-//! this app did until now, means every game runs with no fixes at all: no protonfix for
-//! the launcher a title ships with, no dependency the installer expects, no workaround for
-//! the video codec it opens with. The fixes exist and are maintained; we simply were not
-//! asking for them.
-//!
-//! The lookup order is deliberate:
-//!
-//! 1. **Steam AppID**, when Gameyfin's Steam metadata plugin recorded one. Exact, and the
-//!    umu database is itself keyed by store and codename, so this is a direct hit.
-//! 2. **Normalised title**, otherwise. Punctuation, case and roman numerals are removed
-//!    on both sides, so "Baldur's Gate II" finds "Baldurs Gate 2".
-//!
-//! The database is fetched once and cached on disk. It is advisory: a miss means the
-//! generic id, which is exactly where we were before, so nothing here is allowed to fail
-//! a launch.
+//! Lookup order: **Steam AppID** when the Steam plugin recorded one (exact), else
+//! **normalised title** (punctuation, case and roman numerals stripped on both sides). The
+//! database is fetched once and cached; a miss falls back to the generic id and never
+//! fails a launch.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

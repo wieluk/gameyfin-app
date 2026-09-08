@@ -16,8 +16,7 @@ pub enum SaveError {
         stderr: String,
     },
 
-    /// Ludusavi prints JSON on stdout but warnings on stderr, so an empty stdout with a
-    /// zero exit is a distinct failure worth naming.
+    /// Empty stdout with a zero exit: distinct from a parse failure, worth naming.
     #[error("ludusavi {command} produced no output")]
     EmptyOutput { command: String },
 

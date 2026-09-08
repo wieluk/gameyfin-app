@@ -1,8 +1,5 @@
-//! Keeping the app up to date.
-//!
-//! There is no single mechanism that works for every way this app ships, and pretending
-//! otherwise produces a button that silently does nothing on three platforms out of five.
-//! What a package *can* do about its own updates depends on who owns the files:
+//! Keeping the app up to date. What a package can do about its own updates depends on who
+//! owns the files:
 //!
 //! | Format          | Owner                | What we do                              |
 //! |-----------------|----------------------|-----------------------------------------|
@@ -12,13 +9,9 @@
 //! | deb / rpm       | apt / dnf            | say a version exists; the OS installs it |
 //! | `cargo run`     | the developer        | nothing at all                           |
 //!
-//! Detecting *which* of those we are is done from the environment rather than compiled in,
-//! because one Linux binary is bundled into four different packages from a single build.
-//!
-//! The **check** is deliberately separate from the **install**. Checking is one HTTPS GET
-//! against the GitHub releases API and works identically everywhere, so every user gets
-//! told a release exists even when this particular package cannot install it itself. Only
-//! the install step is gated on the format, and only that step needs Tauri's signing key.
+//! Which one is detected from the environment (one Linux binary, four packages). The
+//! **check** (one GitHub API GET) is separate from the format-gated **install** and works
+//! everywhere.
 
 use serde::{Deserialize, Serialize};
 

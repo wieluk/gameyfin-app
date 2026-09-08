@@ -1,8 +1,5 @@
-//! Save game backup and restore for the Gameyfin desktop client.
-//!
-//! Wraps Ludusavi (MIT, bundled as a Tauri sidecar) and adds the parts a syncing client
-//! needs on top: deterministic game identification, and a config that makes backups
-//! portable between machines.
+//! Save backup/restore: wraps Ludusavi and adds deterministic game identification plus
+//! machine-portable backup config.
 
 pub mod api;
 pub mod config;

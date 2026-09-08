@@ -5,13 +5,9 @@ import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 
 /**
- * Confirmation for removing an installed game, and the choice of what runs first.
- *
- * A game installed by a setup program ships an uninstaller that clears registry entries
- * and shortcuts, so it should run before the folder goes. Finding it is guesswork
- * though: the names are a convention, and a game that called its own `cleanup.exe`
- * previously got the folder deleted out from under it with no way to say otherwise.
- * So the dialog shows what was found, and lets the user point at it when nothing was.
+ * Confirmation for removing an installed game. A detected uninstaller runs first to clear
+ * registry entries and shortcuts; detection is guesswork, so the dialog shows what it
+ * found and lets the user point at one when it found nothing.
  */
 export function UninstallDialog({
   title,
@@ -56,8 +52,7 @@ export function UninstallDialog({
   async function choose() {
     setError(null);
     try {
-      // Opened in the game's own folder: that is both where an uninstaller will be and
-      // the only place the backend accepts one from.
+      // The game's folder: where an uninstaller is, and the only place the backend accepts one from.
       const picked = await backend.pickFile(installDir ?? undefined);
       if (picked) setChosen(picked);
     } catch (e) {

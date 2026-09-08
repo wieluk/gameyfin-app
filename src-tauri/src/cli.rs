@@ -1,22 +1,11 @@
-//! The command line the desktop and Steam shortcuts use.
-//!
-//! Shortcuts run `gameyfin-app --launch <id>` rather than the game's executable, so that
-//! starting a game from the applications menu, the desktop or Big Picture goes through the
-//! same path as pressing Play: the Wine prefix is prepared, the runtime is chosen, and the
-//! session is supervised so playtime is recorded.
-//!
-//! Two cases have to work, and they are different. With no app running, the argument is
-//! read at startup and acted on once the stored session has been restored. With one
-//! already running, the second process exits immediately and hands its arguments over,
-//! because two copies would fight over the library file and the download checkpoints.
+//! The command line the desktop and Steam shortcuts use: `gameyfin-app --launch <id>` so a
+//! shortcut goes through the same prepare/supervise path as pressing Play. A second process
+//! hands its arguments to the running instance rather than fighting over the library file.
 
 use tauri::{AppHandle, Manager};
 
-/// The game id in a `--launch` argument, if there is one.
-///
-/// Tolerant of both spellings so a hand-edited shortcut works either way, and silent about
-/// anything else: unknown arguments belong to the webview runtime, which is given the
-/// whole command line too.
+/// The game id in a `--launch` argument, if there is one. Tolerant of both spellings; silent
+/// about anything else since unknown arguments belong to the webview runtime.
 pub fn launch_target(args: &[String]) -> Option<i64> {
     let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
@@ -30,11 +19,8 @@ pub fn launch_target(args: &[String]) -> Option<i64> {
     None
 }
 
-/// Act on a `--launch` argument.
-///
-/// The window is revealed either way. A launch can fail for reasons worth reading (no
-/// runtime, no executable chosen), and a failure with nothing on screen to explain it is
-/// the worst outcome a shortcut can have.
+/// Act on a `--launch` argument. Reveals the window either way, so a launch failure has
+/// somewhere to be explained.
 pub async fn handle_launch(app: &AppHandle, game_id: i64) {
     tracing::info!(game_id, "launching from a shortcut");
     crate::tray::reveal(app, Some("/installed"));
@@ -66,13 +52,11 @@ mod tests {
     #[test]
     fn ignores_a_plain_start() {
         assert_eq!(launch_target(&args(&[])), None);
-        // The webview runtime is handed the command line too, and adds its own.
         assert_eq!(launch_target(&args(&["--no-sandbox"])), None);
     }
 
     #[test]
     fn a_malformed_id_is_not_a_launch() {
-        // Better to open the library than to guess at which game was meant.
         assert_eq!(launch_target(&args(&["--launch", "celeste"])), None);
         assert_eq!(launch_target(&args(&["--launch"])), None);
         assert_eq!(launch_target(&args(&["--launch="])), None);

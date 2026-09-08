@@ -32,8 +32,7 @@ export function GamepadOverlay() {
       role="presentation"
     >
       <div
-        // Scoped so directional presses stay inside the overlay rather than moving focus
-        // through the library behind it.
+        // Scoped so directional presses stay inside the overlay, not the library behind it.
         data-nav-scope
         role="dialog"
         aria-label="Controller buttons"

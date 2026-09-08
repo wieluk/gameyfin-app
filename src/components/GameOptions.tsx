@@ -5,15 +5,9 @@ import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 
 /**
- * Extra options one game is given.
- *
- * Two boxes rather than a form of checkboxes, because the values people need here come
- * from somewhere else: a wiki page, a forum post, a ProtonDB report. They arrive as a line
- * of flags to paste, and anything that made you translate that into a UI would be slower
- * than the text box it replaced.
- *
- * Not a shell. Quoting works so that a path with a space survives, and nothing else is
- * interpreted; see `arguments.rs`.
+ * Per-game launch options. Free-text boxes because the values come as a line of flags to
+ * paste from a wiki or ProtonDB. Not a shell: quoting works, nothing else is interpreted
+ * (see `arguments.rs`).
  */
 export function GameOptions({ gameId }: { gameId: number }) {
   const options = useQuery({
@@ -26,8 +20,7 @@ export function GameOptions({ gameId }: { gameId: number }) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset the drafts when the query lands or the game changes, so the boxes show what is
-  // stored rather than a previous game's values.
+  // Reset drafts when the query lands or the game changes, so the boxes never show stale values.
   useEffect(() => {
     setLaunch(null);
     setInstaller(null);

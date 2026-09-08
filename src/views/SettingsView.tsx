@@ -32,19 +32,12 @@ type TabId =
 
 const TAB_KEY = "gameyfin.settings.tab";
 
-/**
- * The panes, in the order they appear.
- *
- * A list rather than a hand-written row of buttons so adding a pane means adding one
- * entry here and one branch below, which is the point of splitting Settings up: it was a
- * single scrolling column, and it is going to keep growing.
- */
+/** The panes, in order; a list so adding one is a single entry plus a branch below. */
 const TABS: Array<{ id: TabId; label: string; hideOnWindows?: boolean }> = [
   { id: "account", label: "Account" },
   { id: "library", label: "Library" },
   { id: "interface", label: "Interface" },
-  // Wine and the installer memory cap only exist because Windows software has to be
-  // translated; on Windows itself there is nothing here to configure.
+  // Nothing to configure here on Windows, which runs its own programs.
   { id: "compatibility", label: "Compatibility", hideOnWindows: true },
   { id: "diagnostics", label: "Diagnostics" },
   { id: "about", label: "About" },
@@ -56,11 +49,10 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
   const [tab, setTab] = useState<TabId>(() => {
     try {
       const stored = localStorage.getItem(TAB_KEY);
-      // A pane that no longer exists, or one hidden on this platform, must not leave the
-      // view blank.
+      // A stale or platform-hidden pane must not leave the view blank.
       if (tabs.some((t) => t.id === stored)) return stored as TabId;
     } catch {
-      // Private windows and blocked site data both throw here; the default is fine.
+      // localStorage can throw in private windows; the default is fine.
     }
     return "account";
   });
@@ -136,9 +128,8 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
 function AccountSection({ onSignedOut }: { onSignedOut: () => void }) {
   const status = useStatus();
 
-  // Three states, not two. "Offline" is the server not answering, which leaves the
-  // session intact and the cached library readable, and saying "Disconnected" for it
-  // would suggest the user has been signed out when they have not.
+  // "Offline" (server unreachable, session still valid) is distinct from "Disconnected"
+  // (signed out), so the user is not told they've been logged out when they haven't.
   const connection = status.data?.offline
     ? { value: "Offline, showing your cached library", tone: "bad" as const }
     : status.data?.authenticated
@@ -265,7 +256,7 @@ function DownloadSection() {
     <Section title="Downloads">
       <Check
         label="Install automatically when a download finishes"
-        hint="Unpacks the download and moves the game into your installations folder without asking. A download that turns out to contain a setup program still stops and waits, because a setup wizard asks questions this cannot answer for you."
+        hint="Unpacks the download and moves the game into your installations folder without asking. Downloads that contain a setup program still stop and wait for you."
         checked={settings.data?.autoInstall ?? false}
         onChange={async (next) => {
           await backend.setAutoInstall(next);
@@ -305,7 +296,7 @@ function NotificationSection() {
       />
       <Check
         label="Failures"
-        hint="When a download, install or launch goes wrong. Shown even when the window has your attention, because the alternative is red text on a tab you are not looking at."
+        hint="When a download, install or launch goes wrong. Shown even while you are looking at the window."
         checked={settings.data?.notifyFailures ?? true}
         onChange={(next) => save({ failures: next })}
       />
@@ -315,9 +306,7 @@ function NotificationSection() {
         onChange={(next) => save({ updates: next })}
       />
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        Notifications are held back while you are looking at the window, apart from
-        failures. Telling you what you can already see is the fastest way to make anyone
-        turn them all off.
+        Held back while you are looking at the window, apart from failures.
       </p>
     </Section>
   );
@@ -341,7 +330,7 @@ function WindowSection() {
     <Section title="Window">
       <Check
         label="Closing the window keeps Gameyfin running"
-        hint="Downloads run inside this program, so closing the window used to abandon one that might have had an hour left. With this on, the close button hides the window and the tray icon brings it back."
+        hint="Downloads run inside this program. With this on, the close button hides the window and the tray icon brings it back."
         checked={settings.data?.closeToTray ?? true}
         onChange={(next) => save({ closeToTray: next })}
       />
@@ -353,7 +342,7 @@ function WindowSection() {
       />
       <Check
         label="Start Gameyfin when I log in"
-        hint="Registers Gameyfin with your desktop so it starts hidden in the tray with your session. What makes downloading in the background actually work."
+        hint="Starts Gameyfin hidden in the tray with your session, so background downloads keep working."
         checked={settings.data?.autostart ?? false}
         onChange={async (next) => {
           await backend.setAutostart(next);
@@ -411,7 +400,7 @@ function GamepadSection() {
       />
       <Check
         label="Switch to the large layout when a controller connects"
-        hint="Bigger text and fewer, larger covers, for reading from a sofa. You can switch back from the controller overlay at any time."
+        hint="Bigger text and larger covers, for reading from a sofa. Switch back from the controller overlay any time."
         checked={settings.data?.couchModeAuto ?? true}
         onChange={(next) => save({ couchModeAuto: next })}
       />
@@ -430,9 +419,8 @@ function GamepadSection() {
         className="w-full accent-primary"
       />
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        How far a stick must move before it counts. Raise this if the selection drifts on
-        its own; a worn stick rests slightly off centre, and without a dead zone that
-        reads as a direction being held down forever.
+        How far a stick must move before it counts. Raise it if the selection drifts on
+        its own.
       </p>
 
       <div className="pt-1">
@@ -483,7 +471,7 @@ function UmuSection() {
       />
       <Check
         label="Apply per-title Proton fixes"
-        hint="Looks each game up in the umu database and passes its id to Proton, so workarounds written for that specific game are applied. Matched by Steam AppID where your server knows one, and by title otherwise."
+        hint="Passes each game's id to Proton so per-title workarounds apply. Matched by Steam AppID where your server knows one, by title otherwise."
         checked={settings.data?.umuFixes ?? true}
         onChange={async (next) => {
           await backend.setUmuFixes(next);
@@ -506,8 +494,7 @@ function UmuSection() {
         </p>
       )}
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        Refreshed automatically once a day. A game that is not in the list runs exactly as
-        it would with this turned off.
+        Refreshed once a day. A game not in the list runs as it would with this off.
       </p>
     </Section>
   );
@@ -554,8 +541,7 @@ function PrefixSection() {
                   {formatBytes(prefix.bytes)}
                 </span>
               </div>
-              {/* A prefix whose game has gone is exactly the kind worth reclaiming, so
-                  it is called out rather than quietly listed by its id. */}
+              {/* Called out because it is worth reclaiming. */}
               {!prefix.title && (
                 <p className="mt-0.5 text-[11px] text-foreground/45">
                   No longer in your library.
@@ -587,8 +573,8 @@ function PrefixSection() {
       )}
 
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        A prefix is the fake Windows a game runs inside. Deleting one is safe in that it
-        is rebuilt on the next launch, but anything the game stored inside it goes too.
+        A prefix is the fake Windows a game runs inside. A deleted one is rebuilt on the
+        next launch, but anything the game stored inside it goes too.
       </p>
 
       {confirming && (
@@ -596,10 +582,9 @@ function PrefixSection() {
           title={`Delete the prefix for ${confirming.title ?? `game ${confirming.gameId}`}?`}
           body={
             <>
-              It is rebuilt the next time the game runs, so this is a good way to recover
-              from one that has broken. Anything the game saved <em>inside</em> the prefix
-              rather than in its own folder is removed with it, which for some Windows
-              games includes save files.
+              It is rebuilt the next time the game runs, so this recovers a broken one.
+              Anything the game saved <em>inside</em> the prefix is removed with it, which
+              for some Windows games includes save files.
             </>
           }
           confirmLabel="Delete the prefix"
@@ -771,7 +756,7 @@ function RootsSection() {
         Downloads go to <code className="text-foreground/60">Gameyfin/Downloads</code> and
         installs to <code className="text-foreground/60">Gameyfin/Installations</code>{" "}
         inside each of these. With more than one folder you are asked which to use when a
-        download starts, with the free space on each shown.
+        download starts.
       </p>
 
       {removing && (
@@ -837,9 +822,8 @@ function ExtractionSection() {
         className="rounded-lg border border-default-200 bg-content2 px-3 py-2 font-mono text-xs outline-none transition-colors focus:border-primary"
       />
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        Tried automatically when an archive turns out to be encrypted. Stored in the app's
-        settings file, which is readable only by you, alongside your session. It is a
-        convenience for a library that uses one password throughout, not a secret store.
+        Tried automatically when an archive is encrypted. Stored in the app's settings
+        file alongside your session, readable only by you. A convenience, not a secret store.
       </p>
 
       <label className="pt-2 text-xs text-foreground/55" htmlFor="ignored-executables">
@@ -854,9 +838,8 @@ function ExtractionSection() {
         className="rounded-lg border border-default-200 bg-content2 px-3 py-2 font-mono text-[11px] outline-none transition-colors focus:border-primary"
       />
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        One per line, matched anywhere in the file name. Redistributables and crash
-        handlers ship beside a game in numbers, and on a large install the actual launcher
-        is easily lost among them.
+        One per line, matched anywhere in the file name. Keeps redistributables and crash
+        handlers from crowding out the real launcher.
       </p>
 
       <div className="pt-1">
@@ -926,8 +909,7 @@ function WineSection() {
   const status = useQuery({
     queryKey: ["wine-status"],
     queryFn: () => backend.wineStatus(),
-    // The release lookup hits the network, so this is not something to refetch on every
-    // window focus.
+    // The release lookup hits the network; don't refetch on every window focus.
     staleTime: 5 * 60 * 1000,
   });
 
@@ -939,8 +921,7 @@ function WineSection() {
     installed && latest && (installed.version !== latest.version || installed.variant !== latest.variant);
 
   useEffect(() => {
-    // Only subscribed while a download is actually running, so an idle settings screen
-    // holds no listener.
+    // Subscribed only while a download is running.
     if (busy !== "install" || isMockBackend) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -950,8 +931,7 @@ function WineSection() {
       const off = await listen<WineProgress>("wine-progress", (event) => {
         if (!cancelled) setProgress(event.payload);
       });
-      // The download can finish before this attaches; dropping the listener immediately
-      // in that case avoids leaking it for the life of the view.
+      // Drop the listener if the download finished before it attached.
       if (cancelled) off();
       else unlisten = off;
     })();
@@ -970,8 +950,7 @@ function WineSection() {
       if (action === "install") await backend.installWine();
       else await backend.removeWine();
       await status.refetch();
-      // The install options screen greys itself out on a missing runtime, so it has to
-      // be told that one now exists.
+      // The install options screen greys out without a runtime; tell it one exists now.
       await queryClient.invalidateQueries({ queryKey: ["install-options"] });
     } catch (e) {
       setError(messageOf(e));
@@ -1068,13 +1047,11 @@ function WineSection() {
         <option value="staging">Wine-Staging, 32-bit libraries</option>
       </select>
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        Gameyfin downloads its own Wine so every install works the same way, with nothing
-        to install on your system and no administrator rights needed. Both builds run
-        32-bit and 64-bit Windows programs. The recommended one needs no 32-bit system
-        libraries, which is what lets it work identically inside a Flatpak. Switch to the
-        other only if an installer misbehaves. Outside a Flatpak that build needs your
-        distribution's 32-bit libraries, and inside one it needs the i386 compatibility
-        runtime.
+        Gameyfin downloads its own Wine, so nothing is installed on your system and no
+        admin rights are needed. Both builds run 32-bit and 64-bit Windows programs; the
+        recommended one needs no 32-bit system libraries and works the same in a Flatpak.
+        Switch to the other only if an installer misbehaves: it needs your distribution's
+        32-bit libraries, or the i386 runtime inside a Flatpak.
       </p>
       {installed && (
         <p className="text-[11px] leading-relaxed text-foreground/45">
@@ -1085,12 +1062,10 @@ function WineSection() {
   );
 }
 
-/** Human-readable name for a build. */
 function labelFor(variant: WineVariant): string {
   return variant === "staging" ? "32-bit libraries" : "WoW64";
 }
 
-/** Options that only matter when running Windows software. */
 function CompatibilitySection() {
   const settings = useAppSettings();
   const [limit, setLimit] = useState<number | null>(null);
@@ -1118,10 +1093,9 @@ function CompatibilitySection() {
         <option value={6144}>6 GB</option>
       </select>
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        Some repack installers use a decompression library that hangs, spinning one CPU
-        core with the progress bar frozen, when it is offered more than 2 GB of
-        contiguous memory. Capping the installer avoids it. Raise this only if an
-        installer runs out of memory; going below 3 GB makes installers fail outright.
+        Some repack installers hang when offered more than 2 GB of contiguous memory, so
+        the installer gets a cap. Raise it only if an installer runs out of memory; below
+        3 GB they fail outright.
       </p>
     </Section>
   );
@@ -1172,8 +1146,7 @@ function DiagnosticsSection() {
         ))}
       </select>
       <p className="text-[11px] text-foreground/45">
-        Takes effect immediately, with no restart needed. Turn this up to Debug before
-        reproducing a problem, then attach the log.
+        Applies immediately. Use Debug while reproducing a problem, then attach the log.
       </p>
       {levelError && (
         <p role="alert" className="text-xs text-danger">
@@ -1187,7 +1160,7 @@ function DiagnosticsSection() {
           <p className="text-[11px] text-foreground/45">
             {cacheSize.data === undefined
               ? "…"
-              : `${formatBytes(cacheSize.data)}, and it cleans itself as it grows`}
+              : `${formatBytes(cacheSize.data)}, cleans itself as it grows`}
           </p>
         </div>
         <button
@@ -1204,13 +1177,13 @@ function DiagnosticsSection() {
 
       <PathRow
         label="App data"
-        hint="Settings, session and local records for this installation."
+        hint="Settings, session and local records."
         path={configDir.data}
       />
 
       <PathRow
         label="Log files"
-        hint="One file per day. Include the most recent when reporting a problem."
+        hint="One per day; attach the newest when reporting a problem."
         path={logs.data}
       />
     </Section>

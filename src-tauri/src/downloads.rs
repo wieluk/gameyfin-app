@@ -1,8 +1,5 @@
-//! Where downloaded files go.
-//!
-//! State tracking lives in [`crate::library_state`]; this is only the path policy, kept
-//! separate because the layout is what makes a library rescannable, the `(id) Title`
-//! directory naming is how an install or archive is re-attached to its game after the
+//! Where downloaded files go. Path policy only (state lives in [`crate::library_state`]);
+//! the `(id) Title` directory naming is what re-attaches an install to its game after the
 //! local records are lost.
 
 use std::path::PathBuf;

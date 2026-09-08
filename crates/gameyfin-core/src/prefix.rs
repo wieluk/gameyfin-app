@@ -1,44 +1,20 @@
-//! Preparing a Wine or Proton prefix.
-//!
-//! Two problems this solves.
-//!
-//! **Where does the user install to?** A Windows installer offers a Windows path,
-//! `C:\GOG Games\Wall World`, which lands inside the prefix, not in the games folder.
-//! Telling someone to type a Linux path into a Windows file dialog does not work either.
-//! So the games folder is mapped to a spare drive letter inside the prefix: the user
-//! picks `G:\`, and the files arrive exactly where the app expects them.
-//!
-//! **Why are the windows tiny?** Wine assumes 96 DPI. On a high-resolution display an
-//! installer renders at a fraction of its intended size. The prefix's DPI is set to match
-//! the actual screen instead.
+//! Preparing a Wine or Proton prefix. The games folder is mapped to a spare drive letter
+//! inside the prefix, so a Windows installer's path lands where the app expects. The
+//! prefix DPI is set to the real screen's, since Wine's 96 DPI assumption renders
+//! installers tiny on a high-resolution display.
 
 use std::path::{Path, PathBuf};
 
 use crate::error::CoreResult;
 use crate::runtime::WindowsRuntime;
 
-/// Environment that stops Wine asking to install its optional components.
-///
-/// A fresh prefix otherwise pops up "install Mono?" and "install Gecko?" dialogs. Those
-/// appear behind the setup window or off-screen, and until they are answered the prefix
-/// update never finishes, which looks exactly like Wine hanging forever. Games need
-/// neither component in the overwhelming majority of cases.
+/// Stops a fresh prefix popping up "install Mono?"/"install Gecko?" dialogs that appear
+/// off-screen and block the prefix update until answered. Games rarely need either.
 pub const NO_PROMPTS: &str = "mscoree=,mshtml=";
 
-/// Keep the desktop's input method out of Wine's key handling.
-///
-/// With ibus or fcitx running, the input method sees key presses through XIM before Wine
-/// does and holds them back until it knows they are not the start of a composed
-/// character. A game reading key state directly then needs a long press on A, S or D
-/// before it registers anything, and the desktop's accent picker appears over the game.
-///
-/// `XMODIFIERS` is the only variable involved: it is what Wine reads to decide whether to
-/// open an input method at all, and `@im=none` means it does not. The GTK and Qt
-/// equivalents are deliberately not set, because Wine uses neither toolkit.
-///
-/// The cost is composing accented or CJK text inside a Windows program, which a game
-/// launcher does not need. Plain typing never goes through the input method and is
-/// unaffected.
+/// Keep the desktop's input method out of Wine's key handling: with ibus or fcitx, XIM
+/// holds key presses back and a game reading key state directly misses them. `XMODIFIERS`
+/// is the only variable Wine reads for this; the cost is composing CJK text inside a game.
 pub fn without_input_method(env: &mut std::collections::BTreeMap<String, String>) {
     env.insert("XMODIFIERS".to_string(), "@im=none".to_string());
 }
@@ -46,25 +22,13 @@ pub fn without_input_method(env: &mut std::collections::BTreeMap<String, String>
 /// Marker recording that a prefix has been prepared, so it happens once.
 const READY_MARKER: &str = ".gameyfin-ready";
 
-/// Bumped whenever preparation starts doing something new.
-///
-/// The marker holds this alongside the DPI, so a prefix prepared by an older version is
-/// brought up to date on its next launch instead of keeping whatever it was given first.
-/// Version 2 added the theme.
+/// Bumped whenever preparation does something new, so an older prefix is brought up to
+/// date on its next launch. Version 2 added the theme.
 const PREPARATION_VERSION: u32 = 2;
 
-/// The directory Wine actually keeps `drive_c` and `dosdevices` in.
-///
-/// Wine treats the prefix directory as the prefix itself. Proton does not: it is handed
-/// the same directory as `STEAM_COMPAT_DATA_PATH` and builds the real Wine prefix in a
-/// `pfx` subdirectory of it, so everything Wine owns sits one level deeper.
-///
-/// Assuming the Wine layout makes a Proton prefix look broken immediately after it was
-/// built correctly, `drive_c` is missing from where we looked, and drive mappings get
-/// written to a `dosdevices` that Wine never reads.
-///
-/// `pfx` is created by Proton's own first run, so before that this correctly reports the
-/// prefix root and preparation proceeds.
+/// The directory Wine keeps `drive_c` and `dosdevices` in. Wine uses the prefix directory
+/// itself; Proton builds the real prefix in a `pfx` subdirectory (created on its first
+/// run), so assuming the Wine layout makes a Proton prefix look broken.
 pub fn wine_root(prefix: &Path) -> PathBuf {
     let proton = prefix.join("pfx");
     if proton.is_dir() {

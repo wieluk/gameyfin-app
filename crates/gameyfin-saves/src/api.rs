@@ -1,7 +1,4 @@
-//! Types for Ludusavi's `--api` JSON output.
-//!
-//! Shapes follow `docs/schema/general-output.yaml` in the Ludusavi repository. The
-//! top-level envelope is shared across commands, but the per-game payload differs, so
+//! Types for Ludusavi's `--api` JSON output; the per-game payload varies by command, so
 //! [`ApiOutput`] is generic over it.
 
 use std::collections::BTreeMap;
@@ -49,9 +46,8 @@ pub struct ApiErrors {
 /// Per-game payload of `find --api`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FoundGame {
-    /// Match quality in `0.0..=1.0`. Ludusavi 0.31 reports 1.0 for exact and ID-based
-    /// matches, but the field is optional here because the schema allows its absence and
-    /// certainty is decided by *how* the lookup was made, not by this number.
+    /// Match quality `0.0..=1.0`; optional because certainty is decided by how the lookup
+    /// was made, not by this number.
     #[serde(default)]
     pub score: Option<f64>,
 }
@@ -123,11 +119,8 @@ pub struct ScannedFile {
 }
 
 impl<G> ApiOutput<G> {
-    /// Games Ludusavi did not recognise.
-    ///
-    /// Ludusavi exits 1 in this case but still prints a full JSON document, so this is
-    /// the reliable signal, the exit code alone cannot distinguish "unknown game" from
-    /// any other failure.
+    /// Games Ludusavi did not recognise; the reliable signal since the exit code alone
+    /// cannot distinguish "unknown game" from any other failure.
     pub fn unknown_games(&self) -> &[String] {
         match &self.errors {
             Some(e) => &e.unknown_games,
@@ -137,8 +130,7 @@ impl<G> ApiOutput<G> {
 }
 
 impl ScanGame {
-    /// Whether the scan actually captured something, as opposed to running but finding
-    /// nothing worth writing.
+    /// Whether the scan actually captured something.
     pub fn produced_data(&self) -> bool {
         self.decision == Some(Decision::Processed)
             && self.files.values().any(|f| !f.failed && !f.ignored)

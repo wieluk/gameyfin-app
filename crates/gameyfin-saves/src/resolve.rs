@@ -1,32 +1,20 @@
-//! Mapping a Gameyfin game onto a Ludusavi manifest entry.
-//!
-//! This is where GameVault is weakest: it runs a single fuzzy search and silently accepts
-//! any match scoring above 0.9 (`SaveGameHelper.SearchForLudusaviGameTitle`). A wrong
-//! match there means restoring one game's save over another's.
-//!
-//! Ludusavi's own lookup precedence is Steam ID, then GOG ID, then exact name, then
-//! normalized name, and ID lookups are deterministic. This module follows that order and,
-//! crucially, refuses to guess: anything less than certain comes back as
-//! [`TitleMatch::Ambiguous`] for the user to confirm.
+//! Map a Gameyfin game onto a Ludusavi manifest entry, escalating Steam ID -> GOG ID ->
+//! exact -> normalized -> fuzzy and refusing to guess: anything less than certain comes
+//! back as [`TitleMatch::Ambiguous`] for the user to confirm, since a wrong match
+//! restores one game's save over another's.
 
 use crate::error::SaveResult;
 use crate::ludusavi::{GameQuery, Ludusavi};
 
-/// Minimum fuzzy score worth showing the user at all.
-///
-/// Calibrated against real Ludusavi 0.31 output: searching "celest" scores the correct
-/// "Celeste" at 0.85, while the unrelated "Aces and Adventures" still scores 0.75. A floor
-/// of 0.80 keeps genuine near-misses and drops that noise.
-///
-/// Note this is well below GameVault's 0.9 accept-threshold, which would have *rejected*
-/// the correct 0.85 match outright, the reason this code presents candidates instead of
-/// applying a cutoff and guessing.
+/// Minimum fuzzy score worth showing the user: calibrated against real Ludusavi 0.31
+/// output, where 0.80 keeps genuine near-misses ("Celeste" at 0.85) and drops noise
+/// ("Aces and Adventures" at 0.75).
 const FUZZY_FLOOR: f64 = 0.80;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     pub title: String,
-    /// `None` for exact/ID matches, which carry no score because they are certain.
+    /// `None` for exact/ID matches, which are certain.
     pub score: Option<f64>,
 }
 

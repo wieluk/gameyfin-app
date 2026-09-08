@@ -1,9 +1,6 @@
 /**
- * What the primary action on a game does, given its state.
- *
- * Centralised because the library tile, the detail dialog and the Downloads list must
- * agree, a download that has finished should offer Install everywhere, not Play in one
- * place and Install in another.
+ * The primary action for a game, given its state. Centralised so the tile, detail dialog
+ * and Downloads list always agree.
  */
 
 import { backend } from "./backend";

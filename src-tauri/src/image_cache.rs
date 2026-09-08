@@ -1,11 +1,5 @@
-//! On-disk cache for game artwork.
-//!
-//! Covers do not change once the server has assigned them an id, so refetching the whole
-//! grid on every launch wastes bandwidth and leaves the library grey while it loads.
-//!
-//! The cache prunes itself: it is a cache, and an unbounded one on a games machine would
-//! quietly grow forever. Eviction is by last use, so the artwork you actually look at
-//! survives and the rest goes.
+//! On-disk cache for game artwork (covers never change once the server assigns them an id).
+//! Prunes itself by last use so it does not grow forever.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
