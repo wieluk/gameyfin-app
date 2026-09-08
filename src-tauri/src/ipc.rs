@@ -60,6 +60,9 @@ pub async fn connection_status(state: State<'_, AppState>) -> CommandResult<Conn
     // the wizard; "the server did not answer" must not, because signing in again is
     // exactly what an offline user cannot do, and their installed games still work.
     let (authenticated, offline) = match state.client().await {
+        // A stored session with no client yet means startup has not finished connecting.
+        // Reporting "not signed in" here raced the restore and flashed the wizard.
+        None if settings.has_session() => (true, true),
         None => (false, false),
         Some(client) => match client.user_info().await {
             Ok(user) => {

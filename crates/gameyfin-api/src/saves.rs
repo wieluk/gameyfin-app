@@ -134,7 +134,7 @@ impl GameyfinClient {
         let req = self.auth().apply(self.http().get(&url)).await?;
         let resp = req.send().await?;
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await?;
 
         if status == StatusCode::NOT_FOUND {
             return Err(ApiError::SaveSyncUnsupported);
@@ -171,7 +171,7 @@ impl GameyfinClient {
         let status = resp.status();
 
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
+            let body = resp.text().await?;
             return Err(status_error("download_save", status, &body));
         }
 
@@ -237,7 +237,7 @@ impl GameyfinClient {
 
         let resp = self.auth().apply(req).await?.send().await?;
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await?;
 
         match status {
             StatusCode::NO_CONTENT => Ok(UploadOutcome::Unchanged),
@@ -294,7 +294,7 @@ impl GameyfinClient {
         let req = self.auth().apply(self.http().delete(&url)).await?;
         let resp = req.send().await?;
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await?;
 
         check_status("delete_save", status, &body)
     }

@@ -62,8 +62,16 @@ impl ApiError {
     /// The distinction the app cares about is "the server said no" versus "there was
     /// nobody to ask". Only the second means the user should keep their session and see
     /// their cached library rather than being sent back to the sign-in wizard.
+    ///
+    /// A gateway status counts: a reverse proxy answering 502 or 503 while the application
+    /// behind it restarts is the same situation as an unplugged cable, and treating it as
+    /// a real answer is what used to sign people out.
     pub fn is_unreachable(&self) -> bool {
-        matches!(self, ApiError::Transport(_))
+        match self {
+            ApiError::Transport(_) => true,
+            ApiError::Status { status, .. } => matches!(status, 502..=504),
+            _ => false,
+        }
     }
 }
 

@@ -109,7 +109,10 @@ impl GameyfinClient {
             let req = self.auth.apply(req).await?;
             let resp = req.send().await?;
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            // Not `unwrap_or_default`: a connection dropped while reading the body would
+            // become an empty string, which deserializes as `null`, which reads as "no user
+            // is signed in". A dropped connection would sign the user out.
+            let body = resp.text().await?;
 
             if (status == reqwest::StatusCode::UNAUTHORIZED
                 || status == reqwest::StatusCode::FORBIDDEN)
@@ -281,6 +284,32 @@ mod tests {
     fn interpret_maps_500_to_status_error() {
         let err = interpret::<Value>("X.y", 500, "boom").unwrap_err();
         assert!(matches!(err, ApiError::Status { status: 500, .. }));
+    }
+
+    #[test]
+    fn a_gateway_status_counts_as_unreachable() {
+        // A proxy answering while the application behind it restarts is the same situation
+        // as an unplugged cable. Treating it as a real answer used to sign the user out.
+        for status in [502, 503, 504] {
+            let err = interpret::<Value>("X.y", status, "").unwrap_err();
+            assert!(err.is_unreachable(), "{status} should be unreachable");
+            assert!(!err.is_auth(), "{status} is not an auth failure");
+        }
+    }
+
+    #[test]
+    fn a_refused_session_is_not_unreachable() {
+        // The opposite case must keep working: the server did answer, and it said no.
+        let err = interpret::<Value>("X.y", 401, "").unwrap_err();
+        assert!(err.is_auth());
+        assert!(!err.is_unreachable());
+    }
+
+    #[test]
+    fn an_ordinary_server_error_is_neither() {
+        let err = interpret::<Value>("X.y", 500, "boom").unwrap_err();
+        assert!(!err.is_unreachable());
+        assert!(!err.is_auth());
     }
 
     #[test]

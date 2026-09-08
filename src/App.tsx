@@ -58,8 +58,12 @@ export function App() {
   }, [queryClient, navigate]);
 
   const ready = restoreSettled && !status.isLoading;
-  const needsSetup = ready && !(status.data?.configured && status.data?.authenticated);
   const offline = Boolean(status.data?.offline);
+  // Never while offline: signing in again is exactly what an unreachable server makes
+  // impossible, and the wizard's first step would offer to switch servers, which throws
+  // away the stored session and the cached library.
+  const needsSetup =
+    ready && !offline && !(status.data?.configured && status.data?.authenticated);
 
   // Once the server answers again, everything fetched from cache while it was down is worth re-reading.
   const wasOffline = useRef(offline);
