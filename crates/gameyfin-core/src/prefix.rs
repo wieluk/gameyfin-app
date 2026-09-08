@@ -25,6 +25,24 @@ use crate::runtime::WindowsRuntime;
 /// neither component in the overwhelming majority of cases.
 pub const NO_PROMPTS: &str = "mscoree=,mshtml=";
 
+/// Keep the desktop's input method out of Wine's key handling.
+///
+/// With ibus or fcitx running, the input method sees key presses through XIM before Wine
+/// does and holds them back until it knows they are not the start of a composed
+/// character. A game reading key state directly then needs a long press on A, S or D
+/// before it registers anything, and the desktop's accent picker appears over the game.
+///
+/// `XMODIFIERS` is the only variable involved: it is what Wine reads to decide whether to
+/// open an input method at all, and `@im=none` means it does not. The GTK and Qt
+/// equivalents are deliberately not set, because Wine uses neither toolkit.
+///
+/// The cost is composing accented or CJK text inside a Windows program, which a game
+/// launcher does not need. Plain typing never goes through the input method and is
+/// unaffected.
+pub fn without_input_method(env: &mut std::collections::BTreeMap<String, String>) {
+    env.insert("XMODIFIERS".to_string(), "@im=none".to_string());
+}
+
 /// Marker recording that a prefix has been prepared, so it happens once.
 const READY_MARKER: &str = ".gameyfin-ready";
 
@@ -108,6 +126,7 @@ fn registry_command(
 
     let mut env = BTreeMap::new();
     env.insert("WINEDLLOVERRIDES".to_string(), NO_PROMPTS.to_string());
+    without_input_method(&mut env);
 
     match runtime {
         WindowsRuntime::Umu { .. } => {

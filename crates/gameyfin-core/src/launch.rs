@@ -183,6 +183,7 @@ impl LaunchConfig {
             "WINEDLLOVERRIDES".to_string(),
             crate::prefix::NO_PROMPTS.to_string(),
         );
+        crate::prefix::without_input_method(&mut config.environment);
         config
     }
 
@@ -720,6 +721,24 @@ mod tests {
         assert!(needs_proton(Path::new("/games/Celeste.EXE")));
         assert!(!needs_proton(Path::new("/games/Celeste.x86_64")));
         assert!(!needs_proton(Path::new("/games/Celeste")));
+    }
+
+    #[test]
+    fn an_unattended_launch_keeps_the_input_method_out_of_the_way() {
+        // With ibus active the accent picker swallows key presses, so WASD needs a long
+        // press before a game sees it. Wine reads XMODIFIERS to decide whether to use an
+        // input method at all.
+        let runtime = crate::runtime::WindowsRuntime::Wine {
+            path: PathBuf::from("/usr/bin/wine"),
+        };
+        let config =
+            LaunchConfig::for_windows_program_unattended("/g/Game.exe", "/prefixes/7", &runtime);
+        assert_eq!(config.environment["XMODIFIERS"], "@im=none");
+        // The prompt suppression must survive alongside it.
+        assert_eq!(
+            config.environment["WINEDLLOVERRIDES"],
+            crate::prefix::NO_PROMPTS
+        );
     }
 
     #[test]
