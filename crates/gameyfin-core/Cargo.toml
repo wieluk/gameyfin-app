@@ -8,6 +8,7 @@ description = "Downloads, extraction and install management for the Gameyfin cli
 
 [dependencies]
 gameyfin-api = { path = "../gameyfin-api" }
+gameyfin-saves = { path = "../gameyfin-saves" }
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -30,3 +31,4 @@ zstd = "0.13"
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 mockito = "1"
+gameyfin-saves = { path = "../gameyfin-saves", features = ["test-util"] }
