@@ -50,6 +50,62 @@ finish-args:
   - --env=WEBKIT_DISABLE_DMABUF_RENDERER=1
 
 modules:
+  # The tray icon. Neither the GNOME runtime nor its SDK carries appindicator, and Tauri's
+  # tray aborts the process when the library is missing, so these three have to be built
+  # here or the app cannot start at all inside the sandbox.
+  - name: libdbusmenu
+    buildsystem: autotools
+    build-options:
+      env:
+        # The tarball's configure leaves these substitutions unresolved without valgrind,
+        # which the runtime does not ship, and the generated Makefile then fails to parse.
+        HAVE_VALGRIND_TRUE: '#'
+        HAVE_VALGRIND_FALSE: ''
+    config-opts:
+      - --with-gtk=3
+      - --disable-dumper
+      - --disable-static
+      - --disable-tests
+      - --disable-gtk-doc
+      - --disable-vala
+      - --enable-introspection=no
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+      - /share/doc
+    sources:
+      - type: archive
+        url: https://launchpad.net/libdbusmenu/16.04/16.04.0/+download/libdbusmenu-16.04.0.tar.gz
+        sha256: b9cc4a2acd74509435892823607d966d424bd9ad5d0b00938f27240a1bfa878a
+
+  - name: libayatana-indicator
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DENABLE_TESTS=OFF
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: archive
+        url: https://github.com/AyatanaIndicators/libayatana-indicator/archive/refs/tags/0.9.4.tar.gz
+        sha256: a18d3c682e29afd77db24366f8475b26bda22b0e16ff569a2ec71cd6eb4eac95
+
+  - name: libayatana-appindicator
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DENABLE_BINDINGS_MONO=OFF
+      - -DENABLE_BINDINGS_VALA=OFF
+      - -DFLAVOUR_GTK3=ON
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: archive
+        url: https://github.com/AyatanaIndicators/libayatana-appindicator/archive/refs/tags/0.5.93.tar.gz
+        sha256: cbefed7a918a227bf71286246e237fcd3a9c8499b3eaac4897811a869409edf0
+
   # 7-Zip for unpacking downloads: the sandbox has no host `7z`/`unar` to fall back to.
   - name: sevenzip
     buildsystem: simple

@@ -226,7 +226,7 @@ pub fn run() {
                 // which the tray provides. `--hidden` is what the autostart entry passes,
                 // so a login launch is quiet even when the setting is off.
                 let launched_hidden = std::env::args().any(|arg| arg == "--hidden");
-                if settings.start_minimized || launched_hidden {
+                if (settings.start_minimized || launched_hidden) && tray::has_tray() {
                     if let Some(window) = handle.get_webview_window("main") {
                         let _ = window.hide();
                     }
