@@ -48,6 +48,18 @@ impl InstallLayout {
         self.installs_root().join(Self::folder_name(game_id, title))
     }
 
+    /// Staging area for save backups, one directory per game beneath it.
+    ///
+    /// Lives in the library folder for the same reason prefixes do: a save backup is user
+    /// data they should be able to find, and a Wine outside the sandbox has to reach it.
+    pub fn saves_root(&self) -> PathBuf {
+        self.root.join("Gameyfin").join("Saves")
+    }
+
+    pub fn saves_dir(&self, game_id: i64) -> PathBuf {
+        self.saves_root().join(game_id.to_string())
+    }
+
     /// `(<id>) <title>`, with characters no filesystem will accept removed.
     fn folder_name(game_id: i64, title: &str) -> String {
         format!("({game_id}) {}", sanitize(title))
@@ -106,6 +118,15 @@ mod tests {
             Some(l.installs_root().as_path())
         );
         assert_eq!(l.prefix_dir(12).parent(), Some(l.prefixes_root().as_path()));
+        assert_eq!(l.saves_dir(12).parent(), Some(l.saves_root().as_path()));
+    }
+
+    #[test]
+    fn save_staging_is_separate_from_installs_and_prefixes() {
+        let l = InstallLayout::new("/library");
+        assert_eq!(l.saves_dir(12), PathBuf::from("/library/Gameyfin/Saves/12"));
+        assert_ne!(l.saves_root(), l.prefixes_root());
+        assert_ne!(l.saves_root(), l.installs_root());
     }
 
     #[test]
