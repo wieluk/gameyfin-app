@@ -198,7 +198,16 @@ async fn ludusavi_for(
         .manual_redirects(context.redirects.clone())
         .portable_install_dir(&context.install_dir);
 
-    if let Some(home) = home() {
+    // The home a save is recorded against decides whether it travels. For a Windows game
+    // running under Proton that is the profile inside the prefix, not this machine's:
+    // pointing both at the same synthetic target is what lets a save made on Windows
+    // restore on Linux and the other way round.
+    let portable_home = if context.windows_program && !cfg!(windows) {
+        gameyfin_core::prefix::prefix_home(&context.prefix_dir).or_else(home)
+    } else {
+        home()
+    };
+    if let Some(home) = portable_home {
         builder = builder.portable_home(&home);
     }
 

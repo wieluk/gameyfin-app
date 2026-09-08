@@ -44,6 +44,42 @@ fn marker_contents(dpi: u32) -> String {
 }
 
 /// Whether a prefix is already prepared, at this DPI and by this version.
+/// The Windows-side home directory inside a Wine or Proton prefix.
+///
+/// This is what makes a save portable between Windows and Proton: redirecting it onto the
+/// same synthetic target as a real Windows profile means both machines record identical
+/// paths, so an archive taken on one restores on the other.
+///
+/// Proton names the account `steamuser` while plain Wine uses the host username, so it is
+/// discovered rather than assumed. Returns None when there is no single obvious candidate,
+/// which is the same case Ludusavi's own translation refuses to guess at.
+pub fn prefix_home(prefix: &Path) -> Option<PathBuf> {
+    let users = wine_root(prefix).join("drive_c").join("users");
+
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(&users)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        // `Public` is Windows' shared profile, never the user's own.
+        .filter(|path| !matches!(file_name_of(path).as_deref(), Some("Public")))
+        .collect();
+    candidates.sort();
+
+    if candidates.len() == 1 {
+        return candidates.pop();
+    }
+    // Several accounts in one prefix: Proton's is the one a game actually runs as.
+    candidates
+        .into_iter()
+        .find(|path| file_name_of(path).as_deref() == Some("steamuser"))
+}
+
+fn file_name_of(path: &Path) -> Option<String> {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
 pub fn is_prepared(prefix: &Path, dpi: u32) -> bool {
     // `drive_c` is checked as well as the marker: a prefix built by an earlier version
     // may have been recorded as ready while actually being unusable, and reusing it would
@@ -566,5 +602,62 @@ mod tests {
     fn dpi_is_clamped_to_a_usable_range() {
         assert_eq!(dpi_for_scale(0.1), 96);
         assert_eq!(dpi_for_scale(10.0), 240);
+    }
+}
+
+#[cfg(test)]
+mod prefix_home_tests {
+    use super::*;
+
+    fn prefix(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gameyfin-pfx-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn with_users(dir: &Path, users: &[&str]) {
+        for user in users {
+            std::fs::create_dir_all(dir.join("drive_c").join("users").join(user)).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_plain_wine_prefix_uses_the_single_account() {
+        let dir = prefix("wine");
+        with_users(&dir, &["alice"]);
+
+        assert_eq!(Some(dir.join("drive_c/users/alice")), prefix_home(&dir));
+    }
+
+    #[test]
+    fn proton_wins_when_a_prefix_has_several_accounts() {
+        let dir = prefix("proton");
+        with_users(&dir, &["alice", "steamuser"]);
+
+        assert_eq!(Some(dir.join("drive_c/users/steamuser")), prefix_home(&dir));
+    }
+
+    #[test]
+    fn the_shared_public_profile_is_never_the_users_own() {
+        let dir = prefix("public");
+        with_users(&dir, &["Public", "alice"]);
+
+        assert_eq!(Some(dir.join("drive_c/users/alice")), prefix_home(&dir));
+    }
+
+    #[test]
+    fn an_ambiguous_prefix_gives_up_rather_than_guessing() {
+        // Two real accounts and no steamuser: picking one could restore a save into the
+        // wrong profile, which is worse than declining.
+        let dir = prefix("ambiguous");
+        with_users(&dir, &["alice", "bob"]);
+
+        assert_eq!(None, prefix_home(&dir));
+    }
+
+    #[test]
+    fn a_prefix_that_does_not_exist_yet_has_no_home() {
+        assert_eq!(None, prefix_home(Path::new("/nonexistent/prefix")));
     }
 }
