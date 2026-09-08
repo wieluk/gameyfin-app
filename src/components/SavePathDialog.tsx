@@ -1,0 +1,165 @@
+import { useState } from "react";
+import { backend } from "@/lib/backend";
+import { messageOf } from "@/lib/errors";
+import { useDismissOnEscape } from "@/lib/useDismiss";
+
+/** One rewrite: where the save actually is, and what it should be recorded as. */
+interface Mapping {
+  source: string;
+  target: string;
+}
+
+/**
+ * Correcting where a game's saves live when the automatic answer is wrong.
+ *
+ * The backend has taken per-game path mappings since cloud folders were added; nothing ever
+ * offered a way to enter one, so a game whose saves the helper looks for in the wrong place
+ * could not be fixed at all.
+ */
+export function SavePathDialog({
+  gameId,
+  gameTitle,
+  crossOs,
+  existing,
+  onClose,
+  onSaved,
+}: {
+  gameId: number;
+  gameTitle: string;
+  crossOs: boolean;
+  existing: Array<[string, string]>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  useDismissOnEscape(onClose);
+
+  const [mappings, setMappings] = useState<Mapping[]>(
+    existing.length > 0
+      ? existing.map(([source, target]) => ({ source, target }))
+      : [{ source: "", target: "" }],
+  );
+  const [translate, setTranslate] = useState(crossOs);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function update(index: number, field: keyof Mapping, value: string) {
+    setMappings((current) =>
+      current.map((row, i) => (i === index ? { ...row, [field]: value } : row)),
+    );
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      // Half-filled rows are a mistake, not an instruction.
+      const complete = mappings
+        .map(({ source, target }) => [source.trim(), target.trim()] as [string, string])
+        .filter(([source, target]) => source && target);
+      await backend.setSaveMapping(gameId, translate, complete);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      data-nav-scope
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Save locations for ${gameTitle}`}
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4">
+          <h2 className="mb-1 text-sm font-semibold">Save locations for {gameTitle}</h2>
+          <p className="text-xs leading-relaxed text-foreground/60">
+            Use this when saves are not where the helper expects. The first box is the folder
+            on this PC; the second is the name it is stored under, which has to match on
+            every machine you sync with.
+          </p>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5">
+          {mappings.map((row, index) => (
+            <div key={index} className="mb-2 flex items-center gap-2">
+              <input
+                className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-3 py-1.5 text-xs"
+                placeholder="C:\\Users\\you\\Documents\\My Games\\Example"
+                value={row.source}
+                onChange={(e) => update(index, "source", e.target.value)}
+              />
+              <span className="shrink-0 text-xs text-foreground/40">to</span>
+              <input
+                className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-3 py-1.5 text-xs"
+                placeholder="/gameyfin/home/Example"
+                value={row.target}
+                onChange={(e) => update(index, "target", e.target.value)}
+              />
+              <button
+                type="button"
+                aria-label="Remove this mapping"
+                onClick={() => setMappings((c) => c.filter((_, i) => i !== index))}
+                className="shrink-0 rounded-lg px-2 py-1 text-xs text-foreground/50 hover:bg-default-100"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setMappings((c) => [...c, { source: "", target: "" }])}
+            className="mb-3 rounded-lg bg-default-100 px-3 py-1.5 text-xs hover:bg-default-200"
+          >
+            Add another
+          </button>
+
+          <label className="mb-3 flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={translate}
+              onChange={(e) => setTranslate(e.target.checked)}
+            />
+            <span>
+              <span className="text-xs">Translate between Windows and Linux paths</span>
+              <span className="block text-[11px] text-foreground/50">
+                For a Windows game played through a compatibility layer. Best effort, and it
+                does not carry registry settings.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {error && <p className="px-5 py-2 text-xs text-danger">{error}</p>}
+
+        <div className="flex justify-end gap-2 border-t border-default-200/60 px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={busy}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90 disabled:opacity-50"
+          >
+            {busy ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

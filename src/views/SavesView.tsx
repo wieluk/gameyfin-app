@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Empty } from "@/components/Empty";
 import { Icon } from "@/components/Icon";
 import { SaveConflictDialog } from "@/components/SaveConflictDialog";
+import { SaveMatchDialog } from "@/components/SaveMatchDialog";
+import { SavePathDialog } from "@/components/SavePathDialog";
 import { backend, isMockBackend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatRelative } from "@/lib/format";
@@ -44,6 +46,8 @@ export function SavesView() {
   const states = useSaveStates(installed);
   const [busyGameId, setBusyGameId] = useState<number | null>(null);
   const [conflictGameId, setConflictGameId] = useState<number | null>(null);
+  const [identifyGameId, setIdentifyGameId] = useState<number | null>(null);
+  const [pathsGameId, setPathsGameId] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["save-states"] });
@@ -71,6 +75,9 @@ export function SavesView() {
 
   const conflictEntry = installed.find((e) => e.game.id === conflictGameId);
   const conflictState = conflictGameId ? states.data?.[conflictGameId] : undefined;
+  const identifyEntry = installed.find((e) => e.game.id === identifyGameId);
+  const identifyState = identifyGameId ? states.data?.[identifyGameId] : undefined;
+  const pathsEntry = installed.find((e) => e.game.id === pathsGameId);
 
   if (entries.isLoading || states.isLoading) {
     return (
@@ -110,6 +117,8 @@ export function SavesView() {
             onEnableCrossOs={() =>
               run(entry.game.id, () => backend.setSaveMapping(entry.game.id, true, []))
             }
+            onIdentify={() => setIdentifyGameId(entry.game.id)}
+            onEditPaths={() => setPathsGameId(entry.game.id)}
           />
         ))}
       </div>
@@ -128,6 +137,27 @@ export function SavesView() {
           }}
         />
       )}
+
+      {identifyEntry && (
+        <SaveMatchDialog
+          gameId={identifyEntry.game.id}
+          gameTitle={identifyEntry.game.title}
+          candidates={identifyState?.kind === "unmatched" ? identifyState.candidates : []}
+          onClose={() => setIdentifyGameId(null)}
+          onChosen={refresh}
+        />
+      )}
+
+      {pathsEntry && (
+        <SavePathDialog
+          gameId={pathsEntry.game.id}
+          gameTitle={pathsEntry.game.title}
+          crossOs={false}
+          existing={[]}
+          onClose={() => setPathsGameId(null)}
+          onSaved={refresh}
+        />
+      )}
     </div>
   );
 }
@@ -140,6 +170,8 @@ function SaveRow({
   onRestore,
   onResolve,
   onEnableCrossOs,
+  onIdentify,
+  onEditPaths,
 }: {
   entry: LibraryEntry;
   state?: SaveSyncState;
@@ -148,6 +180,8 @@ function SaveRow({
   onRestore: () => void;
   onResolve: () => void;
   onEnableCrossOs: () => void;
+  onIdentify: () => void;
+  onEditPaths: () => void;
 }) {
   const summary = describe(state);
 
@@ -173,6 +207,16 @@ function SaveRow({
           <Action label="Back up" onClick={onBackup} busy={busy} primary />
         )}
         {state?.kind === "in-sync" && <Action label="Back up" onClick={onBackup} busy={busy} />}
+        {/* The two states the user could previously do nothing about. */}
+        {state?.kind === "unmatched" && (
+          <Action label="Choose game" onClick={onIdentify} busy={busy} primary />
+        )}
+        {state?.kind === "nothing-to-back-up" && (
+          <>
+            <Action label="Choose game" onClick={onIdentify} busy={busy} />
+            <Action label="Set folders" onClick={onEditPaths} busy={busy} primary />
+          </>
+        )}
       </div>
     </div>
   );

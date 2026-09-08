@@ -752,6 +752,45 @@ pub async fn resolve_save_conflict(
     }
 }
 
+/// Searches the save manifest for a title the user typed.
+///
+/// The automatic search gives up rather than guess; this is how the user takes over when
+/// their game is listed under a name nobody would predict.
+#[tauri::command]
+pub async fn search_save_titles(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_id: i64,
+    query: String,
+) -> CommandResult<Vec<String>> {
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let context = context(&state, game_id).await?;
+    let ludusavi = ludusavi_for(&app, &state, &context).await?;
+
+    let found = ludusavi
+        .find(&gameyfin_saves::GameQuery::Title {
+            title: query,
+            normalized: false,
+            fuzzy: true,
+        })
+        .await
+        .map_err(|e| CommandError::Message(format!("could not search for that game: {e}")))?;
+
+    // Best score first, so the likeliest answer is the one under the cursor.
+    let mut matches: Vec<(String, f64)> = found
+        .games
+        .into_iter()
+        .map(|(title, game)| (title, game.score.unwrap_or(0.0)))
+        .collect();
+    matches.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+    Ok(matches.into_iter().map(|(title, _)| title).collect())
+}
+
 /// Records the title a user picked for a game Ludusavi could not identify.
 #[tauri::command]
 pub async fn set_save_title(

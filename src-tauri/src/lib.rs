@@ -322,6 +322,7 @@ pub fn run() {
             saves::backup_saves,
             saves::restore_saves,
             saves::resolve_save_conflict,
+            saves::search_save_titles,
             saves::set_save_title,
             saves::set_save_mapping,
             saves::delete_save_version,

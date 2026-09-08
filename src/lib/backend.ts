@@ -332,6 +332,8 @@ export interface Backend {
   /** Restore a version, newest if none is named. */
   restoreSaves(gameId: number, saveId?: string): Promise<SaveSyncState>;
   resolveSaveConflict(gameId: number, choice: ConflictChoice): Promise<SaveSyncState>;
+  /** Search the save manifest for what the user typed. Best match first. */
+  searchSaveTitles(gameId: number, query: string): Promise<string[]>;
   /** Name the title Ludusavi should use, for a game it could not identify. */
   setSaveTitle(gameId: number, title: string | null): Promise<SaveSyncState>;
   /** Choose how saves map onto this machine, plus any hand-written path pairs. */
@@ -484,6 +486,8 @@ const tauriBackend: Backend = {
   restoreSaves: (gameId, saveId) => invoke<SaveSyncState>("restore_saves", { gameId, saveId }),
   resolveSaveConflict: (gameId, choice) =>
     invoke<SaveSyncState>("resolve_save_conflict", { gameId, choice }),
+  searchSaveTitles: (gameId, query) =>
+    invoke<string[]>("search_save_titles", { gameId, query }),
   setSaveTitle: (gameId, title) => invoke<SaveSyncState>("set_save_title", { gameId, title }),
   setSaveMapping: (gameId, crossOs, redirects) =>
     invoke<SaveSyncState>("set_save_mapping", { gameId, crossOs, redirects }),
@@ -718,6 +722,10 @@ const mockBackend: Backend = {
     console.info(`[mock] resolve ${gameId} as ${choice}`);
     return { kind: "in-sync", lastSyncedAt: new Date().toISOString() };
   },
+  searchSaveTitles: async (_gameId, query) =>
+    ["Celeste", "Celeste Classic"].filter((t) =>
+      t.toLowerCase().includes(query.toLowerCase()),
+    ),
   setSaveTitle: async () => ({ kind: "never-synced" }),
   setSaveMapping: async () => ({ kind: "never-synced" }),
   deleteSaveVersion: async (gameId, saveId) =>
