@@ -22,6 +22,16 @@ static QUITTING: AtomicBool = AtomicBool::new(false);
 /// tray that is not there has to check this first.
 static TRAY_PRESENT: AtomicBool = AtomicBool::new(false);
 
+/// A directory for the tray icon PNG that the desktop outside a sandbox can also read.
+///
+/// Created eagerly, because the tray library writes into it without creating it first.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn tray_icon_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let dir = app.path().app_data_dir().ok()?.join("tray");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
 /// Whether the window can be hidden and got back again.
 pub fn has_tray() -> bool {
     TRAY_PRESENT.load(Ordering::SeqCst)
@@ -70,11 +80,22 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
         &[&show, &library, &downloads, &settings, &separator, &quit],
     )?;
 
-    TrayIconBuilder::with_id("main")
+    let mut builder = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().ok_or_else(|| {
             tauri::Error::AssetNotFound("the bundled window icon is missing".into())
         })?)
-        .tooltip("Gameyfin")
+        .tooltip("Gameyfin");
+
+    // The tray icon is published to the desktop as an absolute path to a PNG the library
+    // writes out. It defaults to $XDG_RUNTIME_DIR, which inside a Flatpak is this app's
+    // private mount, so the panel drawing the tray cannot read it and shows an empty slot.
+    // Somewhere under the app's own data directory is visible to both.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(dir) = tray_icon_dir(app) {
+        builder = builder.temp_dir_path(dir);
+    }
+
+    builder
         .menu(&menu)
         // The menu belongs on the right button only. On the left it swallows the click
         // that should toggle the window, which is what most people try first.

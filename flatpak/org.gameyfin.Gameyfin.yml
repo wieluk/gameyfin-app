@@ -194,6 +194,9 @@ modules:
         for src in usr/share/icons/hicolor/*/apps/gameyfin-app.png; do
           [ -f "$src" ] || continue
           size=$(basename "$(dirname "$(dirname "$src")")")
+          # Tauri emits "256x256@2"; the hicolor spec spells it "@2x", and a directory
+          # named otherwise is skipped by icon lookup, wasting the largest size we ship.
+          case "$size" in *@2) size="${size}x";; esac
           install -Dm644 "$src" \
             "/app/share/icons/hicolor/${size}/apps/org.gameyfin.Gameyfin.png"
         done
