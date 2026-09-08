@@ -112,6 +112,13 @@ struct RestoreSection {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ScanSection {
+    /// Ludusavi's best-effort Windows/Wine path translation. Restore-only, files only.
+    redirect_wine: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CloudSection {
     /// Ludusavi's own rclone sync is off: the Gameyfin server is the sync target.
     synchronize: bool,
@@ -127,7 +134,24 @@ struct ConfigFile {
     redirects: Vec<Redirect>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     custom_games: Vec<CustomGame>,
+    scan: ScanSection,
     cloud: CloudSection,
+}
+
+/// How a backup taken elsewhere should be mapped onto this machine.
+///
+/// The two are mutually exclusive, and not by preference. Ludusavi stops at the first
+/// user redirect that changes a path and never reaches its own Wine translation, so
+/// emitting the portable home redirect would silently disable `CrossOs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RestoreStrategy {
+    /// Same operating system, possibly a different account and install directory.
+    /// Synthetic redirects make the paths identical everywhere.
+    #[default]
+    Portable,
+    /// Windows to or from a Wine/Proton prefix. Hands the job to Ludusavi's own
+    /// translation, which needs a preferred prefix and does not carry registry values.
+    CrossOs,
 }
 
 /// Builds the Ludusavi configuration for this machine.
@@ -135,8 +159,10 @@ struct ConfigFile {
 pub struct ConfigBuilder {
     staging: PathBuf,
     roots: Vec<Root>,
-    redirects: Vec<Redirect>,
+    portable_redirects: Vec<Redirect>,
+    manual_redirects: Vec<Redirect>,
     custom_games: Vec<CustomGame>,
+    strategy: RestoreStrategy,
 }
 
 impl ConfigBuilder {
@@ -145,9 +171,18 @@ impl ConfigBuilder {
         Self {
             staging: staging.into(),
             roots: Vec::new(),
-            redirects: Vec::new(),
+            portable_redirects: Vec::new(),
+            manual_redirects: Vec::new(),
             custom_games: Vec::new(),
+            strategy: RestoreStrategy::default(),
         }
+    }
+
+    /// Selecting [`RestoreStrategy::CrossOs`] drops the portable redirects, which would
+    /// otherwise suppress Ludusavi's Wine translation.
+    pub fn strategy(mut self, strategy: RestoreStrategy) -> Self {
+        self.strategy = strategy;
+        self
     }
 
     pub fn root(mut self, store: RootStore, path: impl Into<String>) -> Self {
@@ -176,7 +211,7 @@ impl ConfigBuilder {
 
     /// Make the user's home directory portable across machines and accounts.
     pub fn portable_home(mut self, home: &Path) -> Self {
-        self.redirects.push(Redirect {
+        self.portable_redirects.push(Redirect {
             kind: RedirectKind::Bidirectional,
             source: home.to_string_lossy().into_owned(),
             target: HOME_TARGET.to_string(),
@@ -186,7 +221,7 @@ impl ConfigBuilder {
 
     /// Make a game's install directory portable across machines.
     pub fn portable_install_dir(mut self, install_dir: &Path) -> Self {
-        self.redirects.push(Redirect {
+        self.portable_redirects.push(Redirect {
             kind: RedirectKind::Bidirectional,
             source: install_dir.to_string_lossy().into_owned(),
             target: INSTALL_TARGET.to_string(),
@@ -194,9 +229,41 @@ impl ConfigBuilder {
         self
     }
 
+    /// Per-game path mappings the user entered by hand.
+    ///
+    /// These survive both strategies: an explicit mapping is the escape hatch for the
+    /// cases Ludusavi cannot work out, so it has to win over anything automatic.
+    pub fn manual_redirects(mut self, redirects: impl IntoIterator<Item = Redirect>) -> Self {
+        self.manual_redirects.extend(redirects);
+        self
+    }
+
     pub fn custom_game(mut self, game: CustomGame) -> Self {
         self.custom_games.push(game);
         self
+    }
+
+    /// Name the prefix Ludusavi should translate against.
+    ///
+    /// [`RestoreStrategy::CrossOs`] does nothing without one: the translation needs a
+    /// single preferred prefix, and Ludusavi takes it from a custom game entry.
+    pub fn preferred_wine_prefix(self, game_name: impl Into<String>, prefix: &Path) -> Self {
+        self.custom_game(CustomGame {
+            name: game_name.into(),
+            files: Vec::new(),
+            registry: Vec::new(),
+            wine_prefix: vec![prefix.to_string_lossy().into_owned()],
+            integration: CustomGameIntegration::Extend,
+        })
+    }
+
+    /// The redirects that actually reach the config file, in priority order.
+    fn effective_redirects(&self) -> Vec<Redirect> {
+        let mut redirects = self.manual_redirects.clone();
+        if self.strategy == RestoreStrategy::Portable {
+            redirects.extend(self.portable_redirects.clone());
+        }
+        redirects
     }
 
     fn build(&self) -> ConfigFile {
@@ -219,8 +286,11 @@ impl ConfigBuilder {
                 },
             },
             restore: RestoreSection { path: staging },
-            redirects: self.redirects.clone(),
+            redirects: self.effective_redirects(),
             custom_games: self.custom_games.clone(),
+            scan: ScanSection {
+                redirect_wine: self.strategy == RestoreStrategy::CrossOs,
+            },
             cloud: CloudSection { synchronize: false },
         }
     }
@@ -347,5 +417,83 @@ mod tests {
         assert!(contents.contains("/stage"));
 
         tokio::fs::remove_dir_all(&dir).await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod strategy_tests {
+    use super::*;
+
+    fn yaml(builder: &ConfigBuilder) -> serde_json::Value {
+        serde_yaml_ng::from_str(&builder.to_yaml().unwrap()).unwrap()
+    }
+
+    fn base() -> ConfigBuilder {
+        ConfigBuilder::new("/staging")
+            .portable_home(Path::new("/home/alice"))
+            .portable_install_dir(Path::new("/games/Celeste"))
+    }
+
+    #[test]
+    fn the_portable_strategy_emits_the_synthetic_redirects_and_leaves_wine_translation_off() {
+        let config = yaml(&base());
+
+        let redirects = config["redirects"].as_array().unwrap();
+        assert_eq!(2, redirects.len());
+        assert_eq!("/gameyfin/home", redirects[0]["target"].as_str().unwrap());
+        assert!(!config["scan"]["redirectWine"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn the_cross_os_strategy_drops_the_portable_redirects() {
+        // A user redirect that fires first stops Ludusavi before its own Wine translation,
+        // so leaving these in would silently disable the feature we just turned on.
+        let config = yaml(&base().strategy(RestoreStrategy::CrossOs));
+
+        assert!(config.get("redirects").is_none());
+        assert!(config["scan"]["redirectWine"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn manual_redirects_survive_both_strategies() {
+        let manual = Redirect {
+            kind: RedirectKind::Bidirectional,
+            source: "C:/Saves".into(),
+            target: "/home/alice/saves".into(),
+        };
+
+        for strategy in [RestoreStrategy::Portable, RestoreStrategy::CrossOs] {
+            let config = yaml(&base().strategy(strategy).manual_redirects([manual.clone()]));
+            let redirects = config["redirects"].as_array().unwrap();
+            assert_eq!("C:/Saves", redirects[0]["source"].as_str().unwrap());
+        }
+    }
+
+    #[test]
+    fn a_manual_redirect_outranks_the_portable_ones() {
+        // Ludusavi applies redirects top to bottom, so ordering is the priority.
+        let config = yaml(&base().manual_redirects([Redirect {
+            kind: RedirectKind::Bidirectional,
+            source: "C:/Saves".into(),
+            target: "/home/alice/saves".into(),
+        }]));
+
+        let redirects = config["redirects"].as_array().unwrap();
+        assert_eq!("C:/Saves", redirects[0]["source"].as_str().unwrap());
+        assert_eq!("/home/alice", redirects[1]["source"].as_str().unwrap());
+    }
+
+    #[test]
+    fn a_preferred_prefix_is_written_as_a_custom_game() {
+        let config = yaml(
+            &base()
+                .strategy(RestoreStrategy::CrossOs)
+                .preferred_wine_prefix("Celeste", Path::new("/prefixes/12")),
+        );
+
+        let games = config["customGames"].as_array().unwrap();
+        assert_eq!("Celeste", games[0]["name"].as_str().unwrap());
+        assert_eq!("/prefixes/12", games[0]["winePrefix"][0].as_str().unwrap());
+        assert_eq!("extend", games[0]["integration"].as_str().unwrap());
     }
 }
