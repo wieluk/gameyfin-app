@@ -1429,6 +1429,7 @@ version = "0.1.0"
 dependencies = [
  "gameyfin-api",
  "gameyfin-core",
+ "gameyfin-saves",
  "gilrs",
  "reqwest 0.12.28",
  "semver",
@@ -1449,6 +1450,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "url",
+ "uuid",
  "windows-sys 0.59.0",
 ]
 

@@ -74,6 +74,39 @@ pub struct GameRecord {
     /// as soon as an install attempt gets past the spawn.
     #[serde(default)]
     pub elevation_program: Option<PathBuf>,
+    /// What this machine knows about the game's saves, as of the last sync.
+    #[serde(default)]
+    pub saves: gameyfin_core::LocalSaveState,
+    /// How a backup taken elsewhere should be mapped onto this machine.
+    ///
+    /// Per game rather than global: whether a save crosses a platform boundary is a
+    /// property of the game, not of the installation.
+    #[serde(default)]
+    pub save_restore_strategy: SaveRestoreStrategy,
+    /// Path mappings the user entered by hand, as `(source, target)` pairs.
+    ///
+    /// The escape hatch for saves Ludusavi cannot place on its own.
+    #[serde(default)]
+    pub save_redirects: Vec<(String, String)>,
+}
+
+/// Mirrors `gameyfin_saves::RestoreStrategy`, kept here so the record stays serializable
+/// with a stable wire form independent of the crate's internals.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SaveRestoreStrategy {
+    #[default]
+    Portable,
+    CrossOs,
+}
+
+impl From<SaveRestoreStrategy> for gameyfin_saves::RestoreStrategy {
+    fn from(value: SaveRestoreStrategy) -> Self {
+        match value {
+            SaveRestoreStrategy::Portable => gameyfin_saves::RestoreStrategy::Portable,
+            SaveRestoreStrategy::CrossOs => gameyfin_saves::RestoreStrategy::CrossOs,
+        }
+    }
 }
 
 impl GameRecord {

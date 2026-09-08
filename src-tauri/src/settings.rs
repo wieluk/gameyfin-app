@@ -138,6 +138,18 @@ pub struct Settings {
     /// Start Gameyfin when the user logs in.
     #[serde(default)]
     pub autostart: bool,
+    /// Identifies this installation to the server, so save history can name the device
+    /// a version came from. Generated once, on first use.
+    #[serde(default)]
+    pub installation_id: Option<String>,
+    #[serde(default)]
+    pub save_sync_enabled: bool,
+    /// Restore a newer save before the game starts.
+    #[serde(default = "on")]
+    pub sync_saves_on_launch: bool,
+    /// Back up and upload after the game exits.
+    #[serde(default = "on")]
+    pub sync_saves_on_exit: bool,
 }
 
 /// Executable names that are almost never the game. A default, not hard-coded, so it stays editable.
@@ -239,6 +251,10 @@ impl Default for Settings {
             gamepad_deadzone: default_deadzone(),
             couch_mode_auto: true,
             check_for_updates: true,
+            installation_id: None,
+            save_sync_enabled: false,
+            sync_saves_on_launch: true,
+            sync_saves_on_exit: true,
             extraction_password: None,
             ignored_executables: default_ignored_executables(),
             theme: Theme::default(),

@@ -15,6 +15,7 @@ mod integrations;
 mod ipc;
 mod library_state;
 mod notify;
+mod saves;
 mod settings;
 mod state;
 mod taskbar;
@@ -316,6 +317,14 @@ pub fn run() {
             integrations::open_prefix_tool,
             integrations::umu_status,
             integrations::refresh_umu_database,
+            saves::save_state,
+            saves::list_save_versions,
+            saves::backup_saves,
+            saves::restore_saves,
+            saves::resolve_save_conflict,
+            saves::set_save_title,
+            saves::set_save_mapping,
+            saves::delete_save_version,
             updater::update_status,
             updater::install_update,
         ])

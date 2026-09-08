@@ -96,7 +96,7 @@ pub async fn probe_server(state: State<'_, AppState>, url: String) -> CommandRes
 }
 
 /// Read settings, apply a change, and persist them.
-async fn mutate_settings(
+pub(crate) async fn mutate_settings(
     state: &State<'_, AppState>,
     change: impl FnOnce(&mut Settings),
 ) -> CommandResult<()> {
@@ -1467,7 +1467,10 @@ async fn library_root(state: &State<'_, AppState>) -> CommandResult<String> {
 
 /// Which games folder a game lives in, recovered from its recorded paths so it keeps
 /// working after the default root changes.
-async fn root_for_game(state: &State<'_, AppState>, game_id: i64) -> CommandResult<String> {
+pub(crate) async fn root_for_game(
+    state: &State<'_, AppState>,
+    game_id: i64,
+) -> CommandResult<String> {
     let record = state.library().record(game_id).await;
     let settings = state.settings().await;
     let known = settings.library_roots();
@@ -3157,7 +3160,7 @@ fn cookie_header(cookies: &std::collections::HashMap<String, String>) -> String 
 }
 
 /// Current time as an ISO-8601 string, for record timestamps.
-fn now_iso8601() -> String {
+pub(crate) fn now_iso8601() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3244,6 +3247,10 @@ pub async fn launch_game(
         gameyfin_core::LaunchConfig::native(executable)
     };
 
+    // Saves are restored once the prefix exists, since a Proton game's saves live inside
+    // it, and before the process starts, so the game reads what was just written.
+    crate::saves::before_launch(&app, &state, game_id).await;
+
     // The user's own options, appended after anything the runtime needs. A game that
     // wants `-windowed` or `-nolauncher` has no other way to be told.
     let launch_arguments = gameyfin_core::arguments::split(&record.launch_arguments);
@@ -3306,6 +3313,12 @@ pub async fn launch_game(
                         })
                         .await;
                     library.clear_activity(game_id).await;
+
+                    // Same gate as playtime: a launch that died in seconds wrote no saves
+                    // worth uploading. Runs after the activity is cleared so the game does
+                    // not appear to still be running while the archive uploads.
+                    let state = app.state::<AppState>();
+                    crate::saves::after_exit(&app, &state, game_id).await;
                 } else if let Some(message) = failed_to_start(&session) {
                     // Previously this just cleared the activity, so a game that never
                     // started looked exactly like one the user closed straight away: the
