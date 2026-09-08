@@ -15,7 +15,13 @@ const COLLAPSED_KEY = "gameyfin.sidebar.collapsed";
  * Primary navigation. `h-full` keeps the panel the height of the window rather than the
  * current view, so it does not visibly resize between tabs.
  */
-export function Sidebar({ downloadCount }: { downloadCount: number }) {
+export function Sidebar({
+  downloadCount,
+  conflictCount,
+}: {
+  downloadCount: number;
+  conflictCount: number;
+}) {
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSED_KEY) === "1";
@@ -37,6 +43,7 @@ export function Sidebar({ downloadCount }: { downloadCount: number }) {
     { to: "/", label: "Library", icon: "library" },
     { to: "/downloads", label: "Downloads", icon: "download", badge: downloadCount || undefined },
     { to: "/installed", label: "Installed", icon: "installed" },
+    { to: "/saves", label: "Saves", icon: "cloud", badge: conflictCount || undefined },
     { to: "/settings", label: "Settings", icon: "settings" },
   ];
 

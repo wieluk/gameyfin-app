@@ -24,6 +24,7 @@ type TabId =
   | "library"
   | "interface"
   | "compatibility"
+  | "saves"
   | "diagnostics"
   | "about";
 
@@ -36,6 +37,7 @@ const TABS: Array<{ id: TabId; label: string; hideOnWindows?: boolean }> = [
   { id: "interface", label: "Interface" },
   // Nothing to configure here on Windows, which runs its own programs.
   { id: "compatibility", label: "Compatibility", hideOnWindows: true },
+  { id: "saves", label: "Saves" },
   { id: "diagnostics", label: "Diagnostics" },
   { id: "about", label: "About" },
 ];
@@ -114,6 +116,7 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
               <PrefixSection />
             </>
           )}
+          {tab === "saves" && <SavesSection />}
           {tab === "diagnostics" && <DiagnosticsSection />}
           {tab === "about" && <AboutSection />}
         </div>
@@ -1230,6 +1233,46 @@ function PathRow({
       </div>
       <p className="mt-1 text-[11px] text-foreground/45">{hint}</p>
     </div>
+  );
+}
+
+/** Save sync, off until the user opts in: it uploads their files to a server. */
+function SavesSection() {
+  const settings = useAppSettings();
+  const enabled = settings.data?.saveSyncEnabled ?? false;
+  const onLaunch = settings.data?.syncSavesOnLaunch ?? true;
+  const onExit = settings.data?.syncSavesOnExit ?? true;
+
+  async function update(next: { enabled?: boolean; onLaunch?: boolean; onExit?: boolean }) {
+    await backend.setSaveSyncSettings(
+      next.enabled ?? enabled,
+      next.onLaunch ?? onLaunch,
+      next.onExit ?? onExit,
+    );
+    await settings.refetch();
+  }
+
+  return (
+    <>
+      <Check
+        label="Sync my saves with the server"
+        hint="Backs up your saves after you play so another PC can pick them up. Your server has to have save sync turned on."
+        checked={enabled}
+        onChange={(next) => update({ enabled: next })}
+      />
+      <Check
+        label="Restore before a game starts"
+        hint="Fetches a newer save from another PC before launching, so you carry on where you left off."
+        checked={onLaunch}
+        onChange={(next) => update({ onLaunch: next })}
+      />
+      <Check
+        label="Back up after a game closes"
+        hint="Uploads your save when you finish playing. Nothing is uploaded if it has not changed."
+        checked={onExit}
+        onChange={(next) => update({ onExit: next })}
+      />
+    </>
   );
 }
 

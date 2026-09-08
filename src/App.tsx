@@ -15,6 +15,7 @@ import type { LibraryEntry } from "@/types";
 import { DownloadsView } from "@/views/DownloadsView";
 import { InstalledView } from "@/views/InstalledView";
 import { LibraryView } from "@/views/LibraryView";
+import { SavesView, countNeedingAttention, useSaveStates } from "@/views/SavesView";
 import { SettingsView } from "@/views/SettingsView";
 import { WelcomeView } from "@/views/WelcomeView";
 import { useAppSettings, useEntries, useStatus } from "@/lib/queries";
@@ -141,6 +142,14 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     ["downloading", "extracting", "extracted", "installing"].includes(e.state.kind),
   ).length;
 
+  // Saves that need a decision get the same badge treatment as pending downloads, so a
+  // conflict is visible without opening the tab.
+  const installedEntries = (entries.data ?? []).filter((e) =>
+    ["installed", "running"].includes(e.state.kind),
+  );
+  const saveStates = useSaveStates(installedEntries);
+  const conflicts = countNeedingAttention(saveStates.data);
+
   // `game-state` is patched into the cache directly (refetching the catalogue that often
   // froze progress bars); `library-changed` is structural and does refetch.
   useEffect(() => {
@@ -174,13 +183,14 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <div className="flex min-h-0 flex-1">
       <WinePrompt />
-      <Sidebar downloadCount={pending} />
+      <Sidebar downloadCount={pending} conflictCount={conflicts} />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <GamepadOverlay />
         <Routes>
           <Route path="/" element={<LibraryView />} />
           <Route path="/downloads" element={<DownloadsView />} />
           <Route path="/installed" element={<InstalledView />} />
+          <Route path="/saves" element={<SavesView />} />
           <Route path="/settings" element={<SettingsView onSignedOut={onSignedOut} />} />
         </Routes>
       </main>

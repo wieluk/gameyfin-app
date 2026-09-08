@@ -82,3 +82,46 @@ export interface LibraryEntry {
   /** Gameplay videos, as the server recorded them. Usually YouTube links. */
   videoUrls?: string[];
 }
+
+/** Mirrors `gameyfin_saves::SavePlatform` on the Rust side. */
+export type SavePlatform = "WINDOWS" | "LINUX" | "PROTON" | "MACOS" | "UNKNOWN";
+
+/** One version of a game's saves as the server holds it. */
+export interface SaveVersion {
+  id: number;
+  gameId: number;
+  gameTitle?: string | null;
+  sizeBytes: number;
+  contentHash: string;
+  platform: SavePlatform;
+  installationId?: string | null;
+  deviceName?: string | null;
+  ludusaviTitle?: string | null;
+  locked: boolean;
+  createdAt?: string | null;
+}
+
+/** Mirrors `save_sync::SaveSyncState` on the Rust side. Keep the two in step. */
+export type SaveSyncState =
+  /** The server has save sync switched off. */
+  | { kind: "unsupported" }
+  /** Ludusavi does not recognise this game, so there is nothing to back up yet. */
+  | { kind: "unmatched"; candidates: string[] }
+  | { kind: "never-synced" }
+  | { kind: "in-sync"; lastSyncedAt?: string | null }
+  | { kind: "local-newer"; localAt?: string | null }
+  | { kind: "remote-newer"; remoteAt?: string | null; device?: string | null }
+  /** Both sides moved since the last sync; only the user can choose. */
+  | { kind: "conflict"; localAt?: string | null; remote: SaveVersion }
+  /** The newest save was taken somewhere it cannot be restored from directly. */
+  | {
+      kind: "platform-mismatch";
+      local: SavePlatform;
+      remote: SavePlatform;
+      /** Whether Ludusavi's Wine translation could bridge it, rather than a hand mapping. */
+      crossOsAvailable: boolean;
+    }
+  | { kind: "failed"; message: string };
+
+/** How the user answered a conflict. */
+export type ConflictChoice = "keep-local" | "keep-remote" | "keep-both";

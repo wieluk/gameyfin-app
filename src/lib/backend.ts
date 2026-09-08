@@ -6,7 +6,13 @@
  * without a server or a GUI toolchain present.
  */
 
-import type { LibraryEntry, Library } from "@/types";
+import type {
+  ConflictChoice,
+  LibraryEntry,
+  Library,
+  SaveSyncState,
+  SaveVersion,
+} from "@/types";
 import { mockEntries, mockLibraries } from "./fixtures";
 
 /** Tauri injects this before any app code runs. */
@@ -186,6 +192,9 @@ export interface AppSettings {
   ignoredExecutables: string[];
   theme: Theme;
   autostart: boolean;
+  saveSyncEnabled: boolean;
+  syncSavesOnLaunch: boolean;
+  syncSavesOnExit: boolean;
 }
 
 /** A download provider the server offers, with the one this client uses marked. */
@@ -292,6 +301,25 @@ export interface Backend {
 
   umuStatus(gameId?: number): Promise<UmuStatus>;
   refreshUmuDatabase(): Promise<number>;
+
+  /** Where one game's saves stand, without changing anything. */
+  saveState(gameId: number): Promise<SaveSyncState>;
+  listSaveVersions(gameId: number): Promise<SaveVersion[]>;
+  /** Back up and upload. `force` accepts a stale base, keeping the losing version. */
+  backupSaves(gameId: number, force: boolean): Promise<SaveSyncState>;
+  /** Restore a version, newest if none is named. */
+  restoreSaves(gameId: number, saveId?: number): Promise<SaveSyncState>;
+  resolveSaveConflict(gameId: number, choice: ConflictChoice): Promise<SaveSyncState>;
+  /** Name the title Ludusavi should use, for a game it could not identify. */
+  setSaveTitle(gameId: number, title: string | null): Promise<SaveSyncState>;
+  /** Choose how saves map onto this machine, plus any hand-written path pairs. */
+  setSaveMapping(
+    gameId: number,
+    crossOs: boolean,
+    redirects: Array<[string, string]>,
+  ): Promise<SaveSyncState>;
+  deleteSaveVersion(gameId: number, saveId: number): Promise<void>;
+  setSaveSyncSettings(enabled: boolean, onLaunch: boolean, onExit: boolean): Promise<void>;
 
   updateStatus(): Promise<UpdateStatus>;
   /** Returns what to tell the user; what happens next differs by package format. */
@@ -425,6 +453,20 @@ const tauriBackend: Backend = {
   umuStatus: (gameId) => invoke<UmuStatus>("umu_status", { gameId: gameId ?? null }),
   refreshUmuDatabase: () => invoke<number>("refresh_umu_database"),
 
+  saveState: (gameId) => invoke<SaveSyncState>("save_state", { gameId }),
+  listSaveVersions: (gameId) => invoke<SaveVersion[]>("list_save_versions", { gameId }),
+  backupSaves: (gameId, force) => invoke<SaveSyncState>("backup_saves", { gameId, force }),
+  restoreSaves: (gameId, saveId) => invoke<SaveSyncState>("restore_saves", { gameId, saveId }),
+  resolveSaveConflict: (gameId, choice) =>
+    invoke<SaveSyncState>("resolve_save_conflict", { gameId, choice }),
+  setSaveTitle: (gameId, title) => invoke<SaveSyncState>("set_save_title", { gameId, title }),
+  setSaveMapping: (gameId, crossOs, redirects) =>
+    invoke<SaveSyncState>("set_save_mapping", { gameId, crossOs, redirects }),
+  deleteSaveVersion: (gameId, saveId) =>
+    invoke<void>("delete_save_version", { gameId, saveId }),
+  setSaveSyncSettings: (enabled, onLaunch, onExit) =>
+    invoke<void>("set_save_sync_settings", { enabled, onLaunch, onExit }),
+
   updateStatus: () => invoke<UpdateStatus>("update_status"),
   installUpdate: () => invoke<string>("install_update"),
 
@@ -442,6 +484,20 @@ const tauriBackend: Backend = {
   setTheme: (theme) => invoke("set_theme", { theme }),
   setAutostart: (enabled) => invoke("set_autostart", { enabled }),
 };
+
+function mockSaveVersion(gameId: number): SaveVersion {
+  return {
+    id: 1,
+    gameId,
+    gameTitle: "Fixture Game",
+    sizeBytes: 2_400_000,
+    contentHash: "a".repeat(64),
+    platform: "WINDOWS",
+    deviceName: "desktop",
+    locked: false,
+    createdAt: new Date().toISOString(),
+  };
+}
 
 const mockBackend: Backend = {
   listLibraries: async () => mockLibraries,
@@ -517,6 +573,9 @@ const mockBackend: Backend = {
     ignoredExecutables: ["unitycrashhandler", "vcredist"],
     theme: "dark" as Theme,
     autostart: false,
+    saveSyncEnabled: true,
+    syncSavesOnLaunch: true,
+    syncSavesOnExit: true,
   }),
   wineStatus: async () => ({
     installed: { version: "11.17", variant: "staging-wow64" as WineVariant, binary: "/tmp/wine" },
@@ -608,6 +667,29 @@ const mockBackend: Backend = {
   setExtractionOptions: async () => {},
   setTheme: async (theme) => console.info(`[mock] theme ${theme}`),
   setAutostart: async (enabled) => console.info(`[mock] autostart ${enabled}`),
+
+  saveState: async (gameId) =>
+    gameId % 3 === 0
+      ? { kind: "conflict", localAt: new Date().toISOString(), remote: mockSaveVersion(gameId) }
+      : { kind: "in-sync", lastSyncedAt: new Date().toISOString() },
+  listSaveVersions: async (gameId) => [mockSaveVersion(gameId)],
+  backupSaves: async (gameId) => {
+    console.info(`[mock] back up saves for ${gameId}`);
+    return { kind: "in-sync", lastSyncedAt: new Date().toISOString() };
+  },
+  restoreSaves: async (gameId) => {
+    console.info(`[mock] restore saves for ${gameId}`);
+    return { kind: "in-sync", lastSyncedAt: new Date().toISOString() };
+  },
+  resolveSaveConflict: async (gameId, choice) => {
+    console.info(`[mock] resolve ${gameId} as ${choice}`);
+    return { kind: "in-sync", lastSyncedAt: new Date().toISOString() };
+  },
+  setSaveTitle: async () => ({ kind: "never-synced" }),
+  setSaveMapping: async () => ({ kind: "never-synced" }),
+  deleteSaveVersion: async (gameId, saveId) =>
+    console.info(`[mock] delete save ${saveId} of ${gameId}`),
+  setSaveSyncSettings: async (enabled) => console.info(`[mock] save sync ${enabled}`),
 
   updateStatus: async () => ({
     currentVersion: "0.1.0",

@@ -617,6 +617,21 @@ pub async fn set_save_mapping(
 }
 
 #[tauri::command]
+pub async fn set_save_sync_settings(
+    state: State<'_, AppState>,
+    enabled: bool,
+    on_launch: bool,
+    on_exit: bool,
+) -> CommandResult<()> {
+    crate::ipc::mutate_settings(&state, |settings| {
+        settings.save_sync_enabled = enabled;
+        settings.sync_saves_on_launch = on_launch;
+        settings.sync_saves_on_exit = on_exit;
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn delete_save_version(
     state: State<'_, AppState>,
     game_id: i64,

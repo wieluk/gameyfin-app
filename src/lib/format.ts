@@ -30,3 +30,21 @@ export function formatEta(receivedBytes: number, totalBytes: number, bytesPerSec
   if (seconds < 3600) return `${Math.round(seconds / 60)} min left`;
   return `${(seconds / 3600).toFixed(1)} h left`;
 }
+
+/** "3 hours ago", for save timestamps. Absolute dates read poorly next to each other. */
+export function formatRelative(iso?: string | null): string {
+  if (!iso) return "never";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "never";
+
+  const seconds = Math.round((Date.now() - then) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return plural(Math.floor(seconds / 60), "minute") + " ago";
+  if (seconds < 86_400) return plural(Math.floor(seconds / 3600), "hour") + " ago";
+  if (seconds < 2_592_000) return plural(Math.floor(seconds / 86_400), "day") + " ago";
+  return new Date(iso).toLocaleDateString();
+}
+
+function plural(count: number, unit: string): string {
+  return `${count} ${unit}${count === 1 ? "" : "s"}`;
+}
