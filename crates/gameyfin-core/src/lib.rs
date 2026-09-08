@@ -45,5 +45,5 @@ pub use process::{
 pub use runtime::{
     detect_windows_runtime, detect_windows_runtime_in, windows_runtime_hint, WindowsRuntime,
 };
-pub use save_store::{FolderStore, SaveStore, ServerStore, StoreResult};
+pub use save_store::{FolderStore, SaveStore, ServerStore, StoreResult, WebDavStore};
 pub use save_sync::{decide, ConflictChoice, LocalSaveState, SaveSync, SaveSyncState};

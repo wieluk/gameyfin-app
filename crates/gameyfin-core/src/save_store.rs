@@ -302,6 +302,312 @@ fn iso8601_now() -> String {
         .unwrap_or_default()
 }
 
+// --- A WebDAV share --------------------------------------------------------------------
+
+/// The same append-only layout as [`FolderStore`], over WebDAV.
+///
+/// Worth having even though a WebDAV share can be mounted and used as a folder: inside a
+/// Flatpak the sandbox only reaches `$HOME` and removable media, so a mount elsewhere is
+/// invisible, whereas network access is always permitted.
+pub struct WebDavStore {
+    base_url: String,
+    username: Option<String>,
+    password: Option<String>,
+    http: reqwest::Client,
+    max_versions: usize,
+}
+
+impl WebDavStore {
+    pub fn new(
+        base_url: impl Into<String>,
+        username: Option<String>,
+        password: Option<String>,
+        http: reqwest::Client,
+        max_versions: usize,
+    ) -> Self {
+        let base = base_url.into().trim_end_matches('/').to_string();
+        Self {
+            base_url: base,
+            username,
+            password,
+            http,
+            max_versions: max_versions.max(1),
+        }
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}/{}", self.base_url, path.trim_start_matches('/'))
+    }
+
+    fn authorized(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.username {
+            Some(user) => req.basic_auth(user, self.password.clone()),
+            None => req,
+        }
+    }
+
+    async fn request(&self, method: reqwest::Method, path: &str) -> StoreResult<reqwest::Response> {
+        let req = self.http.request(method, self.url(path));
+        self.authorized(req)
+            .send()
+            .await
+            .map_err(ApiError::Transport)
+    }
+
+    /// Names of the immediate children of a collection, or an empty list when it is absent.
+    async fn children(&self, path: &str) -> StoreResult<Vec<String>> {
+        let method = reqwest::Method::from_bytes(b"PROPFIND").map_err(other)?;
+        let req = self
+            .http
+            .request(method, self.url(path))
+            .header("Depth", "1")
+            .header(reqwest::header::CONTENT_TYPE, "application/xml");
+
+        let response = self
+            .authorized(req)
+            .send()
+            .await
+            .map_err(ApiError::Transport)?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(Vec::new());
+        }
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ApiError::Unauthenticated("webdav".into()));
+        }
+        if !response.status().is_success() {
+            return Err(ApiError::Status {
+                endpoint: "webdav propfind".into(),
+                status: response.status().as_u16(),
+                body: String::new(),
+            });
+        }
+
+        let body = response.text().await.map_err(ApiError::Transport)?;
+        Ok(hrefs(&body)
+            .into_iter()
+            .filter_map(|href| last_segment(&href))
+            .collect())
+    }
+
+    async fn ensure_collection(&self, path: &str) -> StoreResult<()> {
+        let method = reqwest::Method::from_bytes(b"MKCOL").map_err(other)?;
+        let response = self.request(method, path).await?;
+        // 405 is "it already exists", which is exactly what we wanted.
+        if response.status().is_success() || response.status().as_u16() == 405 {
+            return Ok(());
+        }
+        Err(ApiError::Status {
+            endpoint: "webdav mkcol".into(),
+            status: response.status().as_u16(),
+            body: String::new(),
+        })
+    }
+
+    async fn prune(&self, game_id: i64) -> StoreResult<()> {
+        let versions = self.list(game_id).await?;
+        let unlocked: Vec<_> = versions.into_iter().filter(|v| !v.locked).collect();
+        for stale in unlocked.into_iter().skip(self.max_versions) {
+            self.delete(game_id, &stale.id).await?;
+        }
+        Ok(())
+    }
+}
+
+/// Pulls the `href` values out of a PROPFIND multi-status body.
+///
+/// Deliberately not a full XML parse: the element is always `href`, with or without a
+/// namespace prefix, and the payload is a path. A parser dependency would buy nothing.
+fn hrefs(xml: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let lowered = xml.to_ascii_lowercase();
+    let mut cursor = 0;
+
+    while let Some(open) = lowered[cursor..].find("href") {
+        let after_name = cursor + open + "href".len();
+        // Skip to the end of the opening tag, guarding against "href" inside an attribute.
+        let Some(tag_end) = lowered[after_name..].find('>') else {
+            break;
+        };
+        let value_start = after_name + tag_end + 1;
+        let Some(value_end) = lowered[value_start..].find('<') else {
+            break;
+        };
+        let value = xml[value_start..value_start + value_end].trim();
+        if !value.is_empty() {
+            found.push(value.to_string());
+        }
+        cursor = value_start + value_end;
+    }
+    found
+}
+
+/// The final path component of an href, ignoring any trailing slash on a collection.
+fn last_segment(href: &str) -> Option<String> {
+    let trimmed = href.trim_end_matches('/');
+    let segment = trimmed.rsplit('/').next()?;
+    if segment.is_empty() {
+        None
+    } else {
+        Some(segment.to_string())
+    }
+}
+
+#[async_trait]
+impl SaveStore for WebDavStore {
+    async fn list(&self, game_id: i64) -> StoreResult<Vec<SaveVersion>> {
+        let dir = game_id.to_string();
+        let names = self.children(&dir).await?;
+
+        let mut versions = Vec::new();
+        for name in names.iter().filter(|n| n.ends_with(".json")) {
+            let response = self
+                .request(reqwest::Method::GET, &format!("{dir}/{name}"))
+                .await?;
+            if !response.status().is_success() {
+                continue;
+            }
+            let text = response.text().await.map_err(ApiError::Transport)?;
+            if let Ok(sidecar) = serde_json::from_str::<Sidecar>(&text) {
+                versions.push(sidecar.version);
+            }
+        }
+
+        versions.sort_by(|a, b| b.id.cmp(&a.id));
+        Ok(versions)
+    }
+
+    async fn upload(
+        &self,
+        game_id: i64,
+        archive: &Path,
+        metadata: &UploadMetadata,
+    ) -> StoreResult<UploadOutcome> {
+        let existing = self.list(game_id).await?;
+        if let Some(newest) = existing.first() {
+            if newest
+                .content_hash
+                .eq_ignore_ascii_case(&metadata.content_hash)
+            {
+                return Ok(UploadOutcome::Unchanged);
+            }
+            if !metadata.force && Some(newest.id.as_str()) != metadata.base_save_id.as_deref() {
+                return Ok(UploadOutcome::Conflict {
+                    remote: Box::new(newest.clone()),
+                    base_save_id: metadata.base_save_id.clone(),
+                });
+            }
+        }
+
+        let dir = game_id.to_string();
+        self.ensure_collection(&dir).await?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(other)?
+            .as_millis();
+        let installation = metadata.installation_id.as_deref().unwrap_or("unknown");
+        let id = format!("{now:013}_{installation}");
+
+        let bytes = tokio::fs::read(archive).await.map_err(other)?;
+        let version = SaveVersion {
+            id: id.clone(),
+            game_id,
+            game_title: None,
+            size_bytes: bytes.len() as u64,
+            content_hash: metadata.content_hash.clone(),
+            platform: metadata.platform.clone(),
+            installation_id: metadata.installation_id.clone(),
+            device_name: metadata.device_name.clone(),
+            ludusavi_title: metadata.ludusavi_title.clone(),
+            locked: false,
+            created_at: Some(iso8601_now()),
+        };
+
+        let put = |path: String, body: Vec<u8>| {
+            let req = self.http.put(self.url(&path)).body(body);
+            self.authorized(req).send()
+        };
+
+        let response = put(format!("{dir}/{id}.zip"), bytes)
+            .await
+            .map_err(ApiError::Transport)?;
+        if !response.status().is_success() {
+            return Err(ApiError::Status {
+                endpoint: "webdav put".into(),
+                status: response.status().as_u16(),
+                body: String::new(),
+            });
+        }
+
+        // Sidecar second, so an interrupted upload leaves an archive nothing lists.
+        let sidecar = serde_json::to_vec(&Sidecar {
+            version: version.clone(),
+        })
+        .map_err(other)?;
+        let response = put(format!("{dir}/{id}.json"), sidecar)
+            .await
+            .map_err(ApiError::Transport)?;
+        if !response.status().is_success() {
+            return Err(ApiError::Status {
+                endpoint: "webdav put".into(),
+                status: response.status().as_u16(),
+                body: String::new(),
+            });
+        }
+
+        self.prune(game_id).await?;
+        Ok(UploadOutcome::Stored(Box::new(version)))
+    }
+
+    async fn fetch(&self, game_id: i64, version_id: &str, destination: &Path) -> StoreResult<()> {
+        let response = self
+            .request(reqwest::Method::GET, &format!("{game_id}/{version_id}.zip"))
+            .await?;
+        if !response.status().is_success() {
+            return Err(ApiError::Status {
+                endpoint: "webdav get".into(),
+                status: response.status().as_u16(),
+                body: String::new(),
+            });
+        }
+
+        if let Some(parent) = destination.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(other)?;
+        }
+        let bytes = response.bytes().await.map_err(ApiError::Transport)?;
+        tokio::fs::write(destination, &bytes).await.map_err(other)?;
+        Ok(())
+    }
+
+    async fn delete(&self, game_id: i64, version_id: &str) -> StoreResult<()> {
+        for extension in ["zip", "json"] {
+            let _ = self
+                .request(
+                    reqwest::Method::DELETE,
+                    &format!("{game_id}/{version_id}.{extension}"),
+                )
+                .await;
+        }
+        Ok(())
+    }
+
+    async fn games(&self) -> StoreResult<Vec<i64>> {
+        let mut games: Vec<i64> = self
+            .children("")
+            .await?
+            .into_iter()
+            .filter_map(|name| name.parse().ok())
+            .collect();
+        games.sort_unstable();
+        Ok(games)
+    }
+
+    fn describe(&self) -> String {
+        format!("WebDAV share at {}", self.base_url)
+    }
+}
+
 #[cfg(test)]
 mod folder_tests {
     use super::*;
