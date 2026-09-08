@@ -95,6 +95,11 @@ pub async fn hash_file(path: &Path) -> std::io::Result<String> {
 }
 
 impl GameyfinClient {
+    /// Versions for a game, newest first.
+    ///
+    /// This doubles as the capability probe. Listing cannot legitimately 404 on a server
+    /// that has the feature, since an unknown game simply has no versions, so a 404 here
+    /// means the route does not exist and the server predates save sync.
     pub async fn list_saves(&self, game_id: i64) -> ApiResult<Vec<SaveVersion>> {
         let url = self.url_for(&format!("/saves/game/{game_id}"));
         let req = self.auth().apply(self.http().get(&url)).await?;
@@ -102,6 +107,9 @@ impl GameyfinClient {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
 
+        if status == StatusCode::NOT_FOUND {
+            return Err(ApiError::SaveSyncUnsupported);
+        }
         check_status("list_saves", status, &body)?;
         serde_json::from_str(&body).map_err(|source| ApiError::Decode {
             endpoint: "list_saves".into(),

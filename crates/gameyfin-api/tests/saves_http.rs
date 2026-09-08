@@ -197,6 +197,48 @@ async fn a_server_with_the_feature_off_is_reported_as_disabled() {
 }
 
 #[tokio::test]
+async fn a_server_predating_the_feature_is_told_apart_from_one_with_it_switched_off() {
+    // A stock server has no route at all and answers 404. The remedy differs from a 405,
+    // so the two must not collapse into one error.
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("GET", "/saves/game/42")
+        .with_status(404)
+        .create_async()
+        .await;
+
+    let error = client(&server.url()).list_saves(42).await.unwrap_err();
+
+    assert!(
+        matches!(error, ApiError::SaveSyncUnsupported),
+        "got {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_missing_version_is_still_an_ordinary_not_found() {
+    // Listing cannot legitimately 404 on a supporting server, but downloading a version
+    // that has been pruned can, and that must not read as "the server lacks the feature".
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("GET", "/saves/game/42/7")
+        .with_status(404)
+        .create_async()
+        .await;
+    let destination = scratch("gone");
+
+    let error = client(&server.url())
+        .download_save(42, 7, &destination)
+        .await
+        .unwrap_err();
+
+    assert!(
+        !matches!(error, ApiError::SaveSyncUnsupported),
+        "a pruned version should not look like an unsupported server, got {error:?}"
+    );
+}
+
+#[tokio::test]
 async fn an_over_quota_upload_is_reported_as_such() {
     let mut server = mockito::Server::new_async().await;
     server

@@ -25,8 +25,14 @@ pub enum ApiError {
     },
 
     /// The server has save synchronisation turned off (HTTP 405).
-    #[error("save sync is disabled on this server")]
+    #[error("save sync is turned off on this server")]
     SaveSyncDisabled,
+
+    /// The server has no save sync routes at all (HTTP 404), so it predates the feature.
+    /// Distinct from [`Self::SaveSyncDisabled`] because the remedy differs: an
+    /// administrator can switch the feature on, but cannot add it to an older server.
+    #[error("this server does not support save sync")]
+    SaveSyncUnsupported,
 
     /// The upload exceeded the per-save or per-user limit (HTTP 413).
     #[error("save is too large, or the storage quota is full")]

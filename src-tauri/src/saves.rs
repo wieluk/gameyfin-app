@@ -389,7 +389,10 @@ pub async fn state_of(
         .await
     {
         Ok(remote) => remote,
-        Err(gameyfin_api::ApiError::SaveSyncDisabled) => return Ok(SaveSyncState::Unsupported),
+        // Both mean the server cannot store saves; the UI tells them apart so it can
+        // advise either "ask your admin" or "set up a cloud folder instead".
+        Err(gameyfin_api::ApiError::SaveSyncDisabled) => return Ok(SaveSyncState::Disabled),
+        Err(gameyfin_api::ApiError::SaveSyncUnsupported) => return Ok(SaveSyncState::Unsupported),
         Err(e) => return Err(e.into()),
     };
 

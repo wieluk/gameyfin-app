@@ -32,8 +32,10 @@ pub struct LocalSaveState {
     rename_all_fields = "camelCase"
 )]
 pub enum SaveSyncState {
-    /// The server has save sync turned off.
+    /// The server has no save sync at all, so it predates the feature.
     Unsupported,
+    /// The server could sync saves but an administrator has switched it off.
+    Disabled,
     /// Ludusavi has no manifest entry for this game, so there is nothing to back up yet.
     Unmatched {
         candidates: Vec<String>,

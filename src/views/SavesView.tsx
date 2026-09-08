@@ -213,7 +213,9 @@ function describe(state?: SaveSyncState): { text: string; tone: string } {
     case undefined:
       return { text: "Checking...", tone: muted };
     case "unsupported":
-      return { text: "Your server does not have save sync turned on", tone: muted };
+      return { text: "Your server does not support save sync", tone: muted };
+    case "disabled":
+      return { text: "Save sync is turned off on your server", tone: muted };
     case "unmatched":
       return {
         text:

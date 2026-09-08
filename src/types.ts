@@ -103,8 +103,10 @@ export interface SaveVersion {
 
 /** Mirrors `save_sync::SaveSyncState` on the Rust side. Keep the two in step. */
 export type SaveSyncState =
-  /** The server has save sync switched off. */
+  /** The server has no save sync at all, so it predates the feature. */
   | { kind: "unsupported" }
+  /** The server could sync saves but an administrator has switched it off. */
+  | { kind: "disabled" }
   /** Ludusavi does not recognise this game, so there is nothing to back up yet. */
   | { kind: "unmatched"; candidates: string[] }
   | { kind: "never-synced" }
