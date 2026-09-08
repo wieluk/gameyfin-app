@@ -15,6 +15,7 @@ pub mod payload;
 pub mod prefix;
 pub mod process;
 pub mod runtime;
+pub mod save_store;
 pub mod save_sync;
 pub mod shortcuts;
 pub mod steam;
@@ -44,4 +45,5 @@ pub use process::{
 pub use runtime::{
     detect_windows_runtime, detect_windows_runtime_in, windows_runtime_hint, WindowsRuntime,
 };
+pub use save_store::{FolderStore, SaveStore, ServerStore, StoreResult};
 pub use save_sync::{decide, ConflictChoice, LocalSaveState, SaveSync, SaveSyncState};

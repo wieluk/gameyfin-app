@@ -1459,6 +1459,7 @@ name = "gameyfin-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bzip2",
  "flate2",
  "futures-util",
@@ -1473,6 +1474,7 @@ dependencies = [
  "sha2",
  "tar",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tracing",
  "zip 2.4.2",
