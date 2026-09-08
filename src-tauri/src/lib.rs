@@ -260,6 +260,7 @@ pub fn run() {
             ipc::install_wine,
             ipc::remove_wine,
             ipc::set_wine_variant,
+            ipc::set_wine_prompt_dismissed,
             ipc::image_cache_size,
             ipc::clear_image_cache,
             ipc::set_download_limit,

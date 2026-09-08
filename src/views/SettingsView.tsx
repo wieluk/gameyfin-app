@@ -14,12 +14,9 @@ import {
 } from "@/lib/backend";
 import { formatBytes, formatSpeed } from "@/lib/format";
 import { messageOf } from "@/lib/errors";
+import { isWindows } from "@/lib/platform";
 import { useAppSettings, useStatus } from "@/lib/queries";
 import { useCouch } from "@/state/couch";
-
-/** Windows runs its own programs; none of the compatibility machinery applies there. */
-const isWindows =
-  typeof navigator !== "undefined" && /win/i.test(navigator.platform || navigator.userAgent);
 
 /** Which pane of Settings is showing. */
 type TabId =

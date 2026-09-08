@@ -50,6 +50,12 @@ pub struct Settings {
     /// links against, which a Flatpak sandbox does not have on its own.
     #[serde(default)]
     pub wine_variant: gameyfin_core::wine::WineVariant,
+    /// The user turned down the offer to download Wine and asked not to be offered again.
+    ///
+    /// Separate from having Wine: a native-only library never needs it, and asking at every
+    /// start is the wrong way to find that out.
+    #[serde(default)]
+    pub wine_prompt_dismissed: bool,
 
     /// Tell the desktop when a download or an install finishes.
     #[serde(default = "on")]
@@ -213,6 +219,7 @@ impl Default for Settings {
             download_limit_kib: 0,
             installer_memory_limit_mb: default_installer_memory_limit(),
             wine_variant: gameyfin_core::wine::WineVariant::default(),
+            wine_prompt_dismissed: false,
             notify_transfers: true,
             notify_failures: true,
             notify_updates: true,

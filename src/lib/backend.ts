@@ -169,6 +169,8 @@ export interface AppSettings {
   installerMemoryLimitMb: number;
   downloadLimitKib: number;
   wineVariant: WineVariant;
+  /** The user turned down the startup offer to download Wine. Linux only. */
+  winePromptDismissed: boolean;
   notifyTransfers: boolean;
   notifyFailures: boolean;
   notifyUpdates: boolean;
@@ -232,6 +234,8 @@ export interface Backend {
   installWine(): Promise<InstalledWine>;
   removeWine(): Promise<void>;
   setWineVariant(variant: WineVariant): Promise<void>;
+  /** Stop offering Wine at startup. */
+  setWinePromptDismissed(dismissed: boolean): Promise<void>;
   setDownloadLimit(kib: number): Promise<void>;
   /** Stop a running download. The partial file is kept, but Gameyfin 2.4 cannot resume. */
   cancelDownload(gameId: number): Promise<void>;
@@ -351,6 +355,8 @@ const tauriBackend: Backend = {
   installWine: () => invoke("install_wine"),
   removeWine: () => invoke("remove_wine"),
   setWineVariant: (variant) => invoke("set_wine_variant", { variant }),
+  setWinePromptDismissed: (dismissed) =>
+    invoke("set_wine_prompt_dismissed", { dismissed }),
   suggestLibraryRoot: () => invoke<string>("suggest_library_root"),
   pickFolder: async (current) => {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -479,6 +485,7 @@ const mockBackend: Backend = {
     installerMemoryLimitMb: 3072,
     downloadLimitKib: 0,
     wineVariant: "staging-wow64" as WineVariant,
+    winePromptDismissed: false,
     notifyTransfers: true,
     notifyFailures: true,
     notifyUpdates: true,
@@ -506,6 +513,8 @@ const mockBackend: Backend = {
   }),
   removeWine: async () => {},
   setWineVariant: async (variant) => console.info(`[mock] wine variant ${variant}`),
+  setWinePromptDismissed: async (dismissed) =>
+    console.info(`[mock] wine prompt dismissed ${dismissed}`),
   setDownloadLimit: async () => {},
   cancelDownload: async (gameId) => console.info(`[mock] cancel download ${gameId}`),
   configDirectory: async () => "/tmp/gameyfin",

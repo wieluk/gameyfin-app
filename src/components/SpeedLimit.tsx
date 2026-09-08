@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { backend } from "@/lib/backend";
 import { useAppSettings } from "@/lib/queries";
 
@@ -20,9 +20,31 @@ const PRESETS = [
   { label: "25 MB/s", kib: 25600 },
 ];
 
-/** MB/s for the custom field, one decimal so 0.5 survives a round trip. */
-function toMegabytes(kib: number): string {
-  return String(Math.round((kib / 1024) * 10) / 10);
+/** MB/s for the custom field. Three decimals, so 0.25 and 1.5 survive a round trip. */
+export function toMegabytes(kib: number): string {
+  return String(Math.round((kib / 1024) * 1000) / 1000);
+}
+
+/** How an off-list cap reads in the list. Sub-1 MB/s values are clearer in KB/s. */
+export function labelFor(kib: number): string {
+  return kib < 1024 ? `${kib} KB/s` : `${toMegabytes(kib)} MB/s`;
+}
+
+/**
+ * A typed cap as KiB/s, or null to leave the setting alone.
+ *
+ * Hand-parsed so decimal commas work, and so nothing unusable becomes 0: that reads as
+ * unlimited, which is only ever a deliberate choice from the list.
+ */
+export function parseLimit(typed: string): number | null {
+  const cleaned = typed.trim().replace(",", ".");
+  if (cleaned === "") return null;
+
+  const megabytes = Number(cleaned);
+  if (!Number.isFinite(megabytes) || megabytes <= 0) return null;
+
+  // Never round down to zero, which reads as unlimited.
+  return Math.max(Math.round(megabytes * 1024), 1);
 }
 
 export function SpeedLimit() {
@@ -36,14 +58,6 @@ export function SpeedLimit() {
   const current = value ?? stored;
   const isPreset = PRESETS.some((p) => p.kib === current);
 
-  useEffect(() => {
-    // Off-list values show in the field rather than silently snapping to a preset.
-    if (!isPreset && current > 0) {
-      setEditing(true);
-      setDraft(toMegabytes(current));
-    }
-  }, [isPreset, current]);
-
   async function apply(kib: number) {
     setValue(kib);
     try {
@@ -53,6 +67,13 @@ export function SpeedLimit() {
       void settings.refetch();
     }
   }
+
+  // An off-list cap gets its own entry rather than opening the field and staying there,
+  // which used to hide the list for good and put unlimited out of reach.
+  const options = [
+    ...PRESETS,
+    ...(isPreset ? [] : [{ label: labelFor(current), kib: current }]),
+  ];
 
   return (
     <div className="flex items-center gap-2">
@@ -94,9 +115,9 @@ export function SpeedLimit() {
           }}
           className="rounded-lg border border-default-200 bg-content2 px-2.5 py-1.5 text-xs outline-none focus:border-primary"
         >
-          {PRESETS.map((preset) => (
-            <option key={preset.kib} value={preset.kib}>
-              {preset.label}
+          {options.map((option) => (
+            <option key={option.kib} value={option.kib}>
+              {option.label}
             </option>
           ))}
           <option value="custom">Custom…</option>
@@ -107,17 +128,7 @@ export function SpeedLimit() {
 
   async function commit() {
     setEditing(false);
-
-    // Hand-parsed so decimal commas work; a blank from `type="number"` used to become 0,
-    // and 0 means unlimited, so typing a limit removed the limit.
-    const typed = draft.trim().replace(",", ".");
-    if (typed === "") return;
-
-    const megabytes = Number(typed);
-    // Unusable input changes nothing; unlimited is only ever a deliberate choice.
-    if (!Number.isFinite(megabytes) || megabytes <= 0) return;
-
-    // Never round down to zero, which reads as unlimited.
-    await apply(Math.max(Math.round(megabytes * 1024), 1));
+    const kib = parseLimit(draft);
+    if (kib !== null) await apply(kib);
   }
 }

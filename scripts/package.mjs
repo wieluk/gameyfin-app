@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, existsSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, existsSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,15 +33,30 @@ const targets = requested.length > 0 ? requested : bundles;
 
 console.log(`Building ${targets.join(", ")} for ${platform}...`);
 const tauri = join(ROOT, "node_modules", ".bin", platform === "win32" ? "tauri.cmd" : "tauri");
+
+// Marks this run, so leftovers in `target/` can be told apart from what it produced. A
+// failed build used to be reported as a success, listing stale installers as if fresh.
+const startedAt = Date.now();
+let buildFailed = false;
+
+// Tauri treats a missing signing key as an error, not a reason to skip updater artifacts,
+// so a local build failed after every bundle was already written. CI sets the key.
+const args = ["build", "--bundles", targets.join(",")];
+if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
+  console.log("No TAURI_SIGNING_PRIVATE_KEY set; building without updater artifacts.");
+  args.push("--config", JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
+}
+
 try {
-  execFileSync(tauri, ["build", "--bundles", targets.join(",")], {
+  execFileSync(tauri, args, {
     cwd: ROOT,
     stdio: "inherit",
     env: rustEnv(),
   });
 } catch {
   // One bundle type can fail while others succeed; report what landed.
-  console.warn("\nBundling reported an error; collecting whatever was produced.");
+  buildFailed = true;
+  console.warn("\nBundling reported an error; collecting whatever this run produced.");
 }
 
 if (!existsSync(BUNDLE_DIR)) {
@@ -54,6 +69,7 @@ mkdirSync(OUT, { recursive: true });
 
 const INSTALLER = /\.(deb|rpm|AppImage|msi|exe)$/i;
 const collected = [];
+const stale = [];
 
 for (const type of readdirSync(BUNDLE_DIR)) {
   const dir = join(BUNDLE_DIR, type);
@@ -61,18 +77,47 @@ for (const type of readdirSync(BUNDLE_DIR)) {
   for (const file of readdirSync(dir)) {
     if (!INSTALLER.test(file)) continue;
     const from = join(dir, file);
-    if (!statSync(from).isFile()) continue;
-    copyFileSync(from, join(OUT, file));
-    collected.push([file, statSync(from).size]);
+    const info = statSync(from);
+    if (!info.isFile()) continue;
+    // A second's slack: some bundlers stamp the file from just before they were invoked.
+    if (info.mtimeMs < startedAt - 1000) {
+      stale.push(file);
+      continue;
+    }
+    const to = join(OUT, file);
+    copyFileSync(from, to);
+    // Keep the build's own timestamp, so the next run judges it the same way.
+    utimesSync(to, info.atime, info.mtime);
+    collected.push([file, info.size]);
   }
+}
+
+if (stale.length > 0) {
+  console.warn(`\nIgnored ${stale.length} installer(s) left from an earlier build: ${stale.join(", ")}`);
+}
+
+if (collected.length > 0) {
+  console.log(`\nInstallers in ${OUT}:`);
+  for (const [name, size] of collected) {
+    console.log(`  ${name}  (${(size / 1024 / 1024).toFixed(1)} MB)`);
+  }
+}
+
+if (buildFailed) {
+  console.error(
+    collected.length > 0
+      ? "\nThe build reported an error; the installers above are only the bundles that got that far."
+      : "\nThe build failed and produced nothing; see the error above.",
+  );
+  if (platform === "linux") {
+    console.error(
+      "The usual cause is a missing dev package: libudev-dev (systemd-devel on Fedora) plus the WebKit and GTK ones.",
+    );
+  }
+  process.exit(1);
 }
 
 if (collected.length === 0) {
   console.error("No installers found to collect.");
   process.exit(1);
-}
-
-console.log(`\nInstallers in ${OUT}:`);
-for (const [name, size] of collected) {
-  console.log(`  ${name}  (${(size / 1024 / 1024).toFixed(1)} MB)`);
 }

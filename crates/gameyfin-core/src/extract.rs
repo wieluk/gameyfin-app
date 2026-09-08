@@ -600,10 +600,19 @@ const EXTRACTS_INTO_WORKING_DIR: &[&str] = &["unrar", "bsdtar", "tar"];
 
 /// Find an installed tool that can unpack RAR archives.
 pub fn rar_tool() -> Option<&'static str> {
+    installed_rar_tools().first().map(|(name, _)| *name)
+}
+
+/// Every installed tool from [`RAR_TOOLS`], in preference order.
+///
+/// All of them, because installed does not mean able: Debian's `p7zip` ships without the
+/// RAR codec, so its `7z` is found, chosen, and then fails on every RAR there is.
+fn installed_rar_tools() -> Vec<(&'static str, &'static [&'static str])> {
     RAR_TOOLS
         .iter()
-        .map(|(name, _)| *name)
-        .find(|name| crate::runtime::find_program(name).is_some())
+        .filter(|(name, _)| crate::runtime::find_program(name).is_some())
+        .map(|(name, flags)| (*name, *flags))
+        .collect()
 }
 
 /// What to install when no RAR tool is present. RAR cannot be unpacked in-process (the
@@ -616,9 +625,12 @@ pub fn rar_tool_hint() -> String {
             .to_string();
     }
 
+    // `unar` first: it needs no separate codec, which is exactly what the packaged 7z on
+    // Debian and Ubuntu is missing.
     format!(
-        "RAR archives need an external tool. Install one of unar, p7zip (7z) or unrar, \
-         for example `{}`.",
+        "RAR archives need an external tool. Install unar, for example `{}`. The 7z in \
+         Debian's and Ubuntu's p7zip package cannot read RAR on its own; its codec is the \
+         separate p7zip-rar package.",
         crate::runtime::install_command("unar")
     )
 }
@@ -627,14 +639,46 @@ fn extract_rar<F>(archive: &Path, destination: &Path, on_progress: &mut F) -> Co
 where
     F: FnMut(ExtractProgress),
 {
-    let Some(tool) = rar_tool() else {
+    let tools = installed_rar_tools();
+    if tools.is_empty() {
         return Err(CoreError::Other(rar_tool_hint()));
-    };
-    let (_, flags) = RAR_TOOLS
-        .iter()
-        .find(|(name, _)| *name == tool)
-        .expect("tool came from the same table");
+    }
 
+    // Giving up on the first tool's failure left unar installed and unused whenever a
+    // codec-less p7zip was found ahead of it.
+    let has_unar = tools.iter().any(|(name, _)| *name == "unar");
+    let mut first_failure: Option<String> = None;
+    for (tool, flags) in tools {
+        match run_rar_tool(tool, flags, archive, destination, on_progress) {
+            Ok(written) => return Ok(written),
+            Err(e) => {
+                tracing::warn!(tool, error = %e, "RAR tool could not unpack the archive");
+                first_failure.get_or_insert_with(|| e.to_string());
+            }
+        }
+    }
+
+    // "Unsupported Method" from a codec-less 7z reads as a broken archive on its own, so
+    // what to install is spelled out alongside it.
+    let reported = first_failure.unwrap_or_else(rar_tool_hint);
+    Err(CoreError::Other(if has_unar {
+        reported
+    } else {
+        format!("{reported}. {}", rar_tool_hint())
+    }))
+}
+
+/// Unpack a RAR with one named tool. See [`extract_rar`], which tries these in turn.
+fn run_rar_tool<F>(
+    tool: &str,
+    flags: &[&str],
+    archive: &Path,
+    destination: &Path,
+    on_progress: &mut F,
+) -> CoreResult<u64>
+where
+    F: FnMut(ExtractProgress),
+{
     let program =
         crate::runtime::find_program(tool).ok_or_else(|| CoreError::Other(rar_tool_hint()))?;
 
@@ -642,7 +686,7 @@ where
     // Piped so the child does not inherit our stdio, and so failures can be reported.
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
-    for flag in *flags {
+    for flag in flags {
         // The 7-Zip family joins the output directory to its flag with no separator.
         if *flag == "-o" {
             command.arg(format!("-o{}", destination.display()));
@@ -665,14 +709,12 @@ where
         "unpacking RAR with an external tool"
     );
 
-    // `bsdtar` is the last entry in `RAR_TOOLS` because libarchive's RAR support is
-    // partial. Reaching it means nothing better is installed, and the result can be an
-    // archive that unpacks "successfully" into files that are not what it contained, so
-    // say so here rather than leaving it to be inferred from a game that will not start.
+    // Last in `RAR_TOOLS` because libarchive's RAR support is partial: it can unpack
+    // "successfully" into files that are not what the archive held. Better said than inferred.
     if tool == "bsdtar" || tool == "tar" {
         tracing::warn!(
-            "no full RAR tool found, falling back to bsdtar; install unar or 7z if this \
-             archive unpacks incorrectly"
+            "falling back to bsdtar for a RAR; install unar if this archive unpacks \
+             incorrectly"
         );
     }
 

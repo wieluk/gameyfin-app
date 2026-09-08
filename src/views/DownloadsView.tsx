@@ -156,8 +156,8 @@ export function DownloadsView() {
           title={`Delete the download for ${deleting.game.title}?`}
           body={
             <>
-              The downloaded file will be removed. Installed games stay, and you can
-              download again later.
+              The download folder goes, with the archive and anything unpacked from it.
+              Installed games stay, and you can download again later.
             </>
           }
           confirmLabel="Delete download"

@@ -614,6 +614,15 @@ pub async fn set_wine_variant(state: State<'_, AppState>, variant: String) -> Co
     Ok(())
 }
 
+/// Stop offering Wine at startup.
+#[tauri::command]
+pub async fn set_wine_prompt_dismissed(
+    state: State<'_, AppState>,
+    dismissed: bool,
+) -> CommandResult<()> {
+    mutate_settings(&state, |s| s.wine_prompt_dismissed = dismissed).await
+}
+
 /// How much disk the artwork cache is using.
 #[tauri::command]
 pub async fn image_cache_size(state: State<'_, AppState>) -> CommandResult<u64> {
@@ -1933,7 +1942,10 @@ pub async fn delete_staging(
     Ok(())
 }
 
-/// Delete a downloaded archive.
+/// Delete everything a game has in Downloads: archive, unpacked files, and their folder.
+///
+/// Every known location, not just the archive's: extracting with "delete the archive"
+/// leaves no `archive_path`, and deleting then left the unpacked gigabytes on disk.
 #[tauri::command]
 pub async fn delete_download(
     app: AppHandle,
@@ -1941,26 +1953,50 @@ pub async fn delete_download(
     game_id: i64,
 ) -> CommandResult<()> {
     let record = state.library().record(game_id).await;
+
+    // The layout-derived folder is included so this still works when the record has lost
+    // track of both paths. Deduplicated: they usually all name the same directory.
+    let mut targets: Vec<PathBuf> = Vec::new();
+    for candidate in [
+        record
+            .archive_path
+            .as_ref()
+            .and_then(|p| p.parent().map(Path::to_path_buf)),
+        record
+            .extracted_dir
+            .as_ref()
+            .and_then(|d| d.parent().map(Path::to_path_buf)),
+        record.extracted_dir.clone(),
+        downloads_dir_for(&state, game_id).await.ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        // A parent already queued takes its children with it.
+        if !targets.iter().any(|t| candidate.starts_with(t)) {
+            targets.retain(|t| !t.starts_with(&candidate));
+            targets.push(candidate);
+        }
+    }
+
     let mut removed = false;
-    if let Some(archive) = record.archive_path {
-        // Remove the containing folder, which also clears any resume checkpoint.
-        let target = archive.parent().unwrap_or(&archive).to_path_buf();
-        if target.exists() {
-            match tokio::fs::remove_dir_all(&target).await {
-                Ok(()) => {
-                    tracing::info!(game_id, ?target, "deleted the download");
-                    removed = true;
-                }
-                // Reported rather than swallowed: a delete that failed on permissions used
-                // to look exactly like one that worked, with the row disappearing and the
-                // files still on disk.
-                Err(e) => {
-                    tracing::error!(game_id, ?target, error = %e, "could not delete the download");
-                    return Err(CommandError::Message(format!(
-                        "Could not delete {}: {e}",
-                        target.display()
-                    )));
-                }
+    for target in targets {
+        if !target.exists() {
+            continue;
+        }
+        // Reported rather than swallowed: a failed delete used to look exactly like one
+        // that worked. On Windows the cause is usually an installer still holding a handle.
+        match tokio::fs::remove_dir_all(&target).await {
+            Ok(()) => {
+                tracing::info!(game_id, ?target, "deleted the download");
+                removed = true;
+            }
+            Err(e) => {
+                tracing::error!(game_id, ?target, error = %e, "could not delete the download");
+                return Err(CommandError::Message(format!(
+                    "Could not delete {}: {e}",
+                    target.display()
+                )));
             }
         }
     }
@@ -1977,6 +2013,8 @@ pub async fn delete_download(
         .update_record(game_id, |r| {
             r.archive_path = None;
             r.archive_bytes = 0;
+            r.extracted_dir = None;
+            r.staging_setups.clear();
         })
         .await;
     // Also drop any failure left over from a previous attempt: it describes an archive
