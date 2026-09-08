@@ -25,12 +25,11 @@ fn meta(hash: &str) -> UploadMetadata {
     }
 }
 
-/// Uploads one version and returns its id, waiting out the per-millisecond id granularity.
+/// Uploads one version and returns its id.
 async fn put(store: &FolderStore, dir: &Path, game_id: i64, body: &[u8], hash: &str) -> String {
     let file = dir.join("upload.zip");
     std::fs::write(&file, body).unwrap();
     let outcome = store.upload(game_id, &file, &meta(hash)).await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     match outcome {
         UploadOutcome::Stored(v) => v.id,
         other => panic!("expected a stored version, got {other:?}"),

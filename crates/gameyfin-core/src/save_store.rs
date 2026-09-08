@@ -43,6 +43,26 @@ pub trait SaveStore: Send + Sync {
     fn describe(&self) -> String;
 }
 
+/// A version id no existing version already uses.
+///
+/// Ids are zero-padded epoch millis so a lexical sort stays chronological, but two uploads
+/// inside the same millisecond would share one, and the second would replace the first with
+/// nothing to show a version had been lost.
+fn next_version_id(existing: &[SaveVersion], installation: Option<&str>) -> StoreResult<String> {
+    let installation = installation.unwrap_or("unknown");
+    let mut millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(other)?
+        .as_millis();
+    loop {
+        let id = format!("{millis:013}_{installation}");
+        if !existing.iter().any(|v| v.id == id) {
+            return Ok(id);
+        }
+        millis += 1;
+    }
+}
+
 // --- The Gameyfin server ---------------------------------------------------------------
 
 pub struct ServerStore {
@@ -238,13 +258,7 @@ impl SaveStore for FolderStore {
         let dir = self.game_dir(game_id);
         tokio::fs::create_dir_all(&dir).await.map_err(other)?;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(other)?
-            .as_millis();
-        let installation = metadata.installation_id.as_deref().unwrap_or("unknown");
-        // Zero-padded so a lexical sort stays chronological.
-        let id = format!("{now:013}_{installation}");
+        let id = next_version_id(&existing, metadata.installation_id.as_deref())?;
 
         let size = tokio::fs::metadata(archive).await.map_err(other)?.len();
         let version = SaveVersion {
@@ -561,12 +575,7 @@ impl SaveStore for WebDavStore {
         let dir = game_id.to_string();
         self.ensure_collection(&dir).await?;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(other)?
-            .as_millis();
-        let installation = metadata.installation_id.as_deref().unwrap_or("unknown");
-        let id = format!("{now:013}_{installation}");
+        let id = next_version_id(&existing, metadata.installation_id.as_deref())?;
 
         let bytes = tokio::fs::read(archive).await.map_err(other)?;
         let version = SaveVersion {
@@ -752,6 +761,29 @@ mod folder_tests {
         assert_eq!(stored.id, listed[0].id);
         assert_eq!("aaa", listed[0].content_hash);
         assert_eq!(vec![42], store.games().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn two_uploads_in_the_same_millisecond_both_survive() {
+        let root = scratch("collide");
+        let store = store_with(&root, 5).await;
+
+        // No sleep between them: the ids would otherwise collide and one would be lost.
+        for (body, hash) in [
+            (&b"PK\x03\x04one"[..], "aaa"),
+            (&b"PK\x03\x04two"[..], "bbb"),
+        ] {
+            let file = archive(&root, body);
+            store
+                .upload(42, &file, &meta(hash, None, true))
+                .await
+                .unwrap();
+        }
+
+        let listed = store.list(42).await.unwrap();
+        assert_eq!(2, listed.len());
+        // Newest first, so the second upload still sorts ahead of the first.
+        assert_eq!("bbb", listed[0].content_hash);
     }
 
     #[tokio::test]
