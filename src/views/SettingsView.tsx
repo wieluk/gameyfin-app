@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Icon } from "@/components/Icon";
@@ -8,6 +8,7 @@ import {
   backend,
   isMockBackend,
   type PrefixEntry,
+  type MigrationSummary,
   type SaveBackend,
   type SaveSyncSettings,
   type Theme,
@@ -121,6 +122,7 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
           {tab === "saves" && (
             <>
               <SavesSection />
+              <MigrationSection />
               <SaveToolSection />
             </>
           )}
@@ -1174,6 +1176,153 @@ function WineSection() {
   );
 }
 
+/** The three places saves can live, as the user sees them named. */
+const BACKEND_LABELS: Record<SaveBackend, string> = {
+  server: "Gameyfin server",
+  folder: "A folder",
+  webdav: "WebDAV",
+};
+
+/** Copying saves across after changing where they are kept. */
+function MigrationSection() {
+  const settings = useAppSettings();
+  const active: SaveBackend = settings.data?.saveBackend ?? "server";
+  const sources = useMemo(
+    () => (Object.keys(BACKEND_LABELS) as SaveBackend[]).filter((b) => b !== active),
+    [active],
+  );
+
+  const [from, setFrom] = useState<SaveBackend>(sources[0]);
+  const [allVersions, setAllVersions] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [summary, setSummary] = useState<MigrationSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // The active backend can change while this is on screen, and it must not stay selectable.
+  useEffect(() => {
+    if (from === active) setFrom(sources[0]);
+  }, [active, from, sources]);
+
+  useEffect(() => {
+    // Subscribed only while a migration is running.
+    if (!busy || isMockBackend) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const off = await listen<{ done: number; total: number }>(
+        "save-migration-progress",
+        (event) => {
+          if (!cancelled) setProgress(event.payload);
+        },
+      );
+      if (cancelled) off();
+      else unlisten = off;
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [busy]);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    setSummary(null);
+    setProgress(null);
+    try {
+      setSummary(await backend.migrateSaves(from, allVersions));
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  }
+
+  return (
+    <Section title="Move saves here">
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        Copies saves from somewhere else into {BACKEND_LABELS[active]}, where they are kept
+        now. Nothing is removed from the old place, so you can run this again, and a second
+        run only copies what is missing.
+      </p>
+
+      <label className="pt-2 text-xs text-foreground/55" htmlFor="migrate-from">
+        Copy from
+      </label>
+      <select
+        id="migrate-from"
+        value={from}
+        onChange={(e) => setFrom(e.target.value as SaveBackend)}
+        className="rounded-lg border border-default-200 bg-content2 px-3 py-2 text-sm outline-none focus:border-primary"
+      >
+        {sources.map((backendId) => (
+          <option key={backendId} value={backendId}>
+            {BACKEND_LABELS[backendId]}
+          </option>
+        ))}
+      </select>
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        Its settings are still saved, so this works even after switching.
+      </p>
+
+      <label className="flex cursor-pointer items-start gap-2 pt-2">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={allVersions}
+          onChange={(e) => setAllVersions(e.target.checked)}
+        />
+        <span>
+          <span className="text-sm">Copy every version</span>
+          <span className="block text-[11px] text-foreground/50">
+            Off by default, which copies only each game's newest save.
+          </span>
+        </span>
+      </label>
+
+      <div className="flex flex-wrap items-center gap-3 pt-1">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void run()}
+          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+        >
+          {busy ? "Copying…" : "Copy saves"}
+        </button>
+        {busy && progress && (
+          <span className="text-xs text-foreground/55">
+            {progress.done} of {progress.total} games
+          </span>
+        )}
+      </div>
+
+      {error && <p className="text-[11px] leading-relaxed text-danger">{error}</p>}
+
+      {summary && (
+        <div className="flex flex-col gap-1 pt-1">
+          <p className={`text-xs ${summary.failed > 0 ? "text-warning-600" : "text-success-600"}`}>
+            {summary.copied} copied from {summary.games} game
+            {summary.games === 1 ? "" : "s"}
+            {summary.copied > 0 ? ` (${formatBytes(summary.bytes)})` : ""}
+            {summary.skipped > 0 ? `, ${summary.skipped} already here` : ""}
+            {summary.failed > 0 ? `, ${summary.failed} failed` : ""}
+          </p>
+          {summary.problems.map((problem) => (
+            <p key={problem} className="text-[11px] leading-relaxed text-danger">
+              {problem}
+            </p>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 /** Ludusavi, which finds and packs the save files. One ships with the app. */
 function SaveToolSection() {
   const tool: VersionTool = {
@@ -1456,11 +1605,11 @@ function SavesSection() {
         <p className="text-xs font-medium text-foreground/70">Where saves are kept</p>
         {(
           [
-            ["server", "Gameyfin server", "Needs a server with save sync turned on."],
-            ["folder", "A folder", "Any folder something else syncs: Syncthing, rclone, a NextCloud or Dropbox folder."],
-            ["webdav", "WebDAV", "A NextCloud, ownCloud or other WebDAV share, without mounting it first."],
-          ] as Array<[SaveBackend, string, string]>
-        ).map(([id, label, hint]) => (
+            ["server", "Needs a server with save sync turned on."],
+            ["folder", "Any folder something else syncs: Syncthing, rclone, a NextCloud or Dropbox folder."],
+            ["webdav", "A NextCloud, ownCloud or other WebDAV share, without mounting it first."],
+          ] as Array<[SaveBackend, string]>
+        ).map(([id, hint]) => (
           <label key={id} className="flex cursor-pointer items-start gap-2">
             <input
               type="radio"
@@ -1470,7 +1619,7 @@ function SavesSection() {
               onChange={() => update({ backend: id })}
             />
             <span>
-              <span className="text-sm">{label}</span>
+              <span className="text-sm">{BACKEND_LABELS[id]}</span>
               <span className="block text-[11px] text-foreground/50">{hint}</span>
             </span>
           </label>

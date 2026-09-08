@@ -15,6 +15,7 @@ pub mod payload;
 pub mod prefix;
 pub mod process;
 pub mod runtime;
+pub mod save_migration;
 pub mod save_store;
 pub mod save_sync;
 pub mod save_tool;

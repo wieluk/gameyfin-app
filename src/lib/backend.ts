@@ -255,6 +255,17 @@ export interface SaveToolStatus {
   available: string[];
 }
 
+/** What a finished save migration did. */
+export interface MigrationSummary {
+  games: number;
+  copied: number;
+  /** Already at the destination, byte for byte. */
+  skipped: number;
+  failed: number;
+  bytes: number;
+  problems: string[];
+}
+
 export interface WineProgress {
   receivedBytes: number;
   totalBytes: number;
@@ -370,6 +381,8 @@ export interface Backend {
   ): Promise<SaveSyncState>;
   deleteSaveVersion(gameId: number, saveId: string): Promise<void>;
   setSaveSyncSettings(settings: SaveSyncSettings): Promise<void>;
+  /** Copy saves from another backend into the active one. The source is left alone. */
+  migrateSaves(from: SaveBackend, allVersions: boolean): Promise<MigrationSummary>;
   saveToolStatus(): Promise<SaveToolStatus>;
   /** Install a version of the backup helper, or the newest when none is named. */
   installSaveTool(version?: string): Promise<InstalledSaveTool>;
@@ -524,6 +537,8 @@ const tauriBackend: Backend = {
   deleteSaveVersion: (gameId, saveId) =>
     invoke<void>("delete_save_version", { gameId, saveId }),
   setSaveSyncSettings: (settings) => invoke<void>("set_save_sync_settings", { settings }),
+  migrateSaves: (from, allVersions) =>
+    invoke<MigrationSummary>("migrate_saves", { from, allVersions }),
   saveToolStatus: () => invoke<SaveToolStatus>("save_tool_status"),
   installSaveTool: (version) => invoke<InstalledSaveTool>("install_save_tool", { version }),
   removeSaveTool: () => invoke<void>("remove_save_tool"),
@@ -767,6 +782,10 @@ const mockBackend: Backend = {
   setSaveSyncSettings: async (settings) =>
     console.info(`[mock] save sync ${settings.enabled} via ${settings.backend}`),
   testSaveStore: async () => "Fixture location is reachable.",
+  migrateSaves: async (from, allVersions) => {
+    console.info(`[mock] migrate from ${from}, all versions ${allVersions}`);
+    return { games: 3, copied: 3, skipped: 1, failed: 0, bytes: 4_194_304, problems: [] };
+  },
   saveToolStatus: async () => ({
     installed: null,
     bundled: "v0.31.0",

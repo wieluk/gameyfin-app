@@ -328,6 +328,7 @@ pub fn run() {
             saves::delete_save_version,
             saves::set_save_locked,
             saves::set_save_sync_settings,
+            saves::migrate_saves,
             saves::save_tool_status,
             saves::install_save_tool,
             saves::remove_save_tool,

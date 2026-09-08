@@ -341,9 +341,19 @@ async fn store_for(
     state: &State<'_, AppState>,
     settings: &crate::settings::Settings,
 ) -> CommandResult<Box<dyn SaveStore>> {
+    store_of(state, settings, settings.save_backend).await
+}
+
+/// A store for one specific backend, which need not be the active one: the settings for
+/// all three are kept side by side, so a migration can still reach the previous one.
+async fn store_of(
+    state: &State<'_, AppState>,
+    settings: &crate::settings::Settings,
+    backend: SaveBackend,
+) -> CommandResult<Box<dyn SaveStore>> {
     let versions = settings.save_max_versions.max(1) as usize;
 
-    match settings.save_backend {
+    match backend {
         SaveBackend::Server => {
             let client = state.client().await.ok_or(CommandError::NotConnected)?;
             Ok(Box::new(ServerStore::new(client)))
@@ -941,6 +951,82 @@ pub async fn set_save_locked(
     let store = store_for(&state, &settings).await?;
     store.set_locked(game_id, &save_id, locked).await?;
     Ok(())
+}
+
+// --- Moving between backends ---------------------------------------------------------
+
+/// How far a migration has got, so a long copy is not a frozen screen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MigrationProgress {
+    done: usize,
+    total: usize,
+}
+
+/// Copy saves from another backend into the active one.
+///
+/// The source is never touched, so this can be rerun, and running it after a failure
+/// resumes rather than duplicating: anything already at the destination is skipped.
+#[tauri::command]
+pub async fn migrate_saves(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    from: SaveBackend,
+    all_versions: bool,
+) -> CommandResult<gameyfin_core::save_migration::MigrationSummary> {
+    let settings = state.settings().await;
+    if from == settings.save_backend {
+        return Err(CommandError::Message(
+            "Saves are already kept there. Pick the place you are moving away from.".into(),
+        ));
+    }
+
+    let source = store_of(&state, &settings, from).await?;
+    let destination = store_for(&state, &settings).await?;
+    let scratch = state.config_dir().await.join("migration");
+
+    tracing::info!(
+        from = source.describe(),
+        to = destination.describe(),
+        all_versions,
+        "migrating saves"
+    );
+
+    // Progress crosses threads, so it is pumped through a channel rather than emitted from
+    // inside the callback.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let pump = {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            while let Some((done, total)) = rx.recv().await {
+                let _ = app.emit("save-migration-progress", MigrationProgress { done, total });
+            }
+        })
+    };
+
+    let summary = gameyfin_core::save_migration::migrate(
+        source.as_ref(),
+        destination.as_ref(),
+        &scratch,
+        all_versions,
+        |done, total| {
+            let _ = tx.send((done, total));
+        },
+    )
+    .await;
+
+    drop(tx);
+    let _ = pump.await;
+
+    let summary = summary.map_err(|e| CommandError::Message(format!("Migration failed: {e}")))?;
+    tracing::info!(
+        games = summary.games,
+        copied = summary.copied,
+        skipped = summary.skipped,
+        failed = summary.failed,
+        "migration finished"
+    );
+    Ok(summary)
 }
 
 // --- The backup helper itself --------------------------------------------------------
