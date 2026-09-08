@@ -1,5 +1,6 @@
 import { Trailers } from "@/components/Trailers";
 import { useEffect, useRef, useState } from "react";
+import { GameSaves } from "./GameSaves";
 import { Icon } from "./Icon";
 import { primaryAction } from "@/lib/actions";
 import { formatBytes, formatPlaytime } from "@/lib/format";
@@ -99,6 +100,8 @@ export function GameDetail({
               ))}
             </div>
           )}
+
+          <GameSaves entry={entry} />
 
           <Trailers urls={entry.videoUrls ?? []} title={game.title} />
           <Screenshots urls={entry.screenshotUrls ?? []} title={game.title} />
