@@ -55,15 +55,18 @@ fn ludusavi_binary(app: &AppHandle) -> CommandResult<PathBuf> {
         }
     }
 
+    // How every shipped format actually lays it out: deb, rpm and Flatpak put the sidecar
+    // in the same bin directory as the app, AppImage keeps that layout inside the mount,
+    // and the Windows installers drop it beside the exe.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let beside = dir.join(name);
             if beside.exists() {
                 return Ok(beside);
             }
-            let triple = dir.join(format!("{}-{}", name, current_triple()));
-            if triple.exists() {
-                return Ok(triple);
+            let unrenamed = dir.join(sidecar_file_name());
+            if unrenamed.exists() {
+                return Ok(unrenamed);
             }
         }
     }
@@ -71,7 +74,7 @@ fn ludusavi_binary(app: &AppHandle) -> CommandResult<PathBuf> {
     // The development layout, where `fetch-ludusavi.mjs` puts it.
     let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
-        .join(format!("ludusavi-{}", current_triple()));
+        .join(sidecar_file_name());
     if checkout.exists() {
         return Ok(checkout);
     }
@@ -81,10 +84,11 @@ fn ludusavi_binary(app: &AppHandle) -> CommandResult<PathBuf> {
     ))
 }
 
-fn current_triple() -> &'static str {
-    // Only the platforms the app ships for. Anything else has no bundled sidecar anyway.
-    if cfg!(all(windows, target_arch = "x86_64")) {
-        "x86_64-pc-windows-msvc.exe"
+/// What `fetch-ludusavi.mjs` names the sidecar before Tauri renames it during bundling:
+/// `ludusavi-<triple>` plus the platform's executable suffix.
+fn sidecar_file_name() -> String {
+    let triple = if cfg!(all(windows, target_arch = "x86_64")) {
+        "x86_64-pc-windows-msvc"
     } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         "aarch64-apple-darwin"
     } else if cfg!(target_os = "macos") {
@@ -93,7 +97,9 @@ fn current_triple() -> &'static str {
         "aarch64-unknown-linux-gnu"
     } else {
         "x86_64-unknown-linux-gnu"
-    }
+    };
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
+    format!("ludusavi-{triple}{suffix}")
 }
 
 /// The user's home directory, which the portable redirect maps onto a synthetic path.
@@ -297,11 +303,28 @@ fn sync_for<'a>(
 }
 
 /// A human-readable name for this machine, shown in the save history.
+///
+/// `HOSTNAME` is a shell variable on Linux, not something an application launched from a
+/// desktop entry inherits, so `/etc/hostname` is the reliable source there. Without this
+/// every Linux save was attributed to "another PC" in the conflict dialog.
 fn hostname() -> Option<String> {
-    std::env::var("COMPUTERNAME")
+    if let Some(name) = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()
-        .filter(|name| !name.is_empty())
+        .filter(|name| !name.trim().is_empty())
+    {
+        return Some(name.trim().to_string());
+    }
+
+    #[cfg(not(windows))]
+    if let Ok(text) = std::fs::read_to_string("/etc/hostname") {
+        let name = text.trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+
+    None
 }
 
 /// Runs Ludusavi into the staging directory. False means the game had no saves to take.
