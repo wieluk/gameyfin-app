@@ -308,7 +308,7 @@ export interface Backend {
   /** Back up and upload. `force` accepts a stale base, keeping the losing version. */
   backupSaves(gameId: number, force: boolean): Promise<SaveSyncState>;
   /** Restore a version, newest if none is named. */
-  restoreSaves(gameId: number, saveId?: number): Promise<SaveSyncState>;
+  restoreSaves(gameId: number, saveId?: string): Promise<SaveSyncState>;
   resolveSaveConflict(gameId: number, choice: ConflictChoice): Promise<SaveSyncState>;
   /** Name the title Ludusavi should use, for a game it could not identify. */
   setSaveTitle(gameId: number, title: string | null): Promise<SaveSyncState>;
@@ -318,7 +318,7 @@ export interface Backend {
     crossOs: boolean,
     redirects: Array<[string, string]>,
   ): Promise<SaveSyncState>;
-  deleteSaveVersion(gameId: number, saveId: number): Promise<void>;
+  deleteSaveVersion(gameId: number, saveId: string): Promise<void>;
   setSaveSyncSettings(enabled: boolean, onLaunch: boolean, onExit: boolean): Promise<void>;
 
   updateStatus(): Promise<UpdateStatus>;
@@ -487,7 +487,7 @@ const tauriBackend: Backend = {
 
 function mockSaveVersion(gameId: number): SaveVersion {
   return {
-    id: 1,
+    id: "1",
     gameId,
     gameTitle: "Fixture Game",
     sizeBytes: 2_400_000,

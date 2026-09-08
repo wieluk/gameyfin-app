@@ -88,7 +88,8 @@ export type SavePlatform = "WINDOWS" | "LINUX" | "PROTON" | "MACOS" | "UNKNOWN";
 
 /** One version of a game's saves as the server holds it. */
 export interface SaveVersion {
-  id: number;
+  /** Opaque: a database id on a Gameyfin server, a filename in a folder store. */
+  id: string;
   gameId: number;
   gameTitle?: string | null;
   sizeBytes: number;

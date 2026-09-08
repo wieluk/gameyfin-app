@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 pub struct LocalSaveState {
     /// Ludusavi title this game resolved to. Absent means it was never matched.
     pub ludusavi_title: Option<String>,
-    /// The server version this machine last restored from or uploaded.
-    pub last_synced_save_id: Option<i64>,
+    /// The version this machine last restored from or uploaded, as the store names it.
+    #[serde(deserialize_with = "gameyfin_api::saves::lenient_optional_id")]
+    pub last_synced_save_id: Option<String>,
     /// Content hash of the last backup taken here.
     pub last_backup_hash: Option<String>,
     pub last_backup_at: Option<String>,
@@ -119,7 +120,7 @@ pub fn decide(
         };
     }
 
-    let remote_is_ours = local.last_synced_save_id == Some(remote.id);
+    let remote_is_ours = local.last_synced_save_id.as_deref() == Some(remote.id.as_str());
 
     match (remote_is_ours, local_changed) {
         (true, false) => SaveSyncState::InSync {
@@ -291,7 +292,7 @@ impl<'a> SaveSync<'a> {
     pub async fn upload(
         &self,
         game_id: i64,
-        base: Option<i64>,
+        base: Option<String>,
         platform: SavePlatform,
         ludusavi_title: Option<String>,
         force: bool,
@@ -317,7 +318,7 @@ impl<'a> SaveSync<'a> {
     }
 
     /// Fetches a version and unpacks it, ready for Ludusavi to restore from.
-    pub async fn fetch(&self, game_id: i64, save_id: i64) -> Result<PathBuf, ApiError> {
+    pub async fn fetch(&self, game_id: i64, save_id: &str) -> Result<PathBuf, ApiError> {
         let archive = archive_path(&self.saves_root, game_id);
         self.client
             .download_save(game_id, save_id, &archive)
@@ -349,7 +350,7 @@ mod tests {
 
     fn remote(id: i64, platform: &str) -> SaveVersion {
         SaveVersion {
-            id,
+            id: id.to_string(),
             game_id: 42,
             game_title: Some("Celeste".into()),
             size_bytes: 1024,
@@ -366,7 +367,7 @@ mod tests {
     fn synced_to(id: i64) -> LocalSaveState {
         LocalSaveState {
             ludusavi_title: Some("Celeste".into()),
-            last_synced_save_id: Some(id),
+            last_synced_save_id: Some(id.to_string()),
             last_backup_hash: Some("abc".into()),
             last_backup_at: Some("2026-01-01T00:00:00Z".into()),
             platform: Some(SavePlatform::Windows),
@@ -437,7 +438,7 @@ mod tests {
             SavePlatform::Windows,
         );
         match state {
-            SaveSyncState::Conflict { remote, .. } => assert_eq!(9, remote.id),
+            SaveSyncState::Conflict { remote, .. } => assert_eq!("9", remote.id),
             other => panic!("expected a conflict, got {other:?}"),
         }
     }

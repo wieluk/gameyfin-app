@@ -345,7 +345,7 @@ async fn restore(
 async fn record_sync(
     state: &State<'_, AppState>,
     game_id: i64,
-    save_id: Option<i64>,
+    save_id: Option<String>,
     hash: Option<String>,
     platform: SavePlatform,
 ) {
@@ -469,7 +469,7 @@ async fn do_backup(
 
     let client = state.client().await.ok_or(CommandError::NotConnected)?;
     let sync = sync_for(&client, &context, &settings);
-    let base = context.record_saves.last_synced_save_id;
+    let base = context.record_saves.last_synced_save_id.clone();
 
     let outcome = sync
         .upload(
@@ -487,7 +487,14 @@ async fn do_backup(
 
     let next = match outcome {
         UploadOutcome::Stored(version) => {
-            record_sync(state, game_id, Some(version.id), hash, context.platform()).await;
+            record_sync(
+                state,
+                game_id,
+                Some(version.id.clone()),
+                hash,
+                context.platform(),
+            )
+            .await;
             SaveSyncState::InSync {
                 last_synced_at: version.created_at.clone(),
             }
@@ -514,7 +521,7 @@ pub async fn restore_saves(
     app: AppHandle,
     state: State<'_, AppState>,
     game_id: i64,
-    save_id: Option<i64>,
+    save_id: Option<String>,
 ) -> CommandResult<SaveSyncState> {
     do_restore(&app, &state, game_id, save_id).await
 }
@@ -523,7 +530,7 @@ async fn do_restore(
     app: &AppHandle,
     state: &State<'_, AppState>,
     game_id: i64,
-    save_id: Option<i64>,
+    save_id: Option<String>,
 ) -> CommandResult<SaveSyncState> {
     let settings = state.settings().await;
     let context = context(state, game_id).await?;
@@ -549,13 +556,20 @@ async fn do_restore(
             .ok_or_else(|| CommandError::Message("There is no save on the server yet.".into()))?,
     };
 
-    sync.fetch(game_id, version.id).await?;
+    sync.fetch(game_id, &version.id).await?;
     restore(app, state, &context, &title).await?;
 
     let hash = save_sync::staged_hash(&context.saves_root, game_id)
         .await
         .unwrap_or(None);
-    record_sync(state, game_id, Some(version.id), hash, context.platform()).await;
+    record_sync(
+        state,
+        game_id,
+        Some(version.id.clone()),
+        hash,
+        context.platform(),
+    )
+    .await;
 
     let next = SaveSyncState::InSync {
         last_synced_at: version.created_at.clone(),
@@ -645,10 +659,10 @@ pub async fn set_save_sync_settings(
 pub async fn delete_save_version(
     state: State<'_, AppState>,
     game_id: i64,
-    save_id: i64,
+    save_id: String,
 ) -> CommandResult<()> {
     let client = state.client().await.ok_or(CommandError::NotConnected)?;
-    client.delete_save(game_id, save_id).await?;
+    client.delete_save(game_id, &save_id).await?;
     Ok(())
 }
 

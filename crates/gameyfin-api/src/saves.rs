@@ -18,7 +18,11 @@ use crate::error::{ApiError, ApiResult};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveVersion {
-    pub id: i64,
+    /// Opaque to everything but the store that issued it. The Gameyfin server uses a
+    /// database id, a folder or WebDAV store uses a filename, so this is a string and
+    /// nothing may assume it is a number.
+    #[serde(deserialize_with = "lenient_id")]
+    pub id: String,
     pub game_id: i64,
     #[serde(default)]
     pub game_title: Option<String>,
@@ -47,7 +51,7 @@ pub struct UploadMetadata {
     pub device_name: Option<String>,
     pub ludusavi_title: Option<String>,
     /// The version this upload was based on. A mismatch is what the server calls a conflict.
-    pub base_save_id: Option<i64>,
+    pub base_save_id: Option<String>,
     /// Upload anyway, keeping the version that would otherwise have won.
     pub force: bool,
 }
@@ -59,7 +63,7 @@ pub enum UploadOutcome {
     Unchanged,
     Conflict {
         remote: Box<SaveVersion>,
-        base_save_id: Option<i64>,
+        base_save_id: Option<String>,
     },
 }
 
@@ -67,8 +71,33 @@ pub enum UploadOutcome {
 #[serde(rename_all = "camelCase")]
 struct ConflictBody {
     remote: SaveVersion,
-    #[serde(default)]
-    base_save_id: Option<i64>,
+    #[serde(default, deserialize_with = "lenient_optional_id")]
+    base_save_id: Option<String>,
+}
+
+/// Accepts an id written as either a JSON number or a string.
+///
+/// The Gameyfin server sends a number, other stores send a filename, and records written
+/// before this became opaque still hold a number.
+fn lenient_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(text) => text,
+        serde_json::Value::Number(number) => number.to_string(),
+        other => other.to_string(),
+    })
+}
+
+pub fn lenient_optional_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(
+        match Option::<serde_json::Value>::deserialize(deserializer)? {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(text)) => Some(text),
+            Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+            Some(other) => Some(other.to_string()),
+        },
+    )
 }
 
 /// SHA-256 of a file, hex encoded, read in chunks so a large archive stays off the heap.
@@ -121,7 +150,7 @@ impl GameyfinClient {
     pub async fn download_save(
         &self,
         game_id: i64,
-        save_id: i64,
+        save_id: &str,
         destination: &Path,
     ) -> ApiResult<u64> {
         self.download_from(&format!("/saves/game/{game_id}/{save_id}"), destination)
@@ -199,8 +228,8 @@ impl GameyfinClient {
         if let Some(title) = &metadata.ludusavi_title {
             req = req.header("X-Ludusavi-Title", title);
         }
-        if let Some(base) = metadata.base_save_id {
-            req = req.header("X-Base-Save-Id", base.to_string());
+        if let Some(base) = &metadata.base_save_id {
+            req = req.header("X-Base-Save-Id", base);
         }
         if metadata.force {
             req = req.header("X-Force", "true");
@@ -235,7 +264,7 @@ impl GameyfinClient {
         }
     }
 
-    pub async fn delete_save(&self, game_id: i64, save_id: i64) -> ApiResult<()> {
+    pub async fn delete_save(&self, game_id: i64, save_id: &str) -> ApiResult<()> {
         self.delete_at(&format!("/saves/game/{game_id}/{save_id}"))
             .await
     }

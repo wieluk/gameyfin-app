@@ -51,8 +51,8 @@ async fn lists_versions() {
     let versions = client(&server.url()).list_saves(42).await.unwrap();
 
     assert_eq!(
-        vec![2, 1],
-        versions.iter().map(|v| v.id).collect::<Vec<_>>()
+        vec!["2", "1"],
+        versions.iter().map(|v| v.id.as_str()).collect::<Vec<_>>()
     );
     assert_eq!("Celeste", versions[0].game_title.as_deref().unwrap());
     mock.assert_async().await;
@@ -71,7 +71,7 @@ async fn downloads_a_version_to_disk() {
     let destination = scratch("download");
 
     let written = client(&server.url())
-        .download_save(42, 7, &destination)
+        .download_save(42, "7", &destination)
         .await
         .unwrap();
 
@@ -100,7 +100,7 @@ async fn upload_sends_the_declared_hash_and_returns_the_stored_version() {
         .unwrap();
 
     match outcome {
-        UploadOutcome::Stored(version) => assert_eq!(9, version.id),
+        UploadOutcome::Stored(version) => assert_eq!("9", version.id),
         other => panic!("expected a stored version, got {other:?}"),
     }
     mock.assert_async().await;
@@ -140,7 +140,7 @@ async fn a_stale_base_reports_the_remote_version_rather_than_failing() {
         .create_async()
         .await;
     let (path, mut metadata) = archive("conflict");
-    metadata.base_save_id = Some(3);
+    metadata.base_save_id = Some("3".into());
 
     let outcome = client(&server.url())
         .upload_save(42, &path, &metadata)
@@ -152,8 +152,8 @@ async fn a_stale_base_reports_the_remote_version_rather_than_failing() {
             remote,
             base_save_id,
         } => {
-            assert_eq!(8, remote.id);
-            assert_eq!(Some(3), base_save_id);
+            assert_eq!("8", remote.id);
+            assert_eq!(Some("3".to_string()), base_save_id);
         }
         other => panic!("expected a conflict, got {other:?}"),
     }
@@ -228,7 +228,7 @@ async fn a_missing_version_is_still_an_ordinary_not_found() {
     let destination = scratch("gone");
 
     let error = client(&server.url())
-        .download_save(42, 7, &destination)
+        .download_save(42, "7", &destination)
         .await
         .unwrap_err();
 
@@ -267,7 +267,7 @@ async fn a_refused_download_leaves_no_file_behind() {
     let destination = scratch("forbidden");
 
     let error = client(&server.url())
-        .download_save(42, 7, &destination)
+        .download_save(42, "7", &destination)
         .await
         .unwrap_err();
 
