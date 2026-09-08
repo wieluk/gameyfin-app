@@ -43,6 +43,21 @@ pub trait SaveStore: Send + Sync {
     fn describe(&self) -> String;
 }
 
+/// A URL with any credentials the user embedded in it removed.
+///
+/// `describe()` is shown in the interface but also written to the log, and a log is the
+/// thing people attach to a bug report.
+fn redacted(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    match rest.split_once('@') {
+        // Userinfo cannot contain a slash, so an `@` later in the path is not one.
+        Some((userinfo, host)) if !userinfo.contains('/') => format!("{scheme}://{host}"),
+        _ => url.to_string(),
+    }
+}
+
 /// A version id no existing version already uses.
 ///
 /// Ids are zero-padded epoch millis so a lexical sort stays chronological, but two uploads
@@ -695,7 +710,7 @@ impl SaveStore for WebDavStore {
     }
 
     fn describe(&self) -> String {
-        format!("WebDAV share at {}", self.base_url)
+        format!("WebDAV share at {}", redacted(&self.base_url))
     }
 }
 
@@ -731,6 +746,24 @@ mod folder_tests {
 
     async fn store_with(root: &Path, max: usize) -> FolderStore {
         FolderStore::new(root, max)
+    }
+
+    #[test]
+    fn a_password_in_the_address_is_kept_out_of_the_description() {
+        assert_eq!(
+            "https://cloud.example/dav",
+            redacted("https://user:secret@cloud.example/dav")
+        );
+        assert_eq!(
+            "https://cloud.example/dav",
+            redacted("https://cloud.example/dav")
+        );
+        // An `@` in the path is not credentials, and must survive.
+        assert_eq!(
+            "https://cloud.example/dav/me@example.com",
+            redacted("https://cloud.example/dav/me@example.com")
+        );
+        assert_eq!("not a url", redacted("not a url"));
     }
 
     #[tokio::test]

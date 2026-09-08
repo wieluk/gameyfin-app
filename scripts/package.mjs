@@ -134,7 +134,9 @@ if (buildFailed) {
   );
   if (platform === "linux") {
     console.error(
-      "The usual cause is a missing dev package: libudev-dev (systemd-devel on Fedora) plus the WebKit and GTK ones.",
+      "Read the error above: it usually names what is missing. Common ones are libudev-dev\n" +
+        "(systemd-devel on Fedora), the WebKit and GTK dev packages, and xdg-utils, which the\n" +
+        "AppImage bundler needs at /usr/bin/xdg-open.",
     );
   }
   process.exit(1);
