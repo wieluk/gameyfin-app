@@ -46,6 +46,13 @@ pub fn without_input_method(env: &mut std::collections::BTreeMap<String, String>
 /// Marker recording that a prefix has been prepared, so it happens once.
 const READY_MARKER: &str = ".gameyfin-ready";
 
+/// Bumped whenever preparation starts doing something new.
+///
+/// The marker holds this alongside the DPI, so a prefix prepared by an older version is
+/// brought up to date on its next launch instead of keeping whatever it was given first.
+/// Version 2 added the theme.
+const PREPARATION_VERSION: u32 = 2;
+
 /// The directory Wine actually keeps `drive_c` and `dosdevices` in.
 ///
 /// Wine treats the prefix directory as the prefix itself. Proton does not: it is handed
@@ -67,20 +74,25 @@ pub fn wine_root(prefix: &Path) -> PathBuf {
     }
 }
 
-/// Whether a prefix has already been prepared at this DPI.
+/// What the marker holds: the preparation version and the DPI it was prepared at.
+fn marker_contents(dpi: u32) -> String {
+    format!("{PREPARATION_VERSION}:{dpi}")
+}
+
+/// Whether a prefix is already prepared, at this DPI and by this version.
 pub fn is_prepared(prefix: &Path, dpi: u32) -> bool {
     // `drive_c` is checked as well as the marker: a prefix built by an earlier version
     // may have been recorded as ready while actually being unusable, and reusing it would
     // repeat the failure on every launch.
     wine_root(prefix).join("drive_c").is_dir()
         && std::fs::read_to_string(prefix.join(READY_MARKER))
-            .map(|content| content.trim() == dpi.to_string())
+            .map(|content| content.trim() == marker_contents(dpi))
             .unwrap_or(false)
 }
 
 /// Record that a prefix has been prepared.
 pub fn mark_prepared(prefix: &Path, dpi: u32) -> CoreResult<()> {
-    std::fs::write(prefix.join(READY_MARKER), dpi.to_string())?;
+    std::fs::write(prefix.join(READY_MARKER), marker_contents(dpi))?;
     Ok(())
 }
 
@@ -114,6 +126,53 @@ pub fn dpi_command(
             "/f",
         ],
     )
+}
+
+/// Where wine.inf installs the theme Wine bundles, relative to the prefix root.
+const AERO_THEME: &str = "drive_c/windows/resources/themes/aero/aero.msstyles";
+
+/// The same path as Wine sees it.
+const AERO_THEME_WINDOWS: &str = "C:\\windows\\resources\\themes\\aero\\aero.msstyles";
+
+/// Whether this prefix has the bundled theme for the registry to point at.
+///
+/// Checked rather than assumed: a stripped Wine build can omit `aero.msstyles`, and
+/// pointing the registry at a file that is not there leaves the prefix looking exactly as
+/// it did, with nothing to say why.
+pub fn has_bundled_theme(prefix: &Path) -> bool {
+    wine_root(prefix).join(AERO_THEME).is_file()
+}
+
+/// Commands that turn on the theme Wine ships.
+///
+/// Without it Wine draws the classic Windows 2000 caption and controls: a flat blue title
+/// bar and square grey buttons. Wine's own `wine.inf` sets these values when it creates a
+/// prefix, so this is a repair for prefixes where that did not take effect, and it is a
+/// no-op everywhere else.
+///
+/// `ColorName` really is "Blue" rather than the "NormalColor" most Windows themes use;
+/// that is the name inside Wine's own theme, and a wrong one is ignored silently.
+pub fn theme_commands(
+    runtime: &WindowsRuntime,
+    prefix: &Path,
+) -> Vec<crate::launch::ResolvedCommand> {
+    const KEY: &str = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager";
+
+    [
+        ("ThemeActive", "1"),
+        ("DllName", AERO_THEME_WINDOWS),
+        ("ColorName", "Blue"),
+        ("SizeName", "NormalSize"),
+    ]
+    .iter()
+    .map(|(name, value)| {
+        registry_command(
+            runtime,
+            prefix,
+            &["reg", "add", KEY, "/v", name, "/d", value, "/f"],
+        )
+    })
+    .collect()
 }
 
 /// Build a command that runs a Wine tool inside a prefix.
@@ -417,6 +476,59 @@ mod tests {
         assert_eq!(cmd.env["STEAM_COMPAT_DATA_PATH"], "/pfx");
         assert_eq!(cmd.args.first().unwrap(), "run");
         assert!(!cmd.env.contains_key("WINEPREFIX"));
+    }
+
+    #[test]
+    fn a_prefix_prepared_by_an_older_version_is_prepared_again() {
+        // The marker carries the preparation version, so a prefix that predates a change
+        // to what preparation does is brought up to date rather than left behind.
+        let dir = scratch("stale");
+        std::fs::create_dir_all(dir.join("drive_c")).unwrap();
+        std::fs::write(dir.join(".gameyfin-ready"), "96").unwrap();
+
+        assert!(
+            !is_prepared(&dir, 96),
+            "a bare DPI marker is from an older version"
+        );
+
+        mark_prepared(&dir, 96).unwrap();
+        assert!(is_prepared(&dir, 96));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_theme_is_only_offered_when_the_build_ships_one() {
+        let dir = scratch("theme");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!has_bundled_theme(&dir), "nothing installed yet");
+
+        let theme = dir.join("drive_c/windows/resources/themes/aero");
+        std::fs::create_dir_all(&theme).unwrap();
+        std::fs::write(theme.join("aero.msstyles"), b"x").unwrap();
+        assert!(has_bundled_theme(&dir));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_theme_commands_name_wines_own_theme() {
+        // "Blue" is the colour name inside Wine's aero.msstyles. The "NormalColor" that
+        // most Windows themes use is silently ignored, leaving the classic look.
+        let runtime = WindowsRuntime::Wine {
+            path: PathBuf::from("/usr/bin/wine"),
+        };
+        let cmds = theme_commands(&runtime, Path::new("/pfx"));
+        assert_eq!(cmds.len(), 4);
+
+        let all: Vec<String> = cmds
+            .iter()
+            .flat_map(|c| c.args.iter().map(|a| a.to_string_lossy().into_owned()))
+            .collect();
+        assert!(all.contains(&"Blue".to_string()));
+        assert!(all.contains(&"NormalSize".to_string()));
+        assert!(all.iter().any(|a| a.ends_with("aero.msstyles")));
+        assert!(all.iter().any(|a| a.contains("ThemeManager")));
     }
 
     #[test]

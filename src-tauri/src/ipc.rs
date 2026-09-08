@@ -2190,6 +2190,27 @@ async fn prepare_prefix(
         Err(e) => tracing::warn!(?prefix, error = %e, "could not set the prefix DPI"),
     }
 
+    // Wine draws the classic Windows 2000 caption and controls unless a theme is active.
+    // wine.inf normally turns this on when it creates the prefix; repairing it here covers
+    // the prefixes where that did not happen.
+    if gameyfin_core::prefix::has_bundled_theme(prefix) {
+        for cmd in gameyfin_core::prefix::theme_commands(runtime, prefix) {
+            match gameyfin_core::run_capturing(&cmd).await {
+                Ok(run) if run.success() => {}
+                Ok(run) => {
+                    tracing::warn!(?prefix, output = %run.tail(4), "could not set the prefix theme")
+                }
+                Err(e) => tracing::warn!(?prefix, error = %e, "could not set the prefix theme"),
+            }
+        }
+        tracing::info!(?prefix, "prefix theme applied");
+    } else {
+        tracing::warn!(
+            ?prefix,
+            "this Wine build ships no aero.msstyles, so windows keep the classic look"
+        );
+    }
+
     // `wineboot` can report success while leaving an unusable prefix, most often when
     // something pre-created a directory it uses to detect an existing install. Checking
     // for `drive_c` turns that into a clear failure instead of a wall of Wine errors from
