@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Icon } from "@/components/Icon";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FolderActions } from "@/components/FolderActions";
 import { InstallDialog } from "@/components/InstallDialog";
 import { SpeedLimit } from "@/components/SpeedLimit";
 import { isInDownloads, needsChooser, primaryAction } from "@/lib/actions";
@@ -11,6 +12,7 @@ import { messageOf } from "@/lib/errors";
 import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
 import { useEntries } from "@/lib/queries";
+import { useRescanOnOpen } from "@/lib/rescan";
 
 /**
  * Transfers in progress, and finished downloads awaiting installation.
@@ -20,32 +22,12 @@ import { useEntries } from "@/lib/queries";
  */
 export function DownloadsView() {
   const entries = useEntries();
-  const [rescanning, setRescanning] = useState(false);
   const [installing, setInstalling] = useState<LibraryEntry | null>(null);
   const [deleting, setDeleting] = useState<LibraryEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
-  // Opening the tab is the moment the user expects to see what is actually on disk, so
-  // adopt anything added or removed outside the app.
-  useEffect(() => {
-    void backend.rescanLibrary().catch(() => {});
-    // Deliberately once per mount rather than on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function rescan() {
-    setRescanning(true);
-    setError(null);
-    try {
-      await backend.rescanLibrary();
-      await queryClient.invalidateQueries({ queryKey: ["entries"] });
-    } catch (e) {
-      setError(messageOf(e));
-    } finally {
-      setRescanning(false);
-    }
-  }
+  useRescanOnOpen();
 
   async function confirmDelete() {
     const target = deleting;
@@ -71,22 +53,27 @@ export function DownloadsView() {
       </h2>
       <div className="flex items-center gap-3">
         <SpeedLimit />
-        <button
-          type="button"
-          onClick={() => void rescan()}
-          disabled={rescanning}
-          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100 disabled:opacity-50"
-        >
-          {rescanning ? "Rescanning…" : "Rescan folders"}
-        </button>
+        <FolderActions folder="downloads" onError={setError} />
       </div>
     </div>
+  );
+
+  // Both actions in the header can fail with the list empty, so the error line travels
+  // with the header rather than living inside the branch that renders rows.
+  const errorLine = error && (
+    <p
+      role="alert"
+      className="mx-6 mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+    >
+      {error}
+    </p>
   );
 
   if (entries.isLoading) {
     return (
       <>
         {header}
+        {errorLine}
         <Empty icon="download" title="Loading…">Reading your library.</Empty>
       </>
     );
@@ -96,6 +83,7 @@ export function DownloadsView() {
     return (
       <>
         {header}
+        {errorLine}
         <Empty icon="download" title="No downloads">
           Downloads you start from your library appear here, and stay until you install them.
         </Empty>

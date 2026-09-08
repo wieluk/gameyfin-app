@@ -40,6 +40,8 @@ pub struct LibraryEntry {
 pub struct ConnectionStatus {
     pub configured: bool,
     pub authenticated: bool,
+    /// The server did not answer. The session is kept and the cached library is shown.
+    pub offline: bool,
     pub server_url: Option<String>,
     pub username: Option<String>,
     pub library_root: Option<String>,
@@ -48,13 +50,33 @@ pub struct ConnectionStatus {
 #[tauri::command]
 pub async fn connection_status(state: State<'_, AppState>) -> CommandResult<ConnectionStatus> {
     let settings = state.settings().await;
-    let authenticated = match state.client().await {
-        Some(client) => client.is_authenticated().await,
-        None => false,
+
+    // Three outcomes, not two. "The server said you are not signed in" sends the user to
+    // the wizard; "the server did not answer" must not, because signing in again is
+    // exactly what an offline user cannot do, and their installed games still work.
+    let (authenticated, offline) = match state.client().await {
+        None => (false, false),
+        Some(client) => match client.user_info().await {
+            Ok(user) => {
+                state.set_reachable(true);
+                (user.is_some(), false)
+            }
+            Err(e) if e.is_auth() => {
+                state.set_reachable(true);
+                (false, false)
+            }
+            Err(e) => {
+                tracing::debug!("could not reach the server: {e}");
+                state.set_reachable(false);
+                (settings.has_session(), true)
+            }
+        },
     };
+
     Ok(ConnectionStatus {
         configured: settings.is_configured(),
         authenticated,
+        offline,
         server_url: settings.server_url.clone(),
         username: settings.username.clone(),
         library_root: settings.library_root.clone(),
@@ -87,14 +109,22 @@ pub async fn set_server_url(state: State<'_, AppState>, url: String) -> CommandR
     let normalized = auth_flow::normalize_url(&url)
         .ok_or_else(|| CommandError::Message("That does not look like a valid address.".into()))?;
 
+    let switching = state.settings().await.server_url.as_deref() != Some(normalized.as_str());
+
     mutate_settings(&state, |s| {
         // Switching servers invalidates the old session.
-        if s.server_url.as_deref() != Some(normalized.as_str()) {
+        if switching {
             s.clear_session();
         }
         s.server_url = Some(normalized.clone());
     })
     .await?;
+
+    // A different server has a different library, so the mirrored one is not merely
+    // stale, it is wrong.
+    if switching {
+        state.forget_catalog().await;
+    }
     Ok(normalized)
 }
 
@@ -210,6 +240,8 @@ pub async fn cancel_login(app: AppHandle) -> CommandResult<()> {
 #[tauri::command]
 pub async fn sign_out(state: State<'_, AppState>) -> CommandResult<()> {
     state.disconnect().await;
+    // The cached catalogue belongs to the account that was signed in, not to the machine.
+    state.forget_catalog().await;
     mutate_settings(&state, Settings::clear_session).await
 }
 
@@ -558,15 +590,18 @@ pub async fn set_library_root(
 
 #[tauri::command]
 pub async fn list_libraries(state: State<'_, AppState>) -> CommandResult<Vec<Library>> {
-    let client = state.client().await.ok_or(CommandError::NotConnected)?;
-    Ok(client.libraries().await?)
+    if state.client().await.is_none() {
+        return Err(CommandError::NotConnected);
+    }
+    Ok(state.libraries().await?)
 }
 
 #[tauri::command]
 pub async fn list_entries(state: State<'_, AppState>) -> CommandResult<Vec<LibraryEntry>> {
     // Checked explicitly so a signed-out client reports `not-connected`, which the UI
-    // uses to send the user back to the wizard, rather than a generic failure.
-    if state.client().await.is_none() {
+    // uses to send the user back to the wizard, rather than a generic failure. A cached
+    // catalogue is enough to render without a client, so it is not sent back either.
+    if state.client().await.is_none() && !state.has_cached_catalog().await {
         return Err(CommandError::NotConnected);
     }
     let games = state.games().await?;
@@ -626,7 +661,18 @@ pub async fn start_download(
         .find(|g| g.id == game_id)
         .ok_or_else(|| CommandError::Message("That game is no longer in the library.".into()))?;
 
-    let providers = client.download_providers().await?;
+    let providers = client.download_providers().await.map_err(|e| {
+        if e.is_unreachable() {
+            state.set_reachable(false);
+            CommandError::Message(
+                "Cannot reach the server, so there is nothing to download from. \
+                 Your installed games still work."
+                    .into(),
+            )
+        } else {
+            CommandError::Api(e)
+        }
+    })?;
     let provider = providers.into_iter().next().ok_or_else(|| {
         CommandError::Message("The server has no download provider enabled.".into())
     })?;
@@ -1582,6 +1628,44 @@ pub async fn open_game_folder(
         .map_err(|e| CommandError::Message(format!("could not open the folder: {e}")))
 }
 
+/// Which of the library's own folders to reveal.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LibraryFolder {
+    Downloads,
+    Installations,
+}
+
+/// Reveal the Downloads or Installations folder in the desktop file manager.
+///
+/// Created if it is not there yet. Both folders are ours to make, and opening a path that
+/// does not exist is a silent no-op through the desktop portal, which reads as the button
+/// being broken.
+#[tauri::command]
+pub async fn open_library_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    folder: LibraryFolder,
+) -> CommandResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let root = library_root(&state).await?;
+    let layout = gameyfin_core::InstallLayout::new(&root);
+    let dir = match folder {
+        LibraryFolder::Downloads => layout.downloads_root(),
+        LibraryFolder::Installations => layout.installs_root(),
+    };
+
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| CommandError::Message(format!("could not create {}: {e}", dir.display())))?;
+
+    tracing::info!(path = ?dir, "opening a library folder");
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| CommandError::Message(format!("could not open the folder: {e}")))
+}
+
 /// Choose which executable launches a game.
 #[tauri::command]
 pub async fn set_game_executable(
@@ -2288,8 +2372,15 @@ async fn notify_state(app: &AppHandle, library: &crate::library_state::LibrarySt
 pub async fn rescan_library(app: AppHandle, state: State<'_, AppState>) -> CommandResult<usize> {
     let root = library_root(&state).await?;
 
-    // A rescan is also the natural moment to re-read the catalogue.
-    state.invalidate_catalog().await;
+    // A rescan is also the natural moment to re-read the catalogue, but only when there
+    // is a server to read it from. Every view rescans as it opens, and against a server
+    // that is known to be down each of those would buy nothing but a connect timeout;
+    // the local folder walk below is the part that matters offline.
+    if state.is_unreachable() {
+        tracing::debug!("skipping the catalogue refresh: the server is unreachable");
+    } else {
+        state.invalidate_catalog().await;
+    }
 
     let found = state.library().rescan(Path::new(&root)).await;
     tracing::info!(root = %root, found, "rescanned the library folder");

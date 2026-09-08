@@ -10,50 +10,137 @@ import { useAppSettings, useStatus } from "@/lib/queries";
 const isWindows =
   typeof navigator !== "undefined" && /win/i.test(navigator.platform || navigator.userAgent);
 
+/** Which pane of Settings is showing. */
+type TabId = "account" | "library" | "compatibility" | "diagnostics" | "about";
+
+const TAB_KEY = "gameyfin.settings.tab";
+
+/**
+ * The panes, in the order they appear.
+ *
+ * A list rather than a hand-written row of buttons so adding a pane means adding one
+ * entry here and one branch below, which is the point of splitting Settings up: it was a
+ * single scrolling column, and it is going to keep growing.
+ */
+const TABS: Array<{ id: TabId; label: string; hideOnWindows?: boolean }> = [
+  { id: "account", label: "Account" },
+  { id: "library", label: "Library" },
+  // Wine and the installer memory cap only exist because Windows software has to be
+  // translated; on Windows itself there is nothing here to configure.
+  { id: "compatibility", label: "Compatibility", hideOnWindows: true },
+  { id: "diagnostics", label: "Diagnostics" },
+  { id: "about", label: "About" },
+];
+
 export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
-  const status = useStatus();
+  const tabs = TABS.filter((tab) => !(isWindows && tab.hideOnWindows));
+
+  const [tab, setTab] = useState<TabId>(() => {
+    try {
+      const stored = localStorage.getItem(TAB_KEY);
+      // A pane that no longer exists, or one hidden on this platform, must not leave the
+      // view blank.
+      if (tabs.some((t) => t.id === stored)) return stored as TabId;
+    } catch {
+      // Private windows and blocked site data both throw here; the default is fine.
+    }
+    return "account";
+  });
+
+  function select(next: TabId) {
+    setTab(next);
+    try {
+      localStorage.setItem(TAB_KEY, next);
+    } catch {
+      // A remembered pane is a convenience, not a requirement.
+    }
+  }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-      <div className="mx-auto flex max-w-2xl flex-col gap-5">
-        <Section title="Account">
-          <Row label="Server" value={status.data?.serverUrl ?? "Not configured"} />
-          <Row label="Signed in as" value={status.data?.username ?? "Not signed in"} />
-          <Row
-            label="Status"
-            value={status.data?.authenticated ? "Connected" : "Disconnected"}
-            tone={status.data?.authenticated ? "good" : "bad"}
-          />
-          <div className="pt-1">
-            <button
-              type="button"
-              onClick={async () => {
-                await backend.signOut();
-                onSignedOut();
-              }}
-              className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
-            >
-              Sign out
-            </button>
-          </div>
-        </Section>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        role="tablist"
+        aria-label="Settings"
+        className="flex shrink-0 items-center gap-1 border-b border-default-200/60 px-6"
+      >
+        {tabs.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === item.id}
+            onClick={() => select(item.id)}
+            className={`-mb-px border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
+              tab === item.id
+                ? "border-primary text-primary"
+                : "border-transparent text-foreground/50 hover:text-foreground"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
 
-        <LibrarySection />
-
-        {!isWindows && <WineSection />}
-        {!isWindows && <CompatibilitySection />}
-
-        <DiagnosticsSection />
-
-        <Section title="About">
-          <Row label="Version" value="0.1.0" />
-          <p className="pt-1 text-xs text-foreground/45">
-            Save syncing and desktop integration are still being built. See the project
-            plan for what is coming next.
-          </p>
-        </Section>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <div className="mx-auto flex max-w-2xl flex-col gap-5">
+          {tab === "account" && <AccountSection onSignedOut={onSignedOut} />}
+          {tab === "library" && <LibrarySection />}
+          {tab === "compatibility" && (
+            <>
+              <WineSection />
+              <CompatibilitySection />
+            </>
+          )}
+          {tab === "diagnostics" && <DiagnosticsSection />}
+          {tab === "about" && <AboutSection />}
+        </div>
       </div>
     </div>
+  );
+}
+
+function AccountSection({ onSignedOut }: { onSignedOut: () => void }) {
+  const status = useStatus();
+
+  // Three states, not two. "Offline" is the server not answering, which leaves the
+  // session intact and the cached library readable, and saying "Disconnected" for it
+  // would suggest the user has been signed out when they have not.
+  const connection = status.data?.offline
+    ? { value: "Offline, showing your cached library", tone: "bad" as const }
+    : status.data?.authenticated
+      ? { value: "Connected", tone: "good" as const }
+      : { value: "Disconnected", tone: "bad" as const };
+
+  return (
+    <Section title="Account">
+      <Row label="Server" value={status.data?.serverUrl ?? "Not configured"} />
+      <Row label="Signed in as" value={status.data?.username ?? "Not signed in"} />
+      <Row label="Status" value={connection.value} tone={connection.tone} />
+      <div className="pt-1">
+        <button
+          type="button"
+          onClick={async () => {
+            await backend.signOut();
+            onSignedOut();
+          }}
+          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
+        >
+          Sign out
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+function AboutSection() {
+  return (
+    <Section title="About">
+      <Row label="Version" value="0.1.0" />
+      <p className="pt-1 text-xs text-foreground/45">
+        Save syncing and desktop integration are still being built. See the project plan
+        for what is coming next.
+      </p>
+    </Section>
   );
 }
 

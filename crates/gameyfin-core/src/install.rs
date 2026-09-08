@@ -16,10 +16,21 @@ impl InstallLayout {
         Self { root: root.into() }
     }
 
+    /// The folder every download lands in, one directory per game beneath it.
+    ///
+    /// Named separately from [`Self::downloads_dir`] because it is a destination in its
+    /// own right: the UI opens it, and a rescan walks it.
+    pub fn downloads_root(&self) -> PathBuf {
+        self.root.join("Gameyfin").join("Downloads")
+    }
+
+    /// The folder every installed game lands in. See [`Self::downloads_root`].
+    pub fn installs_root(&self) -> PathBuf {
+        self.root.join("Gameyfin").join("Installations")
+    }
+
     pub fn downloads_dir(&self, game_id: i64, title: &str) -> PathBuf {
-        self.root
-            .join("Gameyfin")
-            .join("Downloads")
+        self.downloads_root()
             .join(Self::folder_name(game_id, title))
     }
 
@@ -37,10 +48,7 @@ impl InstallLayout {
     }
 
     pub fn install_dir(&self, game_id: i64, title: &str) -> PathBuf {
-        self.root
-            .join("Gameyfin")
-            .join("Installations")
-            .join(Self::folder_name(game_id, title))
+        self.installs_root().join(Self::folder_name(game_id, title))
     }
 
     /// `(<id>) <title>`, with characters no filesystem will accept removed.
@@ -88,6 +96,19 @@ fn sanitize(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_roots_are_the_parents_of_a_game_folder() {
+        let l = InstallLayout::new("/library");
+        assert_eq!(
+            l.downloads_dir(12, "Celeste").parent(),
+            Some(l.downloads_root().as_path())
+        );
+        assert_eq!(
+            l.install_dir(12, "Celeste").parent(),
+            Some(l.installs_root().as_path())
+        );
+    }
 
     #[test]
     fn download_and_install_dirs_are_separate() {

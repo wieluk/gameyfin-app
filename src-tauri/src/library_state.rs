@@ -376,16 +376,9 @@ impl LibraryState {
         let mut found = 0;
 
         for (dir, installed) in [
-            (
-                layout.install_dir(0, "").parent().map(Path::to_path_buf),
-                true,
-            ),
-            (
-                layout.downloads_dir(0, "").parent().map(Path::to_path_buf),
-                false,
-            ),
+            (layout.installs_root(), true),
+            (layout.downloads_root(), false),
         ] {
-            let Some(dir) = dir else { continue };
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };

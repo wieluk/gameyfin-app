@@ -3,10 +3,27 @@
 //! The client is behind a lock because the server URL and credentials can change at
 //! runtime (the user connects, signs out, or switches instance) without restarting.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use gameyfin_api::{CookieSessionAuth, GameyfinClient};
+use gameyfin_api::{CookieSessionAuth, Game, GameyfinClient, Library};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+
+/// Where the last known-good catalogue is written.
+pub const CATALOG_FILE: &str = "catalog.json";
+
+/// The catalogue as the server last described it.
+///
+/// Persisted so the library still renders when the server cannot be reached: the games
+/// installed on this machine are on this machine whether or not there is a network, and
+/// an app that shows an empty screen because a router is down is broken.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CachedCatalog {
+    pub games: Vec<Game>,
+    pub libraries: Vec<Library>,
+}
 
 #[derive(Default)]
 pub struct AppState {
@@ -27,6 +44,16 @@ pub struct AppState {
     /// during a transfer, and fetching the whole library from the server each time made
     /// the UI lag far behind the work it was reporting on.
     catalog: RwLock<Option<(std::time::Instant, Vec<gameyfin_api::Game>)>>,
+    /// The last catalogue the server successfully returned, mirrored to disk.
+    ///
+    /// Separate from `catalog` because that one is a freshness cache with a TTL, and this
+    /// one deliberately has no expiry: stale titles are better than no library at all.
+    offline_catalog: RwLock<CachedCatalog>,
+    /// Whether the last attempt to reach the server failed at the transport level.
+    ///
+    /// Starts false, the optimistic reading, so nothing claims the server is down before
+    /// anything has tried to talk to it.
+    unreachable: AtomicBool,
     image_cache: RwLock<Option<std::sync::Arc<crate::image_cache::ImageCache>>>,
     /// The download speed cap, shared with every transfer in flight.
     ///
@@ -79,8 +106,14 @@ impl AppState {
         base_url: &str,
         cookies: std::collections::HashMap<String, String>,
     ) -> gameyfin_api::ApiResult<()> {
+        // Timeouts matter here rather than being belt and braces. Without a connect
+        // timeout, every RPC made while the network is down blocks for however long the
+        // OS decides to wait, which the user sees as the app hanging on its splash rather
+        // than as an offline library.
         let http = reqwest::Client::builder()
             .user_agent(concat!("Gameyfin-Desktop/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(std::time::Duration::from_secs(8))
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
         let auth = Arc::new(CookieSessionAuth::new(base_url, http.clone()));
         auth.set_cookies(cookies).await;
@@ -95,6 +128,24 @@ impl AppState {
     pub async fn disconnect(&self) {
         *self.client.write().await = None;
         *self.cookie_auth.write().await = None;
+    }
+
+    /// Forget the cached catalogue, in memory and on disk.
+    ///
+    /// Called when the session or the server changes. The offline mirror exists so a
+    /// signed-in user keeps their own library when the network goes; it must not outlive
+    /// the account it came from, or a sign-out would leave one user's titles readable to
+    /// whoever signs in next.
+    pub async fn forget_catalog(&self) {
+        *self.catalog.write().await = None;
+        *self.offline_catalog.write().await = CachedCatalog::default();
+
+        let path = self.config_dir().await.join(CATALOG_FILE);
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => tracing::info!("cleared the cached catalogue"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => tracing::warn!("could not clear the cached catalogue at {path:?}: {e}"),
+        }
     }
 
     /// The active client, or `None` when no server is configured yet.
@@ -140,7 +191,12 @@ impl AppState {
         created
     }
 
-    /// The game catalogue, from cache when it is fresh.
+    /// The game catalogue: fresh from cache, else the server, else what was last seen.
+    ///
+    /// The final fallback is the point. A user whose server is unreachable still has
+    /// games installed on this machine, and they must still be able to see and launch
+    /// them, so an unreachable server degrades the catalogue to a stale one rather than
+    /// emptying the library.
     pub async fn games(&self) -> gameyfin_api::ApiResult<Vec<gameyfin_api::Game>> {
         const TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -150,16 +206,151 @@ impl AppState {
             }
         }
 
-        let client = self
-            .client()
-            .await
-            .ok_or_else(|| gameyfin_api::ApiError::Other("not connected".into()))?;
-        let games = client.games().await?;
-        *self.catalog.write().await = Some((std::time::Instant::now(), games.clone()));
-        Ok(games)
+        let Some(client) = self.client().await else {
+            return self
+                .cached_games()
+                .await
+                .ok_or_else(|| gameyfin_api::ApiError::Other("not connected".into()));
+        };
+
+        match client.games().await {
+            Ok(games) => {
+                self.set_reachable(true);
+                *self.catalog.write().await = Some((std::time::Instant::now(), games.clone()));
+                self.remember_games(games.clone()).await;
+                Ok(games)
+            }
+            Err(e) if e.is_unreachable() => {
+                self.set_reachable(false);
+                // The stale in-memory copy first: it is the same data, without a read.
+                let stale = match self.catalog.read().await.as_ref() {
+                    Some((_, games)) => Some(games.clone()),
+                    None => self.cached_games().await,
+                };
+                match stale {
+                    Some(games) => {
+                        tracing::debug!(
+                            games = games.len(),
+                            "server unreachable; serving the last known catalogue"
+                        );
+                        Ok(games)
+                    }
+                    None => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The libraries, with the same fall back to what was last seen. See [`Self::games`].
+    pub async fn libraries(&self) -> gameyfin_api::ApiResult<Vec<Library>> {
+        let Some(client) = self.client().await else {
+            return Ok(self.offline_catalog.read().await.libraries.clone());
+        };
+
+        match client.libraries().await {
+            Ok(libraries) => {
+                self.set_reachable(true);
+                self.remember_libraries(libraries.clone()).await;
+                Ok(libraries)
+            }
+            Err(e) if e.is_unreachable() => {
+                self.set_reachable(false);
+                Ok(self.offline_catalog.read().await.libraries.clone())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The last catalogue seen, when there is one worth showing.
+    async fn cached_games(&self) -> Option<Vec<Game>> {
+        let games = self.offline_catalog.read().await.games.clone();
+        (!games.is_empty()).then_some(games)
+    }
+
+    /// True when a library can be rendered without reaching the server.
+    pub async fn has_cached_catalog(&self) -> bool {
+        !self.offline_catalog.read().await.games.is_empty()
+    }
+
+    async fn remember_games(&self, games: Vec<Game>) {
+        let changed = {
+            let mut cached = self.offline_catalog.write().await;
+            let changed = cached.games != games;
+            cached.games = games;
+            changed
+        };
+        if changed {
+            self.persist_catalog().await;
+        }
+    }
+
+    async fn remember_libraries(&self, libraries: Vec<Library>) {
+        let changed = {
+            let mut cached = self.offline_catalog.write().await;
+            let changed = cached.libraries != libraries;
+            cached.libraries = libraries;
+            changed
+        };
+        if changed {
+            self.persist_catalog().await;
+        }
+    }
+
+    /// Mirror the catalogue to disk. Best effort: it is a cache, not a source of truth.
+    async fn persist_catalog(&self) {
+        let dir = self.config_dir().await;
+        if dir.as_os_str().is_empty() {
+            return;
+        }
+        let cached = self.offline_catalog.read().await.clone();
+
+        if let Err(e) = async {
+            tokio::fs::create_dir_all(&dir).await?;
+            let json = serde_json::to_vec(&cached)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            tokio::fs::write(dir.join(CATALOG_FILE), json).await
+        }
+        .await
+        {
+            tracing::warn!("could not cache the catalogue: {e}");
+        }
+    }
+
+    /// Read the mirrored catalogue back at startup.
+    async fn load_catalog(&self, config_dir: &std::path::Path) {
+        let path = config_dir.join(CATALOG_FILE);
+        let Ok(bytes) = tokio::fs::read(&path).await else {
+            return;
+        };
+        match serde_json::from_slice::<CachedCatalog>(&bytes) {
+            Ok(cached) => {
+                tracing::info!(games = cached.games.len(), "loaded the cached catalogue");
+                *self.offline_catalog.write().await = cached;
+            }
+            // A shape change between versions must not stop the app starting; the next
+            // successful fetch rewrites the file.
+            Err(e) => tracing::warn!("ignoring an unreadable cached catalogue at {path:?}: {e}"),
+        }
+    }
+
+    /// Record whether the server answered. See [`Self::is_unreachable`].
+    pub fn set_reachable(&self, reachable: bool) {
+        let was_unreachable = self.unreachable.swap(!reachable, Ordering::Relaxed);
+        if was_unreachable == reachable {
+            tracing::info!(reachable, "the server's reachability changed");
+        }
+    }
+
+    /// True when the last attempt to reach the server did not get an answer.
+    pub fn is_unreachable(&self) -> bool {
+        self.unreachable.load(Ordering::Relaxed)
     }
 
     /// Drop the cached catalogue, so the next read comes from the server.
+    ///
+    /// Only the freshness cache: the offline mirror is deliberately kept, since the point
+    /// of it is to survive exactly the case where the refetch fails.
     pub async fn invalidate_catalog(&self) {
         *self.catalog.write().await = None;
     }
@@ -234,6 +425,7 @@ impl AppState {
     pub async fn restore(&self, config_dir: std::path::PathBuf) -> bool {
         self.set_config_dir(config_dir.clone()).await;
         self.library.load(config_dir.clone()).await;
+        self.load_catalog(&config_dir).await;
         let settings = crate::settings::Settings::load(&config_dir).await;
         *self.settings.write().await = settings.clone();
 
@@ -249,9 +441,149 @@ impl AppState {
             return false;
         }
 
+        // An unreachable server is not a rejected session. Reporting failure here would
+        // send an offline user to the sign-in wizard, which is the one thing they cannot
+        // complete without a network.
         match self.client().await {
-            Some(client) => client.is_authenticated().await,
+            Some(client) => match client.user_info().await {
+                Ok(user) => {
+                    self.set_reachable(true);
+                    user.is_some()
+                }
+                Err(e) if e.is_auth() => {
+                    self.set_reachable(true);
+                    false
+                }
+                Err(e) => {
+                    tracing::info!("could not confirm the stored session: {e}");
+                    self.set_reachable(false);
+                    true
+                }
+            },
             None => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("gameyfin-state-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn a_game(id: i64, title: &str) -> Game {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "title": title,
+            "libraryId": 1,
+            "platforms": [],
+            "genres": [],
+            "developers": [],
+            "publishers": [],
+            "metadata": { "fileSize": 0 },
+        }))
+        .expect("the fixture matches the model")
+    }
+
+    #[tokio::test]
+    async fn with_no_client_the_catalogue_comes_from_the_cache() {
+        // The offline case that matters: no client, but games are still listable.
+        let state = AppState::default();
+        assert!(!state.has_cached_catalog().await);
+        assert!(state.games().await.is_err());
+
+        state.remember_games(vec![a_game(1, "Celeste")]).await;
+
+        assert!(state.has_cached_catalog().await);
+        let games = state.games().await.expect("the cached catalogue is served");
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].title, "Celeste");
+    }
+
+    #[tokio::test]
+    async fn libraries_fall_back_to_the_cache_too() {
+        // Without this the library filter empties itself the moment the server is down.
+        let state = AppState::default();
+        assert!(state.libraries().await.unwrap().is_empty());
+
+        state
+            .remember_libraries(vec![Library {
+                id: 3,
+                name: "Shelf".into(),
+                game_ids: vec![1],
+            }])
+            .await;
+
+        let libraries = state.libraries().await.unwrap();
+        assert_eq!(libraries.len(), 1);
+        assert_eq!(libraries[0].name, "Shelf");
+    }
+
+    #[tokio::test]
+    async fn the_catalogue_survives_a_restart() {
+        let dir = scratch("catalog");
+        let state = AppState::default();
+        state.set_config_dir(dir.clone()).await;
+        state.remember_games(vec![a_game(4, "Hades")]).await;
+        state
+            .remember_libraries(vec![Library {
+                id: 1,
+                name: "Main".into(),
+                game_ids: vec![4],
+            }])
+            .await;
+
+        let reloaded = AppState::default();
+        reloaded.load_catalog(&dir).await;
+        assert_eq!(reloaded.games().await.unwrap()[0].title, "Hades");
+        assert_eq!(reloaded.libraries().await.unwrap()[0].name, "Main");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_corrupt_cache_is_ignored_rather_than_fatal() {
+        let dir = scratch("corrupt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(CATALOG_FILE), b"{ not json").unwrap();
+
+        let state = AppState::default();
+        state.load_catalog(&dir).await;
+        assert!(!state.has_cached_catalog().await);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn signing_out_takes_the_cached_catalogue_with_it() {
+        // Otherwise one account's titles would still be listed to whoever signs in next.
+        let dir = scratch("forget");
+        let state = AppState::default();
+        state.set_config_dir(dir.clone()).await;
+        state.remember_games(vec![a_game(2, "Tunic")]).await;
+        assert!(dir.join(CATALOG_FILE).exists());
+
+        state.forget_catalog().await;
+
+        assert!(!state.has_cached_catalog().await);
+        assert!(!dir.join(CATALOG_FILE).exists());
+        assert!(state.games().await.is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reachability_starts_optimistic_and_tracks_the_last_answer() {
+        let state = AppState::default();
+        assert!(!state.is_unreachable());
+        state.set_reachable(false);
+        assert!(state.is_unreachable());
+        state.set_reachable(true);
+        assert!(!state.is_unreachable());
     }
 }

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FolderActions } from "@/components/FolderActions";
 import { Icon } from "@/components/Icon";
 import { isInstalled } from "@/lib/actions";
 import { backend } from "@/lib/backend";
@@ -9,44 +10,34 @@ import { messageOf } from "@/lib/errors";
 import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
 import { useEntries } from "@/lib/queries";
+import { useRescanOnOpen } from "@/lib/rescan";
 
 /** Games actually present on this machine and ready to play. */
 export function InstalledView() {
   const entries = useEntries();
-  const queryClient = useQueryClient();
-  const [rescanning, setRescanning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Opening the tab is the moment the user expects to see what is actually installed, so
-  // adopt anything added or removed outside the app.
-  useEffect(() => {
-    void backend.rescanLibrary().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function rescan() {
-    setRescanning(true);
-    try {
-      await backend.rescanLibrary();
-      await queryClient.invalidateQueries({ queryKey: ["entries"] });
-    } finally {
-      setRescanning(false);
-    }
-  }
+  useRescanOnOpen();
 
   const header = (
-    <div className="flex shrink-0 items-center justify-between border-b border-default-200/60 px-6 py-3">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground/45">
-        Installed
-      </h2>
-      <button
-        type="button"
-        onClick={() => void rescan()}
-        disabled={rescanning}
-        className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100 disabled:opacity-50"
-      >
-        {rescanning ? "Rescanning…" : "Rescan folders"}
-      </button>
-    </div>
+    <>
+      <div className="flex shrink-0 items-center justify-between border-b border-default-200/60 px-6 py-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground/45">
+          Installed
+        </h2>
+        <div className="flex items-center gap-3">
+          <FolderActions folder="installations" onError={setError} />
+        </div>
+      </div>
+      {error && (
+        <p
+          role="alert"
+          className="mx-6 mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+        >
+          {error}
+        </p>
+      )}
+    </>
   );
 
   const installed = useMemo(

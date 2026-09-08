@@ -22,10 +22,15 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 export interface ConnectionStatus {
   configured: boolean;
   authenticated: boolean;
+  /** The server did not answer. The session is kept and the cached library is shown. */
+  offline: boolean;
   serverUrl: string | null;
   username: string | null;
   libraryRoot: string | null;
 }
+
+/** One of the two folders the app owns inside the games folder. */
+export type LibraryFolder = "downloads" | "installations";
 
 export interface ServerProbe {
   url: string;
@@ -111,6 +116,8 @@ export interface Backend {
   deleteStaging(gameId: number): Promise<void>;
   deleteDownload(gameId: number): Promise<void>;
   openFolder(gameId: number): Promise<void>;
+  /** Reveal the Downloads or Installations folder itself, not one game's. */
+  openLibraryFolder(folder: LibraryFolder): Promise<void>;
   openPath(path: string): Promise<void>;
   launch(gameId: number): Promise<void>;
   listExecutables(gameId: number): Promise<string[]>;
@@ -180,6 +187,7 @@ const tauriBackend: Backend = {
   deleteStaging: (gameId) => invoke("delete_staging", { gameId }),
   deleteDownload: (gameId) => invoke("delete_download", { gameId }),
   openFolder: (gameId) => invoke("open_game_folder", { gameId }),
+  openLibraryFolder: (folder) => invoke("open_library_folder", { folder }),
   openPath: (path) => invoke("open_path", { path }),
   launch: (gameId) => invoke("launch_game", { gameId }),
   listExecutables: (gameId) => invoke<string[]>("list_executables", { gameId }),
@@ -262,6 +270,7 @@ const mockBackend: Backend = {
   deleteStaging: async () => {},
   deleteDownload: async (gameId) => console.info(`[mock] delete ${gameId}`),
   openFolder: async (gameId) => console.info(`[mock] open folder ${gameId}`),
+  openLibraryFolder: async (folder) => console.info(`[mock] open ${folder} folder`),
   openPath: async (path) => console.info(`[mock] open ${path}`),
   launch: async (gameId) => console.info(`[mock] launch ${gameId}`),
   listExecutables: async () => [],
@@ -271,6 +280,7 @@ const mockBackend: Backend = {
   connectionStatus: async () => ({
     configured: true,
     authenticated: true,
+    offline: false,
     serverUrl: "https://demo.invalid",
     username: "demo",
     libraryRoot: "/games",

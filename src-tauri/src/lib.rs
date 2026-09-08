@@ -196,6 +196,7 @@ pub fn run() {
             ipc::delete_download,
             ipc::open_path,
             ipc::open_game_folder,
+            ipc::open_library_folder,
             ipc::set_game_executable,
             ipc::list_executables,
             ipc::launch_game,

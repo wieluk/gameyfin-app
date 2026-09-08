@@ -15,6 +15,7 @@ import {
 } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
 import { useEntries } from "@/lib/queries";
+import { useRescanOnOpen } from "@/lib/rescan";
 
 
 export function LibraryView() {
@@ -34,6 +35,10 @@ export function LibraryView() {
   const [selected, setSelected] = useState<LibraryEntry | null>(null);
   const [installing, setInstalling] = useState<LibraryEntry | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Same as Downloads and Installed: a game installed or removed outside the app should
+  // show its real state here too, not the one recorded whenever the app last looked.
+  useRescanOnOpen();
 
   const entries = useEntries();
   const libraries = useQuery({ queryKey: ["libraries"], queryFn: () => backend.listLibraries() });

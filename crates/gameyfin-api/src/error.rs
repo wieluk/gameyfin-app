@@ -42,6 +42,15 @@ impl ApiError {
     pub fn is_auth(&self) -> bool {
         matches!(self, ApiError::Unauthenticated(_))
     }
+
+    /// True when the request never got an answer out of the server.
+    ///
+    /// The distinction the app cares about is "the server said no" versus "there was
+    /// nobody to ask". Only the second means the user should keep their session and see
+    /// their cached library rather than being sent back to the sign-in wizard.
+    pub fn is_unreachable(&self) -> bool {
+        matches!(self, ApiError::Transport(_))
+    }
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;

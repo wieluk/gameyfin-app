@@ -17,8 +17,28 @@ sync, with a React/HeroUI interface that shares Gameyfin's design language.
 Library browsing, downloading, extraction, installation, launching and playtime tracking
 work against a live server. Save syncing is designed but not yet wired up.
 
-234 Rust tests and 8 frontend tests pass. Clippy runs with `-D warnings` and the whole
+272 Rust tests and 8 frontend tests pass. Clippy runs with `-D warnings` and the whole
 workspace is rustfmt-clean.
+
+## Working offline
+
+The app does not need the server to be reachable to be useful. Installed games are on the
+local disk, and an app that shows an empty screen because a router is down is broken.
+
+- The catalogue is mirrored to `catalog.json` in the config directory on every successful
+  fetch, and served from there when the server does not answer. Titles may be stale;
+  that is better than no library.
+- Artwork is read from the on-disk cache before the connection is checked, so a cached
+  library renders with its covers rather than as a grid of grey rectangles.
+- A session that cannot be *confirmed* is not a session that was *rejected*. An
+  unreachable server keeps the stored session, because signing in again is precisely what
+  an offline user cannot do; only an actual 401 sends them back to the wizard.
+- A banner says which server is unreachable and what will not work until it is back.
+  Connection status is re-polled while offline, so the banner clears itself and every
+  query is refetched once the server answers again.
+
+Downloading is the one thing that genuinely needs the server, and it fails with a message
+saying so. Launching, uninstalling, rescanning and playtime tracking are all local.
 
 ## Development
 

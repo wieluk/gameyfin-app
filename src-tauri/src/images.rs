@@ -47,10 +47,6 @@ pub fn handle(
 async fn fetch(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
     let state = app.state::<AppState>();
 
-    let Some(client) = state.client().await else {
-        return error(StatusCode::SERVICE_UNAVAILABLE, "not connected");
-    };
-
     // Only artwork may be requested through this scheme. Without this check the webview
     // could reach any authenticated endpoint on the server by guessing a path.
     if !path.starts_with("images/") {
@@ -59,6 +55,10 @@ async fn fetch(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
 
     // Serve from disk when we already have it: artwork never changes for a given id, and
     // refetching the whole grid on every launch is slow and pointless.
+    //
+    // Deliberately ahead of the connection check. Cached artwork is on this disk whether
+    // or not the server can be reached, and a library that renders offline should render
+    // with its covers rather than as a grid of grey rectangles.
     let cache = state.image_cache().await;
     if let Some((bytes, content_type)) = cache.get(path).await {
         return Response::builder()
@@ -68,6 +68,10 @@ async fn fetch(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
             .body(bytes)
             .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "bad cache entry"));
     }
+
+    let Some(client) = state.client().await else {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "not connected");
+    };
 
     let url = client.url_for(&format!("/{path}"));
     let cookies = state.settings().await.cookies;

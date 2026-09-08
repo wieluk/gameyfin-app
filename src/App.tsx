@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Route, Routes, useNavigate } from "react-router-dom";
+import { Icon } from "@/components/Icon";
 import { ResizeHandles } from "@/components/ResizeHandles";
 import { Sidebar } from "@/components/Sidebar";
 import { TitleBar } from "@/components/TitleBar";
@@ -54,12 +55,22 @@ export function App() {
 
   const ready = restoreSettled && !status.isLoading;
   const needsSetup = ready && !(status.data?.configured && status.data?.authenticated);
+  const offline = Boolean(status.data?.offline);
+
+  // Everything fetched while the server was down came from the local cache, so the moment
+  // it answers again the whole lot is worth re-reading.
+  const wasOffline = useRef(offline);
+  useEffect(() => {
+    if (wasOffline.current && !offline) void queryClient.invalidateQueries();
+    wasOffline.current = offline;
+  }, [offline, queryClient]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <ResizeHandles />
       <TitleBar />
       {isMockBackend && <MockBanner />}
+      {offline && <OfflineBanner serverUrl={status.data?.serverUrl ?? null} />}
 
       {!ready ? (
         <Splash />
@@ -134,6 +145,37 @@ function Splash() {
       <div className="h-6 w-6 animate-spin rounded-full border-2 border-default-300 border-t-primary" />
     </div>
   );
+}
+
+/**
+ * Shown while the server cannot be reached.
+ *
+ * Deliberately a banner and not a blocking screen. Installed games live on this machine
+ * and still launch, so the app carries on working from what it cached and says plainly
+ * which parts cannot work until the server is back.
+ */
+function OfflineBanner({ serverUrl }: { serverUrl: string | null }) {
+  return (
+    <div
+      role="status"
+      className="flex shrink-0 items-center justify-center gap-2 bg-warning/15 px-4 py-1.5 text-[11px] text-warning-600"
+    >
+      <Icon name="offline" className="h-3.5 w-3.5 shrink-0" />
+      <span>
+        Can't reach {serverUrl ? shortHost(serverUrl) : "your server"}. Your installed
+        games still work; downloads and new artwork will not until it is back.
+      </span>
+    </div>
+  );
+}
+
+/** Just the host, so a long address does not push the explanation off the banner. */
+function shortHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
 
 /** Visible reminder that this is fixture data, so a screenshot is never mistaken for real. */
