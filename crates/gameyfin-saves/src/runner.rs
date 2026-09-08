@@ -22,9 +22,28 @@ pub trait CommandRunner: Send + Sync {
     async fn run(&self, program: &str, args: &[String]) -> SaveResult<CommandOutput>;
 }
 
+/// Generous enough for a large backup, short enough that a wedged process is not forever.
+const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// Runs the real binary.
-#[derive(Debug, Default, Clone)]
-pub struct ProcessRunner;
+#[derive(Debug, Clone)]
+pub struct ProcessRunner {
+    timeout: std::time::Duration,
+}
+
+impl Default for ProcessRunner {
+    fn default() -> Self {
+        Self {
+            timeout: DEFAULT_TIMEOUT,
+        }
+    }
+}
+
+impl ProcessRunner {
+    pub fn with_timeout(timeout: std::time::Duration) -> Self {
+        Self { timeout }
+    }
+}
 
 #[async_trait]
 impl CommandRunner for ProcessRunner {
@@ -33,6 +52,8 @@ impl CommandRunner for ProcessRunner {
 
         let mut command = tokio::process::Command::new(program);
         command.args(args);
+        // Without this the child outlives a timed-out call, still holding its config dir.
+        command.kill_on_drop(true);
 
         // Suppress the console window Ludusavi would flash on Windows every backup.
         #[cfg(windows)]
@@ -41,10 +62,22 @@ impl CommandRunner for ProcessRunner {
             command.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let output = command.output().await.map_err(|source| SaveError::Spawn {
-            program: program.to_string(),
-            source,
-        })?;
+        // Ludusavi has been seen to wedge with no CPU and never return, and the app
+        // serialises every save operation behind one lock, so one hung run freezes all of
+        // them for the life of the process.
+        let output = match tokio::time::timeout(self.timeout, command.output()).await {
+            Ok(result) => result.map_err(|source| SaveError::Spawn {
+                program: program.to_string(),
+                source,
+            })?,
+            Err(_) => {
+                tracing::error!(program, seconds = self.timeout.as_secs(), "ludusavi hung");
+                return Err(SaveError::TimedOut {
+                    program: program.to_string(),
+                    seconds: self.timeout.as_secs(),
+                });
+            }
+        };
 
         Ok(CommandOutput {
             status: output.status.code().unwrap_or(-1),
@@ -108,5 +141,42 @@ impl CommandRunner for FakeRunner {
             .unwrap()
             .pop()
             .ok_or_else(|| SaveError::Other("FakeRunner ran out of responses".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `sleep` is the portable stand-in for a process that never returns; there is no
+    /// equivalent on Windows worth the shim, and the timeout itself is platform-neutral.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_process_that_never_returns_is_stopped_and_reported() {
+        let runner = ProcessRunner::with_timeout(std::time::Duration::from_millis(200));
+        let started = std::time::Instant::now();
+
+        let error = runner
+            .run("sleep", &["30".to_string()])
+            .await
+            .expect_err("a 30 second sleep must not finish inside 200ms");
+
+        assert!(matches!(error, SaveError::TimedOut { seconds: 0, .. }));
+        // The call returns on the timeout rather than on the child, which `kill_on_drop`
+        // then reaps.
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_process_that_finishes_in_time_is_not_disturbed() {
+        let runner = ProcessRunner::with_timeout(std::time::Duration::from_secs(30));
+        let output = runner
+            .run("echo", &["hello".to_string()])
+            .await
+            .expect("echo finishes at once");
+
+        assert_eq!(0, output.status);
+        assert_eq!("hello", output.stdout.trim());
     }
 }

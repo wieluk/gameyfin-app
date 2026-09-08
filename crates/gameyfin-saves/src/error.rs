@@ -30,6 +30,9 @@ pub enum SaveError {
     #[error("no Ludusavi entry matches '{title}'")]
     NoMatch { title: String },
 
+    #[error("{program} did not finish within {seconds}s and was stopped")]
+    TimedOut { program: String, seconds: u64 },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

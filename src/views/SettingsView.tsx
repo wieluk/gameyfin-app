@@ -911,7 +911,9 @@ function AppearanceSection() {
 /** What a downloadable helper looks like to the section below. */
 interface VersionInfo {
   /** The version in use, or null when nothing is installed. */
-  installed: string | null;
+  version: string | null;
+  /** How to show it, when the version alone is not enough, as with Wine's build. */
+  label?: string;
   /** True when what is in use ships with the app, so it cannot be removed. */
   builtIn: boolean;
   /** Null when the release feed could not be reached, which is not "up to date". */
@@ -992,20 +994,20 @@ function VersionSection({ tool, children }: { tool: VersionTool; children?: Reac
   }
 
   // A pinned version that is not the one in use is the action to offer, ahead of any update.
-  const pinned = chosen && chosen !== info?.installed ? chosen : null;
+  const pinned = chosen && chosen !== info?.version ? chosen : null;
 
   return (
     <Section title={tool.title}>
       <Row
         label="Installed"
         value={
-          info?.installed
+          info?.version
             ? info.builtIn
-              ? `${info.installed} (bundled)`
-              : info.installed
+              ? `${info.label ?? info.version} (bundled)`
+              : (info.label ?? info.version)
             : "Not installed"
         }
-        tone={info?.installed ? "good" : undefined}
+        tone={info?.version ? "good" : undefined}
       />
       <Row
         label="Latest available"
@@ -1048,13 +1050,13 @@ function VersionSection({ tool, children }: { tool: VersionTool; children?: Reac
             ? "Downloading…"
             : pinned
               ? `Install ${pinned}`
-              : !info?.installed || info.builtIn
+              : !info?.version || info.builtIn
                 ? `Download ${tool.title}${info?.downloadBytes ? ` (${formatBytes(info.downloadBytes)})` : ""}`
                 : info.updatable
                   ? `Update to ${info.latest}`
                   : "Redownload"}
         </button>
-        {info?.installed && !info.builtIn && (
+        {info?.version && !info.builtIn && (
           <button
             type="button"
             disabled={busy !== null}
@@ -1117,9 +1119,10 @@ function WineSection() {
     load: async () => {
       const status = await backend.wineStatus();
       return {
-        installed: status.installed
+        version: status.installed?.version ?? null,
+        label: status.installed
           ? `${status.installed.version} (${labelFor(status.installed.variant)})`
-          : null,
+          : undefined,
         builtIn: false,
         latest: status.latest?.version ?? null,
         downloadBytes: status.latest?.sizeBytes ?? null,
@@ -1332,7 +1335,7 @@ function SaveToolSection() {
     load: async () => {
       const status = await backend.saveToolStatus();
       return {
-        installed: status.installed?.version ?? status.bundled,
+        version: status.installed?.version ?? status.bundled,
         builtIn: !status.installed && status.bundled !== null,
         latest: status.latest?.version ?? null,
         downloadBytes: status.latest?.sizeBytes ?? null,

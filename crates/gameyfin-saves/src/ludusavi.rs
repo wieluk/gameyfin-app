@@ -52,7 +52,7 @@ impl Ludusavi {
         Self {
             binary: binary.into(),
             config_dir: config_dir.into(),
-            runner: Box::new(ProcessRunner),
+            runner: Box::new(ProcessRunner::default()),
         }
     }
 

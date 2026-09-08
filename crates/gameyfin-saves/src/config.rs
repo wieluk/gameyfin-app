@@ -126,8 +126,18 @@ struct CloudSection {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ReleaseSection {
+    /// Ludusavi asks GitHub whether it is out of date on every single run. Gameyfin
+    /// manages its version itself, so that is a network call per backup with nothing to
+    /// show for it.
+    check: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ConfigFile {
     roots: Vec<Root>,
+    release: ReleaseSection,
     backup: BackupSection,
     restore: RestoreSection,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -193,10 +203,6 @@ impl ConfigBuilder {
         self
     }
 
-    /// Register the app's own per-game Wine prefixes.
-    ///
-    /// The `<game>` placeholder lets a single root cover every prefix, instead of
-    /// enumerating them or rescanning all of them for every game.
     /// Register one game's Wine prefix as a place to scan.
     ///
     /// This used to register the whole collection as `<prefixes>/<game>`, where `<game>` is
@@ -269,6 +275,7 @@ impl ConfigBuilder {
         let staging = self.staging.to_string_lossy().into_owned();
         ConfigFile {
             roots: self.roots.clone(),
+            release: ReleaseSection { check: false },
             backup: BackupSection {
                 path: staging.clone(),
                 format: FormatSection {
@@ -313,6 +320,13 @@ mod tests {
 
     fn parse(yaml: &str) -> serde_yaml_ng::Value {
         serde_yaml_ng::from_str(yaml).expect("valid yaml")
+    }
+
+    #[test]
+    fn the_self_update_check_is_turned_off() {
+        // Left on, Ludusavi asks GitHub about itself on every run, with no timeout.
+        let yaml = parse(&ConfigBuilder::new("/staging").to_yaml().unwrap());
+        assert_eq!(Some(false), yaml["release"]["check"].as_bool());
     }
 
     #[test]
