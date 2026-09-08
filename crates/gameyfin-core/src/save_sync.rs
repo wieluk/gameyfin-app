@@ -154,24 +154,116 @@ pub fn needs_attention(state: &SaveSyncState) -> bool {
     )
 }
 
-/// Where a game's backup archive is staged before upload, and after download.
-pub fn archive_path(staging: &Path, game_id: i64) -> PathBuf {
-    staging.join(format!("{game_id}.zip"))
+/// Where a game's uploadable archive lives. Beside the staging directory, never inside
+/// it, or packing would try to include its own output.
+pub fn archive_path(saves_root: &Path, game_id: i64) -> PathBuf {
+    saves_root.join(format!("{game_id}.zip"))
+}
+
+/// Packs a Ludusavi backup directory into the single archive the server stores.
+///
+/// The sync unit is the whole folder, not the inner zip: Ludusavi writes a `mapping.yaml`
+/// alongside it that records per-file paths and hashes, and a restore silently ignores any
+/// folder that does not have one.
+pub fn pack(staging: &Path, archive: &Path) -> std::io::Result<u64> {
+    use std::io::Write;
+
+    if let Some(parent) = archive.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let file = std::fs::File::create(archive)?;
+    let mut zip = zip::ZipWriter::new(file);
+    // Ludusavi already compressed the payload; compressing it again costs time for nothing.
+    let options: zip::write::FileOptions<'_, ()> =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    let mut entries = Vec::new();
+    collect_files(staging, staging, &mut entries)?;
+    // Deterministic order, so the same backup produces the same bytes and the content hash
+    // does not change for a save that did not.
+    entries.sort();
+
+    for relative in entries {
+        let absolute = staging.join(&relative);
+        zip.start_file(relative.to_string_lossy().replace('\\', "/"), options)?;
+        let bytes = std::fs::read(&absolute)?;
+        zip.write_all(&bytes)?;
+    }
+
+    zip.finish()?;
+    Ok(std::fs::metadata(archive)?.len())
+}
+
+/// Unpacks a downloaded archive into the staging directory, ready to restore from.
+///
+/// Replaces whatever was there: a half-merged mixture of two machines' backups is worse
+/// than either one.
+pub fn unpack(archive: &Path, staging: &Path) -> std::io::Result<()> {
+    if staging.exists() {
+        std::fs::remove_dir_all(staging)?;
+    }
+    std::fs::create_dir_all(staging)?;
+
+    let file = std::fs::File::open(archive)?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        // `enclosed_name` rejects absolute paths and `..`, so a hostile archive cannot
+        // write outside the staging directory.
+        let Some(relative) = entry.enclosed_name() else {
+            continue;
+        };
+        let target = staging.join(relative);
+
+        if entry.is_dir() {
+            std::fs::create_dir_all(&target)?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = std::fs::File::create(&target)?;
+        std::io::copy(&mut entry, &mut out)?;
+    }
+
+    Ok(())
+}
+
+fn collect_files(root: &Path, dir: &Path, into: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_files(root, &path, into)?;
+        } else if let Ok(relative) = path.strip_prefix(root) {
+            into.push(relative.to_path_buf());
+        }
+    }
+    Ok(())
 }
 
 /// Performs the transfers the decisions call for.
 pub struct SaveSync<'a> {
     client: &'a GameyfinClient,
-    staging: PathBuf,
+    /// Holds the per-game staging directories and the packed archives beside them.
+    saves_root: PathBuf,
     installation_id: Option<String>,
     device_name: Option<String>,
 }
 
 impl<'a> SaveSync<'a> {
-    pub fn new(client: &'a GameyfinClient, staging: impl Into<PathBuf>) -> Self {
+    pub fn new(client: &'a GameyfinClient, saves_root: impl Into<PathBuf>) -> Self {
         Self {
             client,
-            staging: staging.into(),
+            saves_root: saves_root.into(),
             installation_id: None,
             device_name: None,
         }
@@ -193,7 +285,7 @@ impl<'a> SaveSync<'a> {
         Ok(self.client.list_saves(game_id).await?.into_iter().next())
     }
 
-    /// Uploads a staged archive. `base` is the version it was built on top of.
+    /// Packs the staged backup and uploads it. `base` is the version it was built on.
     pub async fn upload(
         &self,
         game_id: i64,
@@ -202,7 +294,9 @@ impl<'a> SaveSync<'a> {
         ludusavi_title: Option<String>,
         force: bool,
     ) -> Result<UploadOutcome, ApiError> {
-        let archive = archive_path(&self.staging, game_id);
+        let archive = archive_path(&self.saves_root, game_id);
+        pack(&self.staging_for(game_id), &archive).map_err(|e| ApiError::Other(e.to_string()))?;
+
         let hash = gameyfin_api::hash_file(&archive)
             .await
             .map_err(|e| ApiError::Other(e.to_string()))?;
@@ -220,23 +314,27 @@ impl<'a> SaveSync<'a> {
         self.client.upload_save(game_id, &archive, &metadata).await
     }
 
-    /// Fetches a version into staging, ready for Ludusavi to restore from.
+    /// Fetches a version and unpacks it, ready for Ludusavi to restore from.
     pub async fn fetch(&self, game_id: i64, save_id: i64) -> Result<PathBuf, ApiError> {
-        let archive = archive_path(&self.staging, game_id);
+        let archive = archive_path(&self.saves_root, game_id);
         self.client
             .download_save(game_id, save_id, &archive)
             .await?;
-        Ok(archive)
+
+        let staging = self.staging_for(game_id);
+        unpack(&archive, &staging).map_err(|e| ApiError::Other(e.to_string()))?;
+        Ok(staging)
     }
 
-    pub fn staging(&self) -> &Path {
-        &self.staging
+    /// Where Ludusavi reads and writes this game's backup, before packing.
+    pub fn staging_for(&self, game_id: i64) -> PathBuf {
+        self.saves_root.join(game_id.to_string())
     }
 }
 
 /// Hash of the archive currently staged for a game, if there is one.
-pub async fn staged_hash(staging: &Path, game_id: i64) -> SaveResult<Option<String>> {
-    let archive = archive_path(staging, game_id);
+pub async fn staged_hash(saves_root: &Path, game_id: i64) -> SaveResult<Option<String>> {
+    let archive = archive_path(saves_root, game_id);
     if !archive.exists() {
         return Ok(None);
     }
@@ -440,7 +538,88 @@ mod tests {
 
     #[test]
     fn archives_are_staged_per_game() {
-        let path = archive_path(Path::new("/staging"), 42);
-        assert_eq!(PathBuf::from("/staging/42.zip"), path);
+        let path = archive_path(Path::new("/saves"), 42);
+        assert_eq!(PathBuf::from("/saves/42.zip"), path);
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gameyfin-pack-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_backup_folder_round_trips_through_the_archive() {
+        let root = scratch("roundtrip");
+        let staging = root.join("staging");
+        // What Ludusavi actually leaves behind: a game folder with its mapping alongside
+        // the payload. A restore ignores a folder with no mapping.yaml, so both must survive.
+        std::fs::create_dir_all(staging.join("Celeste")).unwrap();
+        std::fs::write(staging.join("Celeste/mapping.yaml"), b"name: Celeste").unwrap();
+        std::fs::write(staging.join("Celeste/backup-1.zip"), b"payload bytes").unwrap();
+
+        let archive = root.join("42.zip");
+        pack(&staging, &archive).unwrap();
+
+        let restored = root.join("restored");
+        unpack(&archive, &restored).unwrap();
+
+        assert_eq!(
+            b"name: Celeste".to_vec(),
+            std::fs::read(restored.join("Celeste/mapping.yaml")).unwrap()
+        );
+        assert_eq!(
+            b"payload bytes".to_vec(),
+            std::fs::read(restored.join("Celeste/backup-1.zip")).unwrap()
+        );
+    }
+
+    #[test]
+    fn packing_the_same_backup_twice_produces_the_same_bytes() {
+        // Otherwise every upload would look like changed content and defeat the hash check.
+        let root = scratch("deterministic");
+        let staging = root.join("staging");
+        std::fs::create_dir_all(staging.join("Celeste")).unwrap();
+        std::fs::write(staging.join("Celeste/mapping.yaml"), b"name: Celeste").unwrap();
+        std::fs::write(staging.join("Celeste/backup-1.zip"), b"payload").unwrap();
+
+        pack(&staging, &root.join("first.zip")).unwrap();
+        pack(&staging, &root.join("second.zip")).unwrap();
+
+        assert_eq!(
+            std::fs::read(root.join("first.zip")).unwrap(),
+            std::fs::read(root.join("second.zip")).unwrap()
+        );
+    }
+
+    #[test]
+    fn unpacking_replaces_whatever_was_staged_before() {
+        let root = scratch("replace");
+        let staging = root.join("staging");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("mapping.yaml"), b"new").unwrap();
+        let archive = root.join("42.zip");
+        pack(&staging, &archive).unwrap();
+
+        let target = root.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("stale.zip"), b"from another machine").unwrap();
+
+        unpack(&archive, &target).unwrap();
+
+        assert!(!target.join("stale.zip").exists());
+        assert!(target.join("mapping.yaml").exists());
+    }
+
+    #[test]
+    fn packing_an_empty_staging_directory_is_not_an_error() {
+        let root = scratch("empty");
+        let staging = root.join("staging");
+        std::fs::create_dir_all(&staging).unwrap();
+
+        let archive = root.join("42.zip");
+        assert!(pack(&staging, &archive).is_ok());
+        assert!(archive.exists());
     }
 }

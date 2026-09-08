@@ -113,7 +113,10 @@ struct GameContext {
     game_id: i64,
     title: String,
     steam_app_id: Option<u32>,
+    /// Where Ludusavi reads and writes this game's backup.
     staging: PathBuf,
+    /// Holds every game's staging directory, and the packed archives beside them.
+    saves_root: PathBuf,
     install_dir: PathBuf,
     prefixes_root: PathBuf,
     prefix_dir: PathBuf,
@@ -157,6 +160,7 @@ async fn context(state: &State<'_, AppState>, game_id: i64) -> CommandResult<Gam
         title: game.title.clone(),
         steam_app_id: game.steam_app_id(),
         staging: layout.saves_dir(game_id),
+        saves_root: layout.saves_root(),
         install_dir,
         prefixes_root: layout.prefixes_root(),
         prefix_dir: layout.prefix_dir(game_id),
@@ -291,13 +295,16 @@ fn hostname() -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
-/// Takes a backup into staging. Returns the hash, or None when there was nothing to back up.
+/// Runs Ludusavi into the staging directory. False means the game had no saves to take.
+///
+/// Packing and hashing happen at upload time, so there is exactly one place that decides
+/// what bytes the server sees.
 async fn back_up(
     app: &AppHandle,
     state: &State<'_, AppState>,
     context: &GameContext,
     title: &str,
-) -> CommandResult<Option<String>> {
+) -> CommandResult<bool> {
     let ludusavi = ludusavi_for(app, state, context).await?;
 
     tokio::fs::create_dir_all(&context.staging)
@@ -309,13 +316,7 @@ async fn back_up(
         .await
         .map_err(|e| CommandError::Message(format!("save backup failed: {e}")))?;
 
-    if !output.games.values().any(|game| game.produced_data()) {
-        return Ok(None);
-    }
-
-    save_sync::staged_hash(&context.staging, context.game_id)
-        .await
-        .map_err(|e| CommandError::Message(format!("could not read the save backup: {e}")))
+    Ok(output.games.values().any(|game| game.produced_data()))
 }
 
 async fn restore(
@@ -385,7 +386,7 @@ pub async fn state_of(
 
     // A staged archive whose hash differs from the last synced one means this machine
     // played since, without needing a fresh backup to find out.
-    let staged = save_sync::staged_hash(&context.staging, game_id)
+    let staged = save_sync::staged_hash(&context.saves_root, game_id)
         .await
         .unwrap_or(None);
     let local_changed = match (&staged, &context.record_saves.last_backup_hash) {
@@ -449,10 +450,10 @@ async fn do_backup(
         });
     };
 
-    let Some(hash) = back_up(app, state, &context, &title).await? else {
+    if !back_up(app, state, &context, &title).await? {
         // Nothing to back up is not an error: plenty of games have no saves yet.
         return Ok(SaveSyncState::NeverSynced);
-    };
+    }
 
     let client = state.client().await.ok_or(CommandError::NotConnected)?;
     let sync = sync_for(&client, &context, &settings);
@@ -468,22 +469,19 @@ async fn do_backup(
         )
         .await?;
 
+    let hash = save_sync::staged_hash(&context.saves_root, game_id)
+        .await
+        .unwrap_or(None);
+
     let next = match outcome {
         UploadOutcome::Stored(version) => {
-            record_sync(
-                state,
-                game_id,
-                Some(version.id),
-                Some(hash),
-                context.platform(),
-            )
-            .await;
+            record_sync(state, game_id, Some(version.id), hash, context.platform()).await;
             SaveSyncState::InSync {
                 last_synced_at: version.created_at.clone(),
             }
         }
         UploadOutcome::Unchanged => {
-            record_sync(state, game_id, None, Some(hash), context.platform()).await;
+            record_sync(state, game_id, None, hash, context.platform()).await;
             SaveSyncState::InSync {
                 last_synced_at: context.record_saves.last_backup_at.clone(),
             }
@@ -542,7 +540,7 @@ async fn do_restore(
     sync.fetch(game_id, version.id).await?;
     restore(app, state, &context, &title).await?;
 
-    let hash = save_sync::staged_hash(&context.staging, game_id)
+    let hash = save_sync::staged_hash(&context.saves_root, game_id)
         .await
         .unwrap_or(None);
     record_sync(state, game_id, Some(version.id), hash, context.platform()).await;
