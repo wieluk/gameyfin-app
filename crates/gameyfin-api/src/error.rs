@@ -24,6 +24,14 @@ pub enum ApiError {
         source: serde_json::Error,
     },
 
+    /// The server has save synchronisation turned off (HTTP 405).
+    #[error("save sync is disabled on this server")]
+    SaveSyncDisabled,
+
+    /// The upload exceeded the per-save or per-user limit (HTTP 413).
+    #[error("save is too large, or the storage quota is full")]
+    QuotaExceeded,
+
     #[error("no Gameyfin server URL configured")]
     NoServerUrl,
 

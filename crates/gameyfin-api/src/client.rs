@@ -63,6 +63,15 @@ impl GameyfinClient {
         &self.base_url
     }
 
+    /// Shared connection pool, so sibling modules issue REST calls without a second client.
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
+    pub(crate) fn auth(&self) -> &Arc<dyn AuthStrategy> {
+        &self.auth
+    }
+
     /// Absolute URL for a REST path such as `/images/cover/7`.
     pub fn url_for(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
