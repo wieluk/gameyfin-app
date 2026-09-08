@@ -93,6 +93,23 @@ impl Ludusavi {
         // A non-zero exit still carries a full JSON payload (e.g. an unrecognised game),
         // so prefer the payload whenever it parses; the exit code only shapes the error.
         let stdout = output.stdout.trim();
+        // The answer is the only record of what Ludusavi actually did. Without it a scan
+        // that found nothing is indistinguishable from one that was never run, which is
+        // exactly the state a failed backup leaves the user staring at.
+        tracing::debug!(
+            command,
+            status = output.status,
+            response = stdout,
+            "ludusavi replied"
+        );
+        if !output.stderr.trim().is_empty() {
+            tracing::debug!(
+                command,
+                stderr = output.stderr.trim(),
+                "ludusavi wrote to stderr"
+            );
+        }
+
         let parse_error = if stdout.is_empty() {
             None
         } else {

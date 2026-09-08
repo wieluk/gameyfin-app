@@ -18,6 +18,12 @@ use serde::{Deserialize, Serialize};
 pub struct LocalSaveState {
     /// Ludusavi title this game resolved to. Absent means it was never matched.
     pub ludusavi_title: Option<String>,
+    /// Whether identification has been attempted, so a game the helper does not recognise
+    /// stops re-running the whole search on every refresh.
+    pub match_attempted: bool,
+    /// Near misses from that search, kept so the user can be offered them without
+    /// searching again.
+    pub match_candidates: Vec<String>,
     /// The version this machine last restored from or uploaded, as the store names it.
     #[serde(deserialize_with = "gameyfin_api::saves::lenient_optional_id")]
     pub last_synced_save_id: Option<String>,
@@ -44,6 +50,10 @@ pub enum SaveSyncState {
         candidates: Vec<String>,
     },
     NeverSynced,
+    /// The backup helper ran and captured nothing. Distinct from never having tried: it
+    /// means the game was recognised but no save files were found where it expected them,
+    /// which is a different problem with a different remedy.
+    NothingToBackUp,
     InSync {
         last_synced_at: Option<String>,
     },
@@ -377,6 +387,8 @@ mod tests {
     fn synced_to(id: i64) -> LocalSaveState {
         LocalSaveState {
             ludusavi_title: Some("Celeste".into()),
+            match_attempted: true,
+            match_candidates: Vec::new(),
             last_synced_save_id: Some(id.to_string()),
             last_backup_hash: Some("abc".into()),
             last_backup_at: Some("2026-01-01T00:00:00Z".into()),

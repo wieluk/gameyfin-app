@@ -35,6 +35,13 @@ pub struct AppState {
     /// Separate pool for downloads, which must not carry a total-request timeout.
     transfer_http: RwLock<Option<reqwest::Client>>,
     library: crate::library_state::SharedLibraryState,
+    /// Serialises save-helper runs.
+    ///
+    /// They all share one config directory, because each one carries a copy of the
+    /// ~17 MB game manifest and a directory per game meant fetching and storing it again
+    /// for every game in the library. Sharing it means the config file is rewritten per
+    /// game, so only one run may be in flight at a time.
+    ludusavi_lock: Arc<tokio::sync::Mutex<()>>,
     /// Cached game catalogue.
     ///
     /// `list_entries` is called on every local state change, several times a second
@@ -434,6 +441,10 @@ impl AppState {
         let cache = std::sync::Arc::new(crate::image_cache::ImageCache::new(dir));
         *self.image_cache.write().await = Some(cache.clone());
         cache
+    }
+
+    pub fn ludusavi_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.ludusavi_lock.clone()
     }
 
     pub fn library(&self) -> &crate::library_state::LibraryState {

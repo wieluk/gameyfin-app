@@ -197,16 +197,15 @@ impl ConfigBuilder {
     ///
     /// The `<game>` placeholder lets a single root cover every prefix, instead of
     /// enumerating them or rescanning all of them for every game.
-    pub fn wine_prefix_collection(self, prefixes_dir: &Path) -> Self {
-        // Appended as text, not with `Path::join`: `<game>` is a token Ludusavi expands
-        // rather than a real path component, and joining would write a backslash on
-        // Windows into a path that is always a Linux one, since Wine prefixes only exist
-        // there.
-        let root = prefixes_dir.to_string_lossy();
-        self.root(
-            RootStore::OtherWine,
-            format!("{}/<game>", root.trim_end_matches('/')),
-        )
+    /// Register one game's Wine prefix as a place to scan.
+    ///
+    /// This used to register the whole collection as `<prefixes>/<game>`, where `<game>` is
+    /// a token Ludusavi expands to the game's *name*. The app creates prefixes named by
+    /// game id, a bare number, so the two could never match and the prefix was never
+    /// scanned: on Linux that is the only place a Windows game's saves live, so nothing was
+    /// ever found. The config is written per game, so the concrete path is known here.
+    pub fn wine_prefix(self, prefix_dir: &Path) -> Self {
+        self.root(RootStore::OtherWine, prefix_dir.to_string_lossy())
     }
 
     /// Make the user's home directory portable across machines and accounts.
@@ -358,16 +357,22 @@ mod tests {
     }
 
     #[test]
-    fn wine_prefix_root_uses_the_game_placeholder() {
-        // One root covers every per-game prefix, rather than scanning all of them.
+    fn the_wine_prefix_root_is_a_real_path() {
+        // Not "<prefixes>/<game>": that token expands to the game's name, while prefixes
+        // are created under the game's id, so the root matched nothing and a Windows game
+        // on Linux backed up zero files.
         let yaml = ConfigBuilder::new("/stage")
-            .wine_prefix_collection(Path::new("/data/prefixes"))
+            .wine_prefix(Path::new("/data/prefixes/1234"))
             .to_yaml()
             .unwrap();
         let v = parse(&yaml);
         let root = &v["roots"][0];
         assert_eq!(root["store"].as_str(), Some("otherWine"));
-        assert_eq!(root["path"].as_str(), Some("/data/prefixes/<game>"));
+        assert_eq!(root["path"].as_str(), Some("/data/prefixes/1234"));
+        assert!(
+            !yaml.contains("<game>"),
+            "no unexpanded placeholder should reach the config"
+        );
     }
 
     #[test]

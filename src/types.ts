@@ -111,6 +111,8 @@ export type SaveSyncState =
   /** Ludusavi does not recognise this game, so there is nothing to back up yet. */
   | { kind: "unmatched"; candidates: string[] }
   | { kind: "never-synced" }
+  /** The helper ran and found no save files, as opposed to never having been tried. */
+  | { kind: "nothing-to-back-up" }
   | { kind: "in-sync"; lastSyncedAt?: string | null }
   | { kind: "local-newer"; localAt?: string | null }
   | { kind: "remote-newer"; remoteAt?: string | null; device?: string | null }

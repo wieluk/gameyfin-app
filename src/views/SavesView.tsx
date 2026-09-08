@@ -226,6 +226,11 @@ function describe(state?: SaveSyncState): { text: string; tone: string } {
       };
     case "never-synced":
       return { text: "Not backed up yet", tone: muted };
+    case "nothing-to-back-up":
+      return {
+        text: "No save files found for this game on this PC",
+        tone: "text-warning-600",
+      };
     case "in-sync":
       return { text: `Backed up ${formatRelative(state.lastSyncedAt)}`, tone: muted };
     case "local-newer":

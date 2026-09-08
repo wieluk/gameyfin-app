@@ -126,7 +126,6 @@ struct GameContext {
     /// Holds every game's staging directory, and the packed archives beside them.
     saves_root: PathBuf,
     install_dir: PathBuf,
-    prefixes_root: PathBuf,
     prefix_dir: PathBuf,
     record_saves: LocalSaveState,
     strategy: RestoreStrategy,
@@ -170,7 +169,6 @@ async fn context(state: &State<'_, AppState>, game_id: i64) -> CommandResult<Gam
         staging: layout.saves_dir(game_id),
         saves_root: layout.saves_root(),
         install_dir,
-        prefixes_root: layout.prefixes_root(),
         prefix_dir: layout.prefix_dir(game_id),
         record_saves: record.saves.clone(),
         strategy: record.save_restore_strategy.into(),
@@ -188,21 +186,36 @@ async fn context(state: &State<'_, AppState>, game_id: i64) -> CommandResult<Gam
 }
 
 /// Writes the Ludusavi config for this game and returns a driver bound to it.
+/// A save-helper run, holding the shared-config lock until it is dropped.
+///
+/// One config directory is shared by every game, because each carries a copy of the ~17 MB
+/// manifest. The config file is therefore rewritten per game, and the lock is what stops a
+/// second game rewriting it underneath a run already in progress.
+struct LudusaviSession {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+    tool: Ludusavi,
+}
+
+impl std::ops::Deref for LudusaviSession {
+    type Target = Ludusavi;
+
+    fn deref(&self) -> &Ludusavi {
+        &self.tool
+    }
+}
+
 async fn ludusavi_for(
     app: &AppHandle,
     state: &State<'_, AppState>,
     context: &GameContext,
-) -> CommandResult<Ludusavi> {
+) -> CommandResult<LudusaviSession> {
+    let guard = state.ludusavi_lock().lock_owned().await;
     let binary = ludusavi_binary(app)?;
-    let config_dir = state
-        .config_dir()
-        .await
-        .join("ludusavi")
-        .join(context.game_id.to_string());
+    let config_dir = state.config_dir().await.join("ludusavi");
 
     let mut builder = ConfigBuilder::new(&context.staging)
         .strategy(context.strategy)
-        .wine_prefix_collection(&context.prefixes_root)
+        .wine_prefix(&context.prefix_dir)
         .manual_redirects(context.redirects.clone())
         .portable_install_dir(&context.install_dir);
 
@@ -230,17 +243,43 @@ async fn ludusavi_for(
         .await
         .map_err(|e| CommandError::Message(format!("could not configure save backup: {e}")))?;
 
-    Ok(Ludusavi::new(binary, config_dir))
+    Ok(LudusaviSession {
+        _guard: guard,
+        tool: Ludusavi::new(binary, config_dir),
+    })
 }
 
 /// Resolves the title Ludusavi knows this game by, caching it on the record.
-async fn resolved_title(
+/// What identifying a game against the Ludusavi manifest produced.
+enum Resolution {
+    /// The title to back up under.
+    Title(String),
+    /// Near misses only. The user has to choose.
+    Candidates(Vec<String>),
+    /// The manifest has nothing resembling this game.
+    Unknown,
+}
+
+/// Identifies a game, running the search at most once and remembering the answer.
+///
+/// The search is four subprocesses at worst. It used to run twice per state check, because
+/// the title and the near misses were fetched separately, and an unrecognised game repeated
+/// that on every refresh for every game in the library.
+async fn resolve_saves(
     app: &AppHandle,
     state: &State<'_, AppState>,
     context: &GameContext,
-) -> CommandResult<Option<String>> {
+) -> CommandResult<Resolution> {
     if let Some(title) = &context.record_saves.ludusavi_title {
-        return Ok(Some(title.clone()));
+        return Ok(Resolution::Title(title.clone()));
+    }
+    if context.record_saves.match_attempted {
+        let cached = context.record_saves.match_candidates.clone();
+        return Ok(if cached.is_empty() {
+            Resolution::Unknown
+        } else {
+            Resolution::Candidates(cached)
+        });
     }
 
     let ludusavi = ludusavi_for(app, state, context).await?;
@@ -254,45 +293,38 @@ async fn resolved_title(
         .await
         .map_err(|e| CommandError::Message(format!("could not identify this game: {e}")))?;
 
-    // A fuzzy match is never accepted without the user confirming it, so only a certain
-    // one is cached here.
-    let title = match resolved {
-        TitleMatch::Certain(title) => Some(title),
-        TitleMatch::Ambiguous(_) | TitleMatch::None => None,
+    // A fuzzy match is never accepted without the user confirming it, so only a certain one
+    // becomes the title; the rest are remembered as candidates to offer them.
+    let resolution = match resolved {
+        TitleMatch::Certain(title) => Resolution::Title(title),
+        TitleMatch::Ambiguous(found) => {
+            Resolution::Candidates(found.into_iter().map(|c| c.title).collect())
+        }
+        TitleMatch::None => Resolution::Unknown,
     };
 
-    if let Some(title) = &title {
-        let title = title.clone();
-        state
-            .library()
-            .update_record(context.game_id, move |record| {
-                record.saves.ludusavi_title = Some(title);
-            })
-            .await;
-    }
-
-    Ok(title)
-}
-
-/// Candidate titles for a game Ludusavi could not identify on its own.
-async fn candidates(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    context: &GameContext,
-) -> Vec<String> {
-    let Ok(ludusavi) = ludusavi_for(app, state, context).await else {
-        return Vec::new();
+    let (title, candidates) = match &resolution {
+        Resolution::Title(title) => (Some(title.clone()), Vec::new()),
+        Resolution::Candidates(found) => (None, found.clone()),
+        Resolution::Unknown => (None, Vec::new()),
     };
-    let identity = GameIdentity {
-        title: context.title.clone(),
-        steam_app_id: context.steam_app_id,
-        gog_id: None,
-    };
+    tracing::info!(
+        game_id = context.game_id,
+        title = ?title,
+        candidates = candidates.len(),
+        "identified game against the save manifest"
+    );
 
-    match gameyfin_saves::resolve(&ludusavi, &identity).await {
-        Ok(TitleMatch::Ambiguous(found)) => found.into_iter().map(|c| c.title).collect(),
-        _ => Vec::new(),
-    }
+    state
+        .library()
+        .update_record(context.game_id, move |record| {
+            record.saves.ludusavi_title = title;
+            record.saves.match_candidates = candidates;
+            record.saves.match_attempted = true;
+        })
+        .await;
+
+    Ok(resolution)
 }
 
 /// Builds the store the user chose, or explains what is missing.
@@ -372,7 +404,21 @@ fn hostname() -> Option<String> {
     None
 }
 
-/// Runs Ludusavi into the staging directory. False means the game had no saves to take.
+/// What a backup scan actually captured.
+///
+/// Reducing this to a bool was why a failed backup could only say "not backed up yet": the
+/// difference between "the helper found nothing" and "nothing was ever tried" existed for
+/// one line and was then thrown away.
+#[derive(Debug, Clone, Copy)]
+struct ScanSummary {
+    /// Whether the requested title appeared in the reply at all.
+    matched: bool,
+    /// Files captured, ignoring the ones Ludusavi skipped or failed on.
+    files: usize,
+    bytes: u64,
+}
+
+/// Runs Ludusavi into the staging directory.
 ///
 /// Packing and hashing happen at upload time, so there is exactly one place that decides
 /// what bytes the server sees.
@@ -381,7 +427,7 @@ async fn back_up(
     state: &State<'_, AppState>,
     context: &GameContext,
     title: &str,
-) -> CommandResult<bool> {
+) -> CommandResult<ScanSummary> {
     let ludusavi = ludusavi_for(app, state, context).await?;
 
     tokio::fs::create_dir_all(&context.staging)
@@ -393,7 +439,31 @@ async fn back_up(
         .await
         .map_err(|e| CommandError::Message(format!("save backup failed: {e}")))?;
 
-    Ok(output.games.values().any(|game| game.produced_data()))
+    // The requested title specifically, not whatever else the reply mentions.
+    let scanned = output.games.get(title);
+    let summary = ScanSummary {
+        matched: scanned.is_some(),
+        files: scanned
+            .map(|game| {
+                game.files
+                    .values()
+                    .filter(|file| !file.failed && !file.ignored)
+                    .count()
+            })
+            .unwrap_or(0),
+        bytes: scanned.map(|game| game.bytes()).unwrap_or(0),
+    };
+
+    tracing::info!(
+        game_id = context.game_id,
+        title,
+        matched = summary.matched,
+        files = summary.files,
+        bytes = summary.bytes,
+        "save backup scan finished"
+    );
+
+    Ok(summary)
 }
 
 async fn restore(
@@ -445,10 +515,14 @@ pub async fn state_of(
     }
 
     let context = context(state, game_id).await?;
-    if resolved_title(app, state, &context).await?.is_none() {
-        return Ok(SaveSyncState::Unmatched {
-            candidates: candidates(app, state, &context).await,
-        });
+    match resolve_saves(app, state, &context).await? {
+        Resolution::Title(_) => {}
+        Resolution::Candidates(candidates) => return Ok(SaveSyncState::Unmatched { candidates }),
+        Resolution::Unknown => {
+            return Ok(SaveSyncState::Unmatched {
+                candidates: Vec::new(),
+            })
+        }
     }
 
     let sync = sync_for(state, &context, &settings).await?;
@@ -522,15 +596,29 @@ async fn do_backup(
 
     let settings = state.settings().await;
     let context = context(state, game_id).await?;
-    let Some(title) = resolved_title(app, state, &context).await? else {
-        return Ok(SaveSyncState::Unmatched {
-            candidates: candidates(app, state, &context).await,
-        });
+    let title = match resolve_saves(app, state, &context).await? {
+        Resolution::Title(title) => title,
+        Resolution::Candidates(candidates) => return Ok(SaveSyncState::Unmatched { candidates }),
+        Resolution::Unknown => {
+            return Ok(SaveSyncState::Unmatched {
+                candidates: Vec::new(),
+            })
+        }
     };
 
-    if !back_up(app, state, &context, &title).await? {
-        // Nothing to back up is not an error: plenty of games have no saves yet.
-        return Ok(SaveSyncState::NeverSynced);
+    let scan = back_up(app, state, &context, &title).await?;
+    if scan.files == 0 {
+        // Not an error, but not silence either: the user pressed a button and deserves to
+        // know the helper looked and found nothing.
+        tracing::warn!(
+            game_id,
+            title,
+            matched = scan.matched,
+            "no save files were captured; nothing to upload"
+        );
+        let next = SaveSyncState::NothingToBackUp;
+        emit_state(app, game_id, &next);
+        return Ok(next);
     }
 
     let sync = sync_for(state, &context, &settings).await?;
@@ -599,10 +687,14 @@ async fn do_restore(
 ) -> CommandResult<SaveSyncState> {
     let settings = state.settings().await;
     let context = context(state, game_id).await?;
-    let Some(title) = resolved_title(app, state, &context).await? else {
-        return Ok(SaveSyncState::Unmatched {
-            candidates: candidates(app, state, &context).await,
-        });
+    let title = match resolve_saves(app, state, &context).await? {
+        Resolution::Title(title) => title,
+        Resolution::Candidates(candidates) => return Ok(SaveSyncState::Unmatched { candidates }),
+        Resolution::Unknown => {
+            return Ok(SaveSyncState::Unmatched {
+                candidates: Vec::new(),
+            })
+        }
     };
 
     let sync = sync_for(state, &context, &settings).await?;
@@ -671,7 +763,12 @@ pub async fn set_save_title(
     state
         .library()
         .update_record(game_id, move |record| {
+            let clearing = title.is_none();
             record.saves.ludusavi_title = title;
+            // Clearing the title asks for another look, so the remembered answer goes too;
+            // setting one makes the remembered near misses irrelevant.
+            record.saves.match_attempted = !clearing;
+            record.saves.match_candidates = Vec::new();
         })
         .await;
 
