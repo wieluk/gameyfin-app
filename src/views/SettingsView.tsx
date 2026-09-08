@@ -1,17 +1,34 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Icon } from "@/components/Icon";
-import { backend, isMockBackend, type WineProgress, type WineVariant } from "@/lib/backend";
+import { updateChannelNote, useUpdate } from "@/components/UpdateBanner";
+import { useLibraryRoots } from "@/components/RootChooser";
+import {
+  backend,
+  isMockBackend,
+  type PrefixEntry,
+  type Theme,
+  type WineProgress,
+  type WineVariant,
+} from "@/lib/backend";
 import { formatBytes, formatSpeed } from "@/lib/format";
 import { messageOf } from "@/lib/errors";
 import { useAppSettings, useStatus } from "@/lib/queries";
+import { useCouch } from "@/state/couch";
 
 /** Windows runs its own programs; none of the compatibility machinery applies there. */
 const isWindows =
   typeof navigator !== "undefined" && /win/i.test(navigator.platform || navigator.userAgent);
 
 /** Which pane of Settings is showing. */
-type TabId = "account" | "library" | "compatibility" | "diagnostics" | "about";
+type TabId =
+  | "account"
+  | "library"
+  | "interface"
+  | "compatibility"
+  | "diagnostics"
+  | "about";
 
 const TAB_KEY = "gameyfin.settings.tab";
 
@@ -25,6 +42,7 @@ const TAB_KEY = "gameyfin.settings.tab";
 const TABS: Array<{ id: TabId; label: string; hideOnWindows?: boolean }> = [
   { id: "account", label: "Account" },
   { id: "library", label: "Library" },
+  { id: "interface", label: "Interface" },
   // Wine and the installer memory cap only exist because Windows software has to be
   // translated; on Windows itself there is nothing here to configure.
   { id: "compatibility", label: "Compatibility", hideOnWindows: true },
@@ -84,11 +102,27 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto flex max-w-2xl flex-col gap-5">
           {tab === "account" && <AccountSection onSignedOut={onSignedOut} />}
-          {tab === "library" && <LibrarySection />}
+          {tab === "library" && (
+            <>
+              <RootsSection />
+              <DownloadSection />
+              <ExtractionSection />
+            </>
+          )}
+          {tab === "interface" && (
+            <>
+              <AppearanceSection />
+              <NotificationSection />
+              <WindowSection />
+              <GamepadSection />
+            </>
+          )}
           {tab === "compatibility" && (
             <>
               <WineSection />
+              <UmuSection />
               <CompatibilitySection />
+              <PrefixSection />
             </>
           )}
           {tab === "diagnostics" && <DiagnosticsSection />}
@@ -133,47 +167,655 @@ function AccountSection({ onSignedOut }: { onSignedOut: () => void }) {
 }
 
 function AboutSection() {
+  const update = useUpdate();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const settings = useAppSettings();
+  const status = update.data;
+
+  async function install() {
+    setBusy(true);
+    setError(null);
+    try {
+      setMessage(await backend.installUpdate());
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Section title="About">
-      <Row label="Version" value="0.1.0" />
-      <p className="pt-1 text-xs text-foreground/45">
-        Save syncing and desktop integration are still being built. See the project plan
-        for what is coming next.
+      <Row label="Version" value={status?.currentVersion ?? "0.1.0"} />
+      <Row
+        label="Latest release"
+        value={
+          update.isLoading
+            ? "Checking…"
+            : status?.error
+              ? "Could not check"
+              : (status?.latestVersion ?? "Unknown")
+        }
+        tone={status?.available ? "bad" : undefined}
+      />
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button
+          type="button"
+          disabled={update.isFetching}
+          onClick={() => void update.refetch()}
+          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100 disabled:opacity-50"
+        >
+          {update.isFetching ? "Checking…" : "Check now"}
+        </button>
+        {status?.available && status.canInstall && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void install()}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
+          >
+            {busy ? "Updating…" : `Update to ${status.latestVersion}`}
+          </button>
+        )}
+        {status && (
+          <button
+            type="button"
+            onClick={() => void backend.openPath(status.releaseUrl)}
+            className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100"
+          >
+            Release notes
+          </button>
+        )}
+      </div>
+
+      {message && <p className="text-[11px] text-foreground/60">{message}</p>}
+      {error && (
+        <p role="alert" className="text-[11px] text-danger">
+          {error}
+        </p>
+      )}
+
+      <Check
+        label="Check for updates at startup"
+        hint="One request to GitHub when the app opens. Nothing is downloaded until you ask."
+        checked={settings.data?.checkForUpdates ?? true}
+        onChange={async (next) => {
+          await backend.setUpdateChecking(next);
+          await settings.refetch();
+        }}
+      />
+
+      {status && (
+        <p className="text-[11px] leading-relaxed text-foreground/45">
+          {updateChannelNote(status)}
+        </p>
+      )}
+    </Section>
+  );
+}
+
+/** What a finished download should do next. */
+function DownloadSection() {
+  const settings = useAppSettings();
+
+  return (
+    <Section title="Downloads">
+      <Check
+        label="Install automatically when a download finishes"
+        hint="Unpacks the download and moves the game into your installations folder without asking. A download that turns out to contain a setup program still stops and waits, because a setup wizard asks questions this cannot answer for you."
+        checked={settings.data?.autoInstall ?? false}
+        onChange={async (next) => {
+          await backend.setAutoInstall(next);
+          await settings.refetch();
+        }}
+      />
+    </Section>
+  );
+}
+
+/** Desktop notifications. */
+function NotificationSection() {
+  const settings = useAppSettings();
+
+  async function save(changes: {
+    transfers?: boolean;
+    failures?: boolean;
+    updates?: boolean;
+  }) {
+    const current = settings.data;
+    if (!current) return;
+    await backend.setNotificationOptions(
+      changes.transfers ?? current.notifyTransfers,
+      changes.failures ?? current.notifyFailures,
+      changes.updates ?? current.notifyUpdates,
+    );
+    await settings.refetch();
+  }
+
+  return (
+    <Section title="Notifications">
+      <Check
+        label="Downloads and installs"
+        hint="When a download is ready to install, and when a game is ready to play."
+        checked={settings.data?.notifyTransfers ?? true}
+        onChange={(next) => save({ transfers: next })}
+      />
+      <Check
+        label="Failures"
+        hint="When a download, install or launch goes wrong. Shown even when the window has your attention, because the alternative is red text on a tab you are not looking at."
+        checked={settings.data?.notifyFailures ?? true}
+        onChange={(next) => save({ failures: next })}
+      />
+      <Check
+        label="New versions of Gameyfin"
+        checked={settings.data?.notifyUpdates ?? true}
+        onChange={(next) => save({ updates: next })}
+      />
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        Notifications are held back while you are looking at the window, apart from
+        failures. Telling you what you can already see is the fastest way to make anyone
+        turn them all off.
       </p>
     </Section>
   );
 }
 
-function LibrarySection() {
-  const queryClient = useQueryClient();
-  const [path, setPath] = useState("");
+/** The tray, and what the close button does. */
+function WindowSection() {
+  const settings = useAppSettings();
 
-  const [saved, setSaved] = useState(false);
+  async function save(changes: { closeToTray?: boolean; startMinimized?: boolean }) {
+    const current = settings.data;
+    if (!current) return;
+    await backend.setWindowOptions(
+      changes.closeToTray ?? current.closeToTray,
+      changes.startMinimized ?? current.startMinimized,
+    );
+    await settings.refetch();
+  }
+
+  return (
+    <Section title="Window">
+      <Check
+        label="Closing the window keeps Gameyfin running"
+        hint="Downloads run inside this program, so closing the window used to abandon one that might have had an hour left. With this on, the close button hides the window and the tray icon brings it back."
+        checked={settings.data?.closeToTray ?? true}
+        onChange={(next) => save({ closeToTray: next })}
+      />
+      <Check
+        label="Start hidden in the tray"
+        hint="For starting Gameyfin with your session without a window appearing."
+        checked={settings.data?.startMinimized ?? false}
+        onChange={(next) => save({ startMinimized: next })}
+      />
+      <Check
+        label="Start Gameyfin when I log in"
+        hint="Registers Gameyfin with your desktop so it starts hidden in the tray with your session. What makes downloading in the background actually work."
+        checked={settings.data?.autostart ?? false}
+        onChange={async (next) => {
+          await backend.setAutostart(next);
+          await settings.refetch();
+        }}
+      />
+      <div className="pt-1">
+        <button
+          type="button"
+          onClick={() => void backend.quitApp()}
+          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
+        >
+          Quit Gameyfin
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+/** Controller support. */
+function GamepadSection() {
+  const settings = useAppSettings();
+  const connected = useCouch((state) => state.connected);
+  const name = useCouch((state) => state.name);
+  const toggleHelp = useCouch((state) => state.toggleHelp);
+
+  async function save(changes: {
+    enabled?: boolean;
+    deadzone?: number;
+    couchModeAuto?: boolean;
+  }) {
+    const current = settings.data;
+    if (!current) return;
+    await backend.setGamepadOptions(
+      changes.enabled ?? current.gamepadEnabled,
+      changes.deadzone ?? current.gamepadDeadzone,
+      changes.couchModeAuto ?? current.couchModeAuto,
+    );
+    await settings.refetch();
+  }
+
+  const deadzone = settings.data?.gamepadDeadzone ?? 0.25;
+
+  return (
+    <Section title="Controller">
+      <Row
+        label="Detected"
+        value={connected ? (name ?? "A controller") : "None connected"}
+        tone={connected ? "good" : undefined}
+      />
+      <Check
+        label="Read connected controllers"
+        checked={settings.data?.gamepadEnabled ?? true}
+        onChange={(next) => save({ enabled: next })}
+      />
+      <Check
+        label="Switch to the large layout when a controller connects"
+        hint="Bigger text and fewer, larger covers, for reading from a sofa. You can switch back from the controller overlay at any time."
+        checked={settings.data?.couchModeAuto ?? true}
+        onChange={(next) => save({ couchModeAuto: next })}
+      />
+
+      <label className="pt-1 text-xs text-foreground/55" htmlFor="gamepad-deadzone">
+        Stick dead zone: {Math.round(deadzone * 100)}%
+      </label>
+      <input
+        id="gamepad-deadzone"
+        type="range"
+        min={5}
+        max={60}
+        step={5}
+        value={Math.round(deadzone * 100)}
+        onChange={(e) => void save({ deadzone: Number(e.target.value) / 100 })}
+        className="w-full accent-primary"
+      />
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        How far a stick must move before it counts. Raise this if the selection drifts on
+        its own; a worn stick rests slightly off centre, and without a dead zone that
+        reads as a direction being held down forever.
+      </p>
+
+      <div className="pt-1">
+        <button
+          type="button"
+          onClick={toggleHelp}
+          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100"
+        >
+          Show the button map
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+/** Per-title Proton fixes. */
+function UmuSection() {
+  const settings = useAppSettings();
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const status = useQuery({ queryKey: ["umu"], queryFn: () => backend.umuStatus() });
 
-  const settings = useQuery({ queryKey: ["settings"], queryFn: () => backend.suggestLibraryRoot() });
-
-  useEffect(() => {
-    if (settings.data) setPath(settings.data);
-  }, [settings.data]);
-
-  async function browse() {
+  async function refresh() {
+    setBusy(true);
     setError(null);
     try {
-      const chosen = await backend.pickFolder(path || undefined);
-      if (chosen) setPath(chosen);
+      await backend.refreshUmuDatabase();
+      await status.refetch();
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="Game fixes">
+      <Row
+        label="Known games"
+        value={
+          status.isLoading
+            ? "…"
+            : status.data?.entries
+              ? `${status.data.entries.toLocaleString()} titles`
+              : "Not downloaded yet"
+        }
+        tone={status.data?.entries ? "good" : undefined}
+      />
+      <Check
+        label="Apply per-title Proton fixes"
+        hint="Looks each game up in the umu database and passes its id to Proton, so workarounds written for that specific game are applied. Matched by Steam AppID where your server knows one, and by title otherwise."
+        checked={settings.data?.umuFixes ?? true}
+        onChange={async (next) => {
+          await backend.setUmuFixes(next);
+          await settings.refetch();
+        }}
+      />
+      <div className="pt-1">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void refresh()}
+          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100 disabled:opacity-50"
+        >
+          {busy ? "Downloading…" : "Update the list"}
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="text-[11px] text-danger">
+          {error}
+        </p>
+      )}
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        Refreshed automatically once a day. A game that is not in the list runs exactly as
+        it would with this turned off.
+      </p>
+    </Section>
+  );
+}
+
+/** One prefix per game, rather than the all-or-nothing button. */
+function PrefixSection() {
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<PrefixEntry | null>(null);
+  const prefixes = useQuery({ queryKey: ["prefix-list"], queryFn: () => backend.listPrefixes() });
+
+  async function run(action: () => Promise<void>) {
+    setError(null);
+    try {
+      await action();
+      await prefixes.refetch();
     } catch (e) {
       setError(messageOf(e));
     }
   }
 
+  const rows = prefixes.data ?? [];
+
+  return (
+    <Section title="Compatibility prefixes">
+      {rows.length === 0 ? (
+        <p className="text-[11px] text-foreground/45">
+          {prefixes.isLoading
+            ? "…"
+            : "None yet. One is created the first time a Windows game runs."}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {rows.map((prefix) => (
+            <div
+              key={prefix.gameId}
+              className="rounded-lg border border-default-200 bg-content2 p-2.5"
+            >
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="truncate text-xs text-foreground" title={prefix.path}>
+                  {prefix.title ?? `Game ${prefix.gameId}`}
+                </span>
+                <span className="shrink-0 text-[11px] text-foreground/45">
+                  {formatBytes(prefix.bytes)}
+                </span>
+              </div>
+              {/* A prefix whose game has gone is exactly the kind worth reclaiming, so
+                  it is called out rather than quietly listed by its id. */}
+              {!prefix.title && (
+                <p className="mt-0.5 text-[11px] text-foreground/45">
+                  No longer in your library.
+                </p>
+              )}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <SmallButton onClick={() => void run(() => backend.openPrefixTool(prefix.gameId, "winecfg"))}>
+                  Wine settings
+                </SmallButton>
+                <SmallButton onClick={() => void run(() => backend.openPrefixTool(prefix.gameId, "regedit"))}>
+                  Registry
+                </SmallButton>
+                <SmallButton onClick={() => void run(() => backend.openPrefixTool(prefix.gameId, "explorer"))}>
+                  Browse C:
+                </SmallButton>
+                <SmallButton danger onClick={() => setConfirming(prefix)}>
+                  Delete
+                </SmallButton>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="text-[11px] leading-relaxed text-danger">
+          {error}
+        </p>
+      )}
+
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        A prefix is the fake Windows a game runs inside. Deleting one is safe in that it
+        is rebuilt on the next launch, but anything the game stored inside it goes too.
+      </p>
+
+      {confirming && (
+        <ConfirmDialog
+          title={`Delete the prefix for ${confirming.title ?? `game ${confirming.gameId}`}?`}
+          body={
+            <>
+              It is rebuilt the next time the game runs, so this is a good way to recover
+              from one that has broken. Anything the game saved <em>inside</em> the prefix
+              rather than in its own folder is removed with it, which for some Windows
+              games includes save files.
+            </>
+          }
+          confirmLabel="Delete the prefix"
+          onConfirm={() => {
+            const target = confirming;
+            setConfirming(null);
+            void run(() => backend.deletePrefix(target.gameId));
+          }}
+          onCancel={() => setConfirming(null)}
+        />
+      )}
+    </Section>
+  );
+}
+
+function SmallButton({
+  children,
+  onClick,
+  danger,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg border border-default-200 px-2.5 py-1 text-[11px] transition-colors ${
+        danger
+          ? "text-foreground/60 hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
+          : "text-foreground/70 hover:bg-default-100"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** A labelled checkbox with an optional explanation underneath. */
+function Check({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void | Promise<void>;
+}) {
+  return (
+    <div>
+      <label className="flex cursor-pointer items-start gap-2 text-xs text-foreground/80">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => void onChange(e.target.checked)}
+          className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-primary"
+        />
+        <span>{label}</span>
+      </label>
+      {hint && <p className="mt-0.5 pl-[1.375rem] text-[11px] leading-relaxed text-foreground/45">{hint}</p>}
+    </div>
+  );
+}
+
+/** The games folders, and which one is the default. */
+function RootsSection() {
+  const queryClient = useQueryClient();
+  const roots = useLibraryRoots();
+  const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+
+  async function run(action: () => Promise<void>) {
+    setError(null);
+    try {
+      await action();
+      await roots.refetch();
+      // The wizard and the status card both read the primary folder.
+      await queryClient.invalidateQueries({ queryKey: ["status"] });
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
+  async function add() {
+    const chosen = await backend.pickFolder();
+    if (chosen) await run(() => backend.addLibraryRoot(chosen));
+  }
+
+  const list = roots.data ?? [];
+
+  return (
+    <Section title="Games folders">
+      {list.length === 0 && !roots.isLoading && (
+        <p className="text-[11px] text-foreground/45">
+          No folder yet. Add one and downloads will go there.
+        </p>
+      )}
+
+      <div className="flex flex-col gap-2">
+        {list.map((root) => (
+          <div
+            key={root.path}
+            className="rounded-lg border border-default-200 bg-content2 p-2.5"
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <code
+                className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground"
+                title={root.path}
+              >
+                {root.path}
+              </code>
+              {root.isDefault && (
+                <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">
+                  Default
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-[11px] text-foreground/45">
+              {!root.exists
+                ? "This folder is missing. Games in it will not be found until it is back."
+                : root.freeBytes === null
+                  ? "Free space unknown"
+                  : `${formatBytes(root.freeBytes)} free`}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {!root.isDefault && (
+                <SmallButton
+                  onClick={() => void run(() => backend.setDefaultLibraryRoot(root.path))}
+                >
+                  Make default
+                </SmallButton>
+              )}
+              <SmallButton
+                onClick={() => void backend.openLibraryFolder("installations", root.path)}
+              >
+                Open
+              </SmallButton>
+              {list.length > 1 && (
+                <SmallButton danger onClick={() => setRemoving(root.path)}>
+                  Remove
+                </SmallButton>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="pt-1">
+        <button
+          type="button"
+          onClick={() => void add()}
+          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100"
+        >
+          Add a folder…
+        </button>
+      </div>
+
+      {error && (
+        <p role="alert" className="text-[11px] leading-relaxed text-danger">
+          {error}
+        </p>
+      )}
+
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        Downloads go to <code className="text-foreground/60">Gameyfin/Downloads</code> and
+        installs to <code className="text-foreground/60">Gameyfin/Installations</code>{" "}
+        inside each of these. With more than one folder you are asked which to use when a
+        download starts, with the free space on each shown.
+      </p>
+
+      {removing && (
+        <ConfirmDialog
+          title={`Stop using ${removing}?`}
+          body={
+            <>
+              Gameyfin will forget this folder and stop looking in it. <em>Nothing on
+              disk is deleted</em>, and adding it back later finds the games again.
+            </>
+          }
+          confirmLabel="Remove from the list"
+          onConfirm={() => {
+            const target = removing;
+            setRemoving(null);
+            void run(() => backend.removeLibraryRoot(target));
+          }}
+          onCancel={() => setRemoving(null)}
+        />
+      )}
+    </Section>
+  );
+}
+
+/** The archive password and the executables never worth offering. */
+function ExtractionSection() {
+  const settings = useAppSettings();
+  const [password, setPassword] = useState<string | null>(null);
+  const [ignored, setIgnored] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const currentPassword = password ?? settings.data?.extractionPassword ?? "";
+  const currentIgnored = ignored ?? (settings.data?.ignoredExecutables ?? []).join("\n");
+
   async function save() {
     setError(null);
     try {
-      await backend.setLibraryRoot(path);
+      await backend.setExtractionOptions(
+        currentPassword || null,
+        currentIgnored.split("\n"),
+      );
+      await settings.refetch();
       setSaved(true);
-      // The status card shows the library root, so keep it in step.
-      await queryClient.invalidateQueries({ queryKey: ["status"] });
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       setError(messageOf(e));
@@ -181,45 +823,95 @@ function LibrarySection() {
   }
 
   return (
-    <Section title="Library">
-      <label className="text-xs text-foreground/55" htmlFor="settings-library-root">
-        Games folder
+    <Section title="Extraction">
+      <label className="text-xs text-foreground/55" htmlFor="extraction-password">
+        Archive password
       </label>
-      <div className="flex gap-2">
-        <input
-          id="settings-library-root"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          spellCheck={false}
-          className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-3 py-2 font-mono text-xs outline-none transition-colors focus:border-primary"
-        />
+      <input
+        id="extraction-password"
+        type="password"
+        value={currentPassword}
+        onChange={(e) => setPassword(e.target.value)}
+        spellCheck={false}
+        placeholder="None"
+        className="rounded-lg border border-default-200 bg-content2 px-3 py-2 font-mono text-xs outline-none transition-colors focus:border-primary"
+      />
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        Tried automatically when an archive turns out to be encrypted. Stored in the app's
+        settings file, which is readable only by you, alongside your session. It is a
+        convenience for a library that uses one password throughout, not a secret store.
+      </p>
+
+      <label className="pt-2 text-xs text-foreground/55" htmlFor="ignored-executables">
+        Never offer these executables
+      </label>
+      <textarea
+        id="ignored-executables"
+        rows={6}
+        value={currentIgnored}
+        onChange={(e) => setIgnored(e.target.value)}
+        spellCheck={false}
+        className="rounded-lg border border-default-200 bg-content2 px-3 py-2 font-mono text-[11px] outline-none transition-colors focus:border-primary"
+      />
+      <p className="text-[11px] leading-relaxed text-foreground/45">
+        One per line, matched anywhere in the file name. Redistributables and crash
+        handlers ship beside a game in numbers, and on a large install the actual launcher
+        is easily lost among them.
+      </p>
+
+      <div className="pt-1">
         <button
           type="button"
-          onClick={browse}
-          className="shrink-0 rounded-lg border border-default-200 px-3 py-2 text-xs text-foreground/70 transition-colors hover:bg-default-100"
-        >
-          Browse…
-        </button>
-        <button
-          type="button"
-          onClick={save}
-          disabled={!path.trim()}
-          className="shrink-0 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40"
+          onClick={() => void save()}
+          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
         >
           {saved ? "Saved" : "Save"}
         </button>
       </div>
       {error && (
-        <p role="alert" className="text-xs text-danger">
+        <p role="alert" className="text-[11px] text-danger">
           {error}
         </p>
       )}
-      <p className="text-[11px] text-foreground/45">
-        Downloads go to <code className="text-foreground/60">Gameyfin/Downloads</code> and
-        installs to <code className="text-foreground/60">Gameyfin/Installations</code>{" "}
-        inside this folder.
-      </p>
+    </Section>
+  );
+}
 
+/** Palette, and starting with the session. */
+function AppearanceSection() {
+  const settings = useAppSettings();
+  const [error, setError] = useState<string | null>(null);
+
+  async function change(theme: Theme) {
+    setError(null);
+    try {
+      await backend.setTheme(theme);
+      await settings.refetch();
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
+  return (
+    <Section title="Appearance">
+      <label className="text-xs text-foreground/55" htmlFor="theme">
+        Theme
+      </label>
+      <select
+        id="theme"
+        value={settings.data?.theme ?? "dark"}
+        onChange={(e) => void change(e.target.value as Theme)}
+        className="rounded-lg border border-default-200 bg-content2 px-3 py-2 text-sm outline-none focus:border-primary"
+      >
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="system">Match my system</option>
+      </select>
+      {error && (
+        <p role="alert" className="text-[11px] text-danger">
+          {error}
+        </p>
+      )}
     </Section>
   );
 }
@@ -447,7 +1139,6 @@ function DiagnosticsSection() {
   const settings = useAppSettings();
   const cacheSize = useQuery({ queryKey: ["image-cache"], queryFn: () => backend.imageCacheSize() });
   const configDir = useQuery({ queryKey: ["config-dir"], queryFn: () => backend.configDirectory() });
-  const prefixes = useQuery({ queryKey: ["prefixes"], queryFn: () => backend.prefixInfo() });
   const [level, setLevel] = useState<string | null>(null);
   const [levelError, setLevelError] = useState<string | null>(null);
 
@@ -516,30 +1207,6 @@ function DiagnosticsSection() {
         hint="Settings, session and local records for this installation."
         path={configDir.data}
       />
-
-      {prefixes.data && (
-        <PathRow
-          label="Compatibility prefixes"
-          hint={
-            prefixes.data.count === 0
-              ? "None yet. One is created the first time a Windows game runs."
-              : `${prefixes.data.count} prefix${prefixes.data.count === 1 ? "" : "es"}, ${formatBytes(prefixes.data.bytes)}. Rebuilt automatically if removed.`
-          }
-          path={prefixes.data.path}
-          action={
-            prefixes.data.count > 0
-              ? {
-                  label: "Delete all",
-                  danger: true,
-                  onClick: async () => {
-                    await backend.clearPrefixes();
-                    await prefixes.refetch();
-                  },
-                }
-              : undefined
-          }
-        />
-      )}
 
       <PathRow
         label="Log files"

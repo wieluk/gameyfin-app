@@ -18,8 +18,16 @@ pub const SETTINGS_FILE: &str = "settings.json";
 pub struct Settings {
     /// Gameyfin server, without a trailing slash.
     pub server_url: Option<String>,
-    /// Where games are downloaded and installed.
+    /// Where games are downloaded and installed. The default of [`Self::library_roots`].
     pub library_root: Option<String>,
+    /// Additional places games may go.
+    ///
+    /// A games library outgrows one drive sooner than almost anything else a person
+    /// stores, so the folder is a list rather than a single path. The primary stays a
+    /// field of its own: it is the default, and keeping it separate means a settings file
+    /// written before this existed still names the same folder it always did.
+    #[serde(default)]
+    pub extra_library_roots: Vec<String>,
     /// Harvested session cookies, if the user has signed in.
     pub cookies: HashMap<String, String>,
     /// Username of the last signed-in account, shown while reconnecting.
@@ -47,6 +55,151 @@ pub struct Settings {
     /// links against, which a Flatpak sandbox does not have on its own.
     #[serde(default)]
     pub wine_variant: gameyfin_core::wine::WineVariant,
+
+    /// Tell the desktop when a download or an install finishes.
+    #[serde(default = "on")]
+    pub notify_transfers: bool,
+    /// Tell the desktop when something fails.
+    ///
+    /// Separate from the above because a failure is worth interrupting for even when
+    /// somebody has turned the routine chatter off.
+    #[serde(default = "on")]
+    pub notify_failures: bool,
+    /// Tell the desktop when a new version of Gameyfin is released.
+    #[serde(default = "on")]
+    pub notify_updates: bool,
+
+    /// Closing the window hides it to the tray rather than quitting.
+    ///
+    /// On by default because the window is not the app: a download runs in this process,
+    /// and closing the window during one used to abandon it.
+    #[serde(default = "on")]
+    pub close_to_tray: bool,
+    /// Start hidden, with only the tray icon showing.
+    #[serde(default)]
+    pub start_minimized: bool,
+
+    /// Extract and install as soon as a download finishes.
+    ///
+    /// Off by default: a finished download is an archive, and what to do with it is a
+    /// decision with consequences (disk space, a setup wizard, an overwritten install).
+    /// This is for people who have made that decision once and do not want to be asked.
+    #[serde(default)]
+    pub auto_install: bool,
+
+    /// Look up each game's umu id so per-title Proton fixes apply.
+    #[serde(default = "on")]
+    pub umu_fixes: bool,
+
+    /// Read connected controllers.
+    #[serde(default = "on")]
+    pub gamepad_enabled: bool,
+    /// How far a stick must move before it counts, 0.0 to 1.0.
+    ///
+    /// A worn stick rests off-centre, and without a dead zone that reads as the user
+    /// holding a direction forever.
+    #[serde(default = "default_deadzone")]
+    pub gamepad_deadzone: f64,
+    /// Switch to the large-format layout when a controller is connected.
+    #[serde(default = "on")]
+    pub couch_mode_auto: bool,
+
+    /// Check for a new release at startup.
+    #[serde(default = "on")]
+    pub check_for_updates: bool,
+
+    /// Tried automatically when an archive turns out to be encrypted.
+    ///
+    /// Stored in the same owner-only file as the session cookies. It is a convenience for
+    /// a library that uses one password throughout, not a secret store.
+    #[serde(default)]
+    pub extraction_password: Option<String>,
+
+    /// Executable names never offered as a launch candidate.
+    ///
+    /// Detection is a heuristic over a directory that may hold hundreds of binaries, and
+    /// the redistributables and crash handlers shipped beside a game are reliably not the
+    /// game. Matched case-insensitively against the file name, as a substring.
+    #[serde(default = "default_ignored_executables")]
+    pub ignored_executables: Vec<String>,
+
+    /// Which palette to use.
+    #[serde(default)]
+    pub theme: Theme,
+
+    /// Start Gameyfin when the user logs in.
+    #[serde(default)]
+    pub autostart: bool,
+}
+
+/// The names that are almost never the game.
+///
+/// Shipped as a default rather than hard-coded so it stays editable: the list is a
+/// heuristic, and someone will eventually have a game whose launcher is genuinely called
+/// something on it.
+fn default_ignored_executables() -> Vec<String> {
+    [
+        "unitycrashhandler",
+        "unrealcefsubprocess",
+        "crashreport",
+        "crashpad",
+        "vcredist",
+        "vc_redist",
+        "dxsetup",
+        "directx",
+        "dotnetfx",
+        "oalinst",
+        "uninstall",
+        "unins000",
+        "notification_helper",
+        "quickswitch",
+        "cefprocess",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// Which palette the interface uses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Theme {
+    /// Follow the desktop's own preference.
+    System,
+    Light,
+    /// The palette the app was designed around, and what it used before this was a choice.
+    #[default]
+    Dark,
+}
+
+impl Theme {
+    pub fn key(self) -> &'static str {
+        match self {
+            Theme::System => "system",
+            Theme::Light => "light",
+            Theme::Dark => "dark",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "system" => Some(Theme::System),
+            "light" => Some(Theme::Light),
+            "dark" => Some(Theme::Dark),
+            _ => None,
+        }
+    }
+}
+
+/// Default for the several settings that are on unless turned off.
+fn on() -> bool {
+    true
+}
+
+/// A quarter of full deflection: past the slop of a well-used stick, well short of where
+/// a deliberate nudge lands.
+fn default_deadzone() -> f64 {
+    0.25
 }
 
 /// 3 GiB: comfortably above what an installer needs, and below the point where a 32-bit
@@ -65,12 +218,28 @@ impl Default for Settings {
         Self {
             server_url: None,
             library_root: None,
+            extra_library_roots: Vec::new(),
             cookies: HashMap::new(),
             username: None,
             log_level: LogLevel::default(),
             download_limit_kib: 0,
             installer_memory_limit_mb: default_installer_memory_limit(),
             wine_variant: gameyfin_core::wine::WineVariant::default(),
+            notify_transfers: true,
+            notify_failures: true,
+            notify_updates: true,
+            close_to_tray: true,
+            start_minimized: false,
+            auto_install: false,
+            umu_fixes: true,
+            gamepad_enabled: true,
+            gamepad_deadzone: default_deadzone(),
+            couch_mode_auto: true,
+            check_for_updates: true,
+            extraction_password: None,
+            ignored_executables: default_ignored_executables(),
+            theme: Theme::default(),
+            autostart: false,
         }
     }
 }
@@ -187,6 +356,44 @@ impl Settings {
     /// Default library root, used until the user picks one.
     pub fn default_library_root(home: &Path) -> PathBuf {
         home.join("Games")
+    }
+
+    /// Every configured games folder, the default first.
+    ///
+    /// Deduplicated, because the same folder listed twice would offer the user a choice
+    /// between two identical destinations and then rescan it twice.
+    pub fn library_roots(&self) -> Vec<String> {
+        let mut roots: Vec<String> = self
+            .library_root
+            .iter()
+            .chain(self.extra_library_roots.iter())
+            .filter(|root| !root.trim().is_empty())
+            .cloned()
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        roots.retain(|root| seen.insert(root.clone()));
+        roots
+    }
+
+    /// Whether a path is one of the configured roots.
+    ///
+    /// Used to reject a download destination that did not come from the list, so a
+    /// crafted request cannot pick where files land.
+    pub fn is_library_root(&self, candidate: &str) -> bool {
+        self.library_roots().iter().any(|root| root == candidate)
+    }
+
+    /// Whether an executable name is one the user never wants offered.
+    pub fn is_ignored_executable(&self, path: &str) -> bool {
+        let name = path
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(path)
+            .to_lowercase();
+        self.ignored_executables
+            .iter()
+            .filter(|pattern| !pattern.trim().is_empty())
+            .any(|pattern| name.contains(&pattern.trim().to_lowercase()))
     }
 }
 
@@ -321,6 +528,87 @@ mod tests {
     #[test]
     fn the_installer_memory_cap_is_on_by_default() {
         assert_eq!(Settings::default().installer_memory_limit_mb, 3072);
+    }
+
+    #[test]
+    fn a_constructed_default_matches_a_deserialized_one() {
+        // The two are written separately, so they drift silently: a `#[serde(default)]`
+        // that says `true` beside a struct literal that says `false` gives a fresh
+        // install different behaviour from an upgraded one, with nothing to show for it.
+        let from_empty: Settings = serde_json::from_str("{}").expect("all fields default");
+        assert_eq!(from_empty, Settings::default());
+    }
+
+    #[test]
+    fn a_settings_file_written_before_these_options_existed_still_loads() {
+        // Upgrading must not reset someone's server and session because the file has no
+        // `gamepadEnabled` in it.
+        let old = r#"{"serverUrl":"https://games.example","libraryRoot":"/games"}"#;
+        let settings: Settings = serde_json::from_str(old).expect("old files still load");
+        assert_eq!(
+            settings.server_url.as_deref(),
+            Some("https://games.example")
+        );
+        assert!(settings.close_to_tray, "new options take their default");
+        assert!(!settings.auto_install);
+    }
+
+    #[test]
+    fn the_roots_list_starts_with_the_primary_and_drops_duplicates() {
+        let settings = Settings {
+            library_root: Some("/games".into()),
+            extra_library_roots: vec!["/mnt/big".into(), "/games".into(), "  ".into()],
+            ..Default::default()
+        };
+        assert_eq!(settings.library_roots(), vec!["/games", "/mnt/big"]);
+        assert!(settings.is_library_root("/mnt/big"));
+        // A destination that is not on the list cannot be chosen.
+        assert!(!settings.is_library_root("/etc"));
+    }
+
+    #[test]
+    fn an_unconfigured_client_has_no_roots() {
+        assert!(Settings::default().library_roots().is_empty());
+        assert!(!Settings::default().is_library_root(""));
+    }
+
+    #[test]
+    fn the_ignore_list_matches_the_file_name_not_the_path() {
+        let settings = Settings::default();
+        assert!(settings.is_ignored_executable("UnityCrashHandler64.exe"));
+        assert!(settings.is_ignored_executable("bin/win64/vcredist_x64.exe"));
+        assert!(settings.is_ignored_executable(r"bin\UnrealCEFSubProcess.exe"));
+        // The game itself must survive, even inside a folder whose name matches.
+        assert!(!settings.is_ignored_executable("Celeste.exe"));
+        assert!(!settings.is_ignored_executable("vcredist/Game.exe"));
+    }
+
+    #[test]
+    fn an_empty_ignore_pattern_does_not_match_everything() {
+        // A blank line left in the editable list would otherwise hide every executable.
+        let settings = Settings {
+            ignored_executables: vec![String::new(), "  ".into()],
+            ..Default::default()
+        };
+        assert!(!settings.is_ignored_executable("Celeste.exe"));
+    }
+
+    #[test]
+    fn themes_round_trip_through_their_keys() {
+        for theme in [Theme::System, Theme::Light, Theme::Dark] {
+            assert_eq!(Theme::from_key(theme.key()), Some(theme));
+        }
+        assert_eq!(Theme::from_key("nonsense"), None);
+        // Dark is what the app was designed around and what it used before the choice.
+        assert_eq!(Theme::default(), Theme::Dark);
+    }
+
+    #[test]
+    fn the_noisier_options_default_off() {
+        // Anything that changes what happens to a user's disk without asking starts off.
+        let settings = Settings::default();
+        assert!(!settings.auto_install);
+        assert!(!settings.start_minimized);
     }
 
     #[test]

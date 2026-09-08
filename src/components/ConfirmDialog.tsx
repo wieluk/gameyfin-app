@@ -1,11 +1,6 @@
 import { Icon } from "./Icon";
 
-/**
- * Confirmation for an action that destroys files.
- *
- * Deleting a download or an install removes gigabytes that took a long time to fetch, so
- * neither should happen on a single stray click.
- */
+/** Confirmation for actions that destroy files: neither should happen on one stray click. */
 export function ConfirmDialog({
   title,
   body,
@@ -21,6 +16,7 @@ export function ConfirmDialog({
 }) {
   return (
     <div
+      data-nav-scope
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
       role="alertdialog"
       aria-modal="true"

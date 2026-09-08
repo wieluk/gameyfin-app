@@ -3,10 +3,7 @@ import { primaryAction } from "@/lib/actions";
 import { formatBytes, formatEta, formatPlaytime, formatSpeed } from "@/lib/format";
 import type { LibraryEntry } from "@/types";
 
-/**
- * A library tile. Cover art is 2:3, the shape every store uses, so the grid reads as a
- * shelf rather than a table of results.
- */
+/** A library tile; 2:3 cover art so the grid reads as a shelf, not a table. */
 export function GameCard({
   entry,
   onPrimaryAction,
@@ -21,11 +18,8 @@ export function GameCard({
   const action = primaryAction(entry.state);
 
   return (
-    // `content-visibility` lets the browser skip layout and paint for cards that are off
-    // screen. It matters most where it is least affordable: inside a Flatpak the webview
-    // often has no GPU driver and composites on the CPU, where a full grid of cover art,
-    // shadows and rounded corners is enough to make scrolling stutter. The intrinsic size
-    // keeps the scrollbar honest for cards that have not been rendered yet.
+    // `content-visibility` skips offscreen cards; the Flatpak webview often has no GPU
+    // driver and composites on the CPU, where a full grid of cover art stutters.
     <article className="group relative flex flex-col gap-2 [contain-intrinsic-size:auto_320px] [content-visibility:auto]">
       <div
         role="button"
@@ -47,13 +41,13 @@ export function GameCard({
 
         <StateBadge entry={entry} />
 
-        {/* Hover affordance: the primary action for whatever state the game is in. */}
+        {/* The primary action for the game's current state, on hover. */}
         <div className="absolute inset-0 flex items-end justify-center bg-gradient-to-t from-black/80 via-black/10 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
           <button
             type="button"
             disabled={action.disabled}
             onClick={(e) => {
-              // The tile opens the detail view; this button must not also trigger it.
+              // The tile opens the detail view; this button must not trigger it too.
               e.stopPropagation();
               onPrimaryAction(entry);
             }}
@@ -75,7 +69,7 @@ export function GameCard({
   );
 }
 
-/** A deterministic gradient keyed off the title, so a coverless game still looks placed. */
+/** Deterministic gradient keyed off the title, so a coverless game still looks placed. */
 function PlaceholderArt({ title }: { title: string }) {
   const hue = [...title].reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) % 360, 7);
   return (
@@ -163,13 +157,12 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
 }
 
 
-
 function subtitle(entry: LibraryEntry): string {
   if (entry.state.kind === "downloading") {
     return `${formatBytes(entry.state.receivedBytes)} of ${formatBytes(entry.state.totalBytes)}`;
   }
   if (entry.state.kind === "downloaded") {
-    return `Downloaded · ${formatBytes(entry.state.bytes)}`;
+    return `Downloaded (${formatBytes(entry.state.bytes)})`;
   }
   if (entry.minutesPlayed > 0) return formatPlaytime(entry.minutesPlayed);
   return formatBytes(entry.game.metadata.fileSize);

@@ -55,6 +55,11 @@ pub struct AppState {
     /// anything has tried to talk to it.
     unreachable: AtomicBool,
     image_cache: RwLock<Option<std::sync::Arc<crate::image_cache::ImageCache>>>,
+    /// The umu fix database, so a launch resolves its game id without a network round
+    /// trip. Empty until it has been fetched once, which resolves to the generic id.
+    umu: RwLock<gameyfin_core::umu::Database>,
+    /// Live controller state, shared with the polling thread.
+    gamepad: RwLock<Option<crate::gamepad::Handle>>,
     /// The download speed cap, shared with every transfer in flight.
     ///
     /// Held here rather than read per download so changing it takes effect immediately:
@@ -353,6 +358,74 @@ impl AppState {
     /// of it is to survive exactly the case where the refetch fails.
     pub async fn invalidate_catalog(&self) {
         *self.catalog.write().await = None;
+    }
+
+    /// How many rows the umu database holds.
+    pub async fn umu_entry_count(&self) -> usize {
+        self.umu.read().await.len()
+    }
+
+    /// Load the cached umu database.
+    ///
+    /// Returns true when the copy on disk is stale or absent, so the caller can start a
+    /// refresh. Whatever was cached is used immediately either way: a game launched
+    /// thirty seconds after startup gets yesterday's fixes rather than waiting for
+    /// today's, and the refresh lands before the one after it.
+    pub async fn load_umu_database(&self, config_dir: &std::path::Path) -> bool {
+        match gameyfin_core::umu::load_cache(config_dir) {
+            Some(cached) => {
+                tracing::info!(
+                    entries = cached.database.len(),
+                    "loaded the cached umu database"
+                );
+                let stale = cached.stale;
+                *self.umu.write().await = cached.database;
+                stale
+            }
+            None => true,
+        }
+    }
+
+    /// Fetch the umu database and cache it. Returns how many rows it holds.
+    pub async fn refresh_umu_database(&self) -> gameyfin_core::CoreResult<usize> {
+        let http = self.http().await;
+        let database =
+            gameyfin_core::umu::fetch(&http, gameyfin_core::umu::DEFAULT_API_URL).await?;
+        let count = database.len();
+
+        let dir = self.config_dir().await;
+        let to_save = database.clone();
+        // Writing is blocking, and the caller may be a command the UI is waiting on.
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = gameyfin_core::umu::save_cache(&dir, &to_save) {
+                tracing::warn!("could not cache the umu database: {e}");
+            }
+        });
+
+        *self.umu.write().await = database;
+        Ok(count)
+    }
+
+    /// The id to pass to umu for a game, honouring the user's setting.
+    pub async fn umu_id_for(&self, title: &str, steam_app_id: Option<u32>) -> String {
+        if !self.settings().await.umu_fixes {
+            return gameyfin_core::umu::DEFAULT_ID.to_string();
+        }
+        self.umu.read().await.resolve(title, steam_app_id)
+    }
+
+    /// Register the controller handle, so settings changes can reach the poll thread.
+    pub async fn set_gamepad(&self, handle: crate::gamepad::Handle) {
+        *self.gamepad.write().await = Some(handle);
+    }
+
+    /// Apply the current gamepad settings to the running poll thread.
+    pub async fn apply_gamepad_settings(&self) {
+        let settings = self.settings().await;
+        if let Some(handle) = self.gamepad.read().await.as_ref() {
+            handle.set_enabled(settings.gamepad_enabled);
+            handle.set_deadzone(settings.gamepad_deadzone);
+        }
     }
 
     /// The on-disk artwork cache, created on first use.

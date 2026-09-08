@@ -41,10 +41,12 @@ impl InstallLayout {
     /// the user can find and delete a broken prefix without hunting through hidden
     /// directories.
     pub fn prefix_dir(&self, game_id: i64) -> PathBuf {
-        self.root
-            .join("Gameyfin")
-            .join("Prefixes")
-            .join(game_id.to_string())
+        self.prefixes_root().join(game_id.to_string())
+    }
+
+    /// The folder holding every game's prefix. See [`Self::downloads_root`].
+    pub fn prefixes_root(&self) -> PathBuf {
+        self.root.join("Gameyfin").join("Prefixes")
     }
 
     pub fn install_dir(&self, game_id: i64, title: &str) -> PathBuf {
@@ -108,6 +110,7 @@ mod tests {
             l.install_dir(12, "Celeste").parent(),
             Some(l.installs_root().as_path())
         );
+        assert_eq!(l.prefix_dir(12).parent(), Some(l.prefixes_root().as_path()));
     }
 
     #[test]

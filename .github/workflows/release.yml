@@ -5,9 +5,11 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-# tauri-action needs write access to create the draft release.
+# tauri-action needs write access to create the draft release, and the Flatpak repository
+# is published to the gh-pages branch of this same repository.
 permissions:
   contents: write
+  pages: write
 
 jobs:
   # Nothing is built for release until the same checks a push runs have passed, on both
@@ -40,7 +42,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev libsoup-3.0-dev patchelf
+            librsvg2-dev libsoup-3.0-dev patchelf libudev-dev
 
       # The tag is the only source of truth for the version. The numbers committed in
       # Cargo.toml, package.json and the metainfo are a placeholder, and without this the
@@ -53,6 +55,14 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the AppImage, MSI and NSIS bundles and writes `latest.json` beside
+          # them, which is what the in-app updater verifies against. Generate the pair
+          # once with `npm run tauri signer generate`, put the private half in this
+          # secret and the public half in `tauri.conf.json`. Without the secret the build
+          # still succeeds and simply produces no updater artifacts, so those users fall
+          # back to being told a release exists.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Gameyfin Desktop ${{ github.ref_name }}
@@ -78,7 +88,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev libsoup-3.0-dev patchelf \
+            librsvg2-dev libsoup-3.0-dev patchelf libudev-dev \
             flatpak flatpak-builder desktop-file-utils
 
       - name: Add Flathub and install the GNOME runtime
@@ -111,3 +121,49 @@ jobs:
         run: gh release upload "$GITHUB_REF_NAME" build/*.flatpak --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A single-file bundle cannot update itself: `flatpak install` on a `.flatpak` is a
+      # one-off with no remote to check later. Exporting the same build into a real
+      # repository is what lets `flatpak update`, and therefore GNOME Software and the
+      # user's ordinary update routine, see new versions at all.
+      #
+      # The existing repository is fetched first. An ostree repo is a running history, and
+      # building a fresh one each release would rewrite the summary to contain only the
+      # newest commit, which breaks the delta from any older version a user is actually on.
+      - name: Fetch the published Flatpak repository
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: pages
+
+      - name: Export the build into the Flatpak repository
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          mkdir -p pages/repo
+          # Creates the repository on the first release and adds a commit on every one
+          # after, so upgrades stay incremental.
+          flatpak build-import-bundle pages/repo build/*.flatpak
+          flatpak build-update-repo --generate-static-deltas --prune pages/repo
+
+          # The file a user opens to add the remote. Unsigned: a GPG key would have to
+          # live in CI, and the transport is HTTPS from a fixed origin either way.
+          cat > pages/repo/gameyfin.flatpakrepo <<'EOF'
+          [Flatpak Repo]
+          Title=Gameyfin
+          Url=https://gameyfin.github.io/gameyfin-app/repo/
+          Homepage=https://github.com/gameyfin/gameyfin-app
+          Comment=Gameyfin desktop client
+          Description=Updates for the Gameyfin desktop client
+          EOF
+
+      - name: Publish the repository to GitHub Pages
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: pages/repo
+          destination_dir: repo
+          keep_files: true

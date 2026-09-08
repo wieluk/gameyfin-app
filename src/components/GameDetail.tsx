@@ -1,15 +1,11 @@
+import { Trailers } from "@/components/Trailers";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { primaryAction } from "@/lib/actions";
 import { formatBytes, formatPlaytime } from "@/lib/format";
 import type { LibraryEntry } from "@/types";
 
-/**
- * Full details for one game, over the library.
- *
- * A dialog rather than a route: the library grid keeps its scroll position and filters,
- * which is what you want when browsing through several games in a row.
- */
+/** Game details as a dialog over the library, so the grid keeps its scroll and filters. */
 export function GameDetail({
   entry,
   onClose,
@@ -44,6 +40,7 @@ export function GameDetail({
 
   return (
     <div
+      data-nav-scope
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
@@ -103,6 +100,7 @@ export function GameDetail({
             </div>
           )}
 
+          <Trailers urls={entry.videoUrls ?? []} title={game.title} />
           <Screenshots urls={entry.screenshotUrls ?? []} title={game.title} />
         </div>
       </div>
@@ -162,8 +160,7 @@ function Screenshots({ urls, title }: { urls: string[]; title: string }) {
 
   if (urls.length === 0) return null;
 
-  // Scroll by most of a viewport width, so a nudge moves roughly one screenful and the
-  // user keeps a visual anchor rather than jumping blindly.
+  // Scroll by most of a viewport so the user keeps a visual anchor.
   const scrollBy = (direction: 1 | -1) => {
     const el = strip.current;
     if (!el) return;

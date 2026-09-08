@@ -1,13 +1,9 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /**
- * Resize grips for a window drawn without OS decorations.
- *
- * `decorations: false` removes the frame the compositor would normally provide, and with
- * it the invisible border that resizing relies on, leaving the window resizable only
- * through the maximise button. These strips put that back, forwarding a drag to the
- * compositor via `startResizeDragging` so the resize behaves natively on both X11 and
- * Wayland.
+ * Resize grips for a window drawn without OS decorations. `decorations: false` removes
+ * the compositor's resize border; a drag is forwarded via `startResizeDragging` so it
+ * behaves natively on both X11 and Wayland.
  */
 
 /** Matches Tauri's `ResizeDirection`. */

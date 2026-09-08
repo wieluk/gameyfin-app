@@ -61,18 +61,27 @@ pub fn classify(path: &Path) -> CoreResult<Payload> {
         return Ok(Payload::DiskImage);
     }
 
-    Ok(classify_head(head))
+    let payload = classify_head(head);
+    if payload != Payload::Unknown {
+        return Ok(payload);
+    }
+
+    // An uncompressed tar carries no signature at offset zero either, so it only turns up
+    // on a second look. Checked last, for the same reason as the ISO: it costs a seek.
+    match crate::extract::detect(path)? {
+        ArchiveKind::None => Ok(Payload::Unknown),
+        kind => Ok(Payload::Archive(kind)),
+    }
 }
 
 fn classify_head(head: &[u8]) -> Payload {
-    if head.starts_with(b"PK\x03\x04") || head.starts_with(b"PK\x05\x06") {
-        return Payload::Archive(ArchiveKind::Zip);
-    }
-    if head.starts_with(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) {
-        return Payload::Archive(ArchiveKind::SevenZip);
-    }
-    if head.starts_with(b"Rar!\x1a\x07") {
-        return Payload::Archive(ArchiveKind::Rar);
+    // Archives are identified by the unpacker's own detector rather than a second copy of
+    // the same signatures. The install step is chosen here and carried out there, so the
+    // two disagreeing means offering "Extract" for something that will not extract, which
+    // is how a `.tar.gz` download came to be treated as an unrecognised file.
+    let archive = crate::extract::detect_bytes(head);
+    if archive != ArchiveKind::None {
+        return Payload::Archive(archive);
     }
     // A shebang is checked before ELF because a script can be anything underneath.
     if head.starts_with(b"#!") {

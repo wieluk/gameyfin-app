@@ -9,7 +9,7 @@
 //! that, an entry named `../../.bashrc` would escape and overwrite files elsewhere.
 
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::{CoreError, CoreResult};
@@ -23,8 +23,20 @@ pub enum ArchiveKind {
     /// licence terms that forbid redistributing them inside another application, so this
     /// uses whatever the system already has.
     Rar,
+    /// A tar, optionally compressed. How Linux builds of a game usually arrive.
+    Tar(TarCompression),
     /// A plain file that is not an archive, a bare executable or disk image.
     None,
+}
+
+/// What a tar is wrapped in, if anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TarCompression {
+    None,
+    Gzip,
+    Xz,
+    Zstd,
+    Bzip2,
 }
 
 impl ArchiveKind {
@@ -33,6 +45,11 @@ impl ArchiveKind {
             ArchiveKind::Zip => "zip",
             ArchiveKind::SevenZip => "7z",
             ArchiveKind::Rar => "rar",
+            ArchiveKind::Tar(TarCompression::None) => "tar",
+            ArchiveKind::Tar(TarCompression::Gzip) => "tar.gz",
+            ArchiveKind::Tar(TarCompression::Xz) => "tar.xz",
+            ArchiveKind::Tar(TarCompression::Zstd) => "tar.zst",
+            ArchiveKind::Tar(TarCompression::Bzip2) => "tar.bz2",
             ArchiveKind::None => "not an archive",
         }
     }
@@ -43,10 +60,28 @@ pub fn detect(path: &Path) -> CoreResult<ArchiveKind> {
     let mut file = File::open(path)?;
     let mut magic = [0u8; 8];
     let read = file.read(&mut magic)?;
-    Ok(detect_bytes(&magic[..read]))
+    let kind = detect_bytes(&magic[..read]);
+    if kind != ArchiveKind::None {
+        return Ok(kind);
+    }
+
+    // A plain tar has no signature at the start: the first 257 bytes are the first
+    // member's name, mode and owner, and only then comes the format marker. Checked last
+    // so it costs a seek only for a file nothing else claimed.
+    if file.seek(SeekFrom::Start(TAR_MAGIC_OFFSET)).is_ok() {
+        let mut marker = [0u8; 5];
+        if file.read_exact(&mut marker).is_ok() && &marker == b"ustar" {
+            return Ok(ArchiveKind::Tar(TarCompression::None));
+        }
+    }
+
+    Ok(ArchiveKind::None)
 }
 
-fn detect_bytes(magic: &[u8]) -> ArchiveKind {
+/// Where `ustar` sits in a tar's first header block.
+const TAR_MAGIC_OFFSET: u64 = 257;
+
+pub(crate) fn detect_bytes(magic: &[u8]) -> ArchiveKind {
     // Local file header, or an empty/spanned archive.
     if magic.starts_with(b"PK\x03\x04") || magic.starts_with(b"PK\x05\x06") {
         return ArchiveKind::Zip;
@@ -58,6 +93,21 @@ fn detect_bytes(magic: &[u8]) -> ArchiveKind {
     // same way, which is enough to identify the format.
     if magic.starts_with(b"Rar!\x1a\x07") {
         return ArchiveKind::Rar;
+    }
+    // Compression wrappers. What is inside is assumed to be a tar, which is what these
+    // are used for in practice; a stream that turns out not to be one is reported when it
+    // fails to parse rather than guessed at here.
+    if magic.starts_with(&[0x1F, 0x8B]) {
+        return ArchiveKind::Tar(TarCompression::Gzip);
+    }
+    if magic.starts_with(&[0xFD, b'7', b'z', b'X', b'Z', 0x00]) {
+        return ArchiveKind::Tar(TarCompression::Xz);
+    }
+    if magic.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
+        return ArchiveKind::Tar(TarCompression::Zstd);
+    }
+    if magic.starts_with(b"BZh") {
+        return ArchiveKind::Tar(TarCompression::Bzip2);
     }
     ArchiveKind::None
 }
@@ -115,23 +165,48 @@ pub fn safe_join(destination: &Path, entry: &str) -> Option<PathBuf> {
 }
 
 /// Unpack `archive` into `destination`, reporting progress.
-pub fn extract<F>(archive: &Path, destination: &Path, mut on_progress: F) -> CoreResult<u64>
+pub fn extract<F>(archive: &Path, destination: &Path, on_progress: F) -> CoreResult<u64>
+where
+    F: FnMut(ExtractProgress),
+{
+    extract_with(archive, destination, None, on_progress)
+}
+
+/// Unpack an archive that may be encrypted.
+///
+/// The password is optional and applies to every format that has one. It is passed even
+/// for an archive that turns out not to need it, which costs nothing: an unencrypted entry
+/// ignores it.
+pub fn extract_with<F>(
+    archive: &Path,
+    destination: &Path,
+    password: Option<&str>,
+    mut on_progress: F,
+) -> CoreResult<u64>
 where
     F: FnMut(ExtractProgress),
 {
     std::fs::create_dir_all(destination)?;
 
     match detect(archive)? {
-        ArchiveKind::Zip => extract_zip(archive, destination, &mut on_progress),
-        ArchiveKind::SevenZip => extract_7z(archive, destination, &mut on_progress),
+        ArchiveKind::Zip => extract_zip(archive, destination, password, &mut on_progress),
+        ArchiveKind::SevenZip => extract_7z(archive, destination, password, &mut on_progress),
         ArchiveKind::Rar => extract_rar(archive, destination, &mut on_progress),
+        ArchiveKind::Tar(compression) => {
+            extract_tar(archive, destination, compression, &mut on_progress)
+        }
         ArchiveKind::None => Err(CoreError::UnsupportedArchive {
             path: archive.display().to_string(),
         }),
     }
 }
 
-fn extract_zip<F>(archive: &Path, destination: &Path, on_progress: &mut F) -> CoreResult<u64>
+fn extract_zip<F>(
+    archive: &Path,
+    destination: &Path,
+    password: Option<&str>,
+    on_progress: &mut F,
+) -> CoreResult<u64>
 where
     F: FnMut(ExtractProgress),
 {
@@ -162,9 +237,22 @@ where
     let mut buffer = vec![0u8; 128 * 1024];
 
     for index in 0..zip.len() {
-        let mut entry = zip
-            .by_index(index)
-            .map_err(|e| CoreError::Other(format!("could not read archive entry: {e}")))?;
+        let mut entry = match password {
+            Some(password) => zip.by_index_decrypt(index, password.as_bytes()),
+            None => zip.by_index(index),
+        }
+        .map_err(|e| match e {
+            // Worth saying plainly: the difference between a corrupt download and a
+            // missing password is not obvious from "could not read archive entry".
+            zip::result::ZipError::UnsupportedArchive(zip::result::ZipError::PASSWORD_REQUIRED) => {
+                CoreError::Other(
+                    "this archive is password protected. Set the password in Settings, under \
+                 Downloads, and try again."
+                        .to_string(),
+                )
+            }
+            e => CoreError::Other(format!("could not read archive entry: {e}")),
+        })?;
 
         let Some(target) = entry
             .enclosed_name()
@@ -220,13 +308,22 @@ where
     Ok(written)
 }
 
-fn extract_7z<F>(archive: &Path, destination: &Path, on_progress: &mut F) -> CoreResult<u64>
+fn extract_7z<F>(
+    archive: &Path,
+    destination: &Path,
+    password: Option<&str>,
+    on_progress: &mut F,
+) -> CoreResult<u64>
 where
     F: FnMut(ExtractProgress),
 {
     // Entry-by-entry rather than `decompress_file`, which reports nothing until it
     // finishes, leaving a long extraction showing 0% and then jumping straight to done.
-    let mut reader = sevenz_rust2::SevenZReader::open(archive, sevenz_rust2::Password::empty())
+    let key = match password {
+        Some(password) => sevenz_rust2::Password::from(password),
+        None => sevenz_rust2::Password::empty(),
+    };
+    let mut reader = sevenz_rust2::SevenZReader::open(archive, key)
         .map_err(|e| CoreError::Other(format!("could not read the 7z archive: {e}")))?;
 
     let entries_total = reader.archive().files.len() as u64;
@@ -299,10 +396,225 @@ where
     Ok(written)
 }
 
+/// A reader that remembers how much has been pulled through it.
+///
+/// Wrapped around the *file* rather than the decompressed stream: the file's length is
+/// known exactly, so counting on that side gives a progress bar with an honest total.
+struct Counting<R> {
+    inner: R,
+    read: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl<R: Read> Read for Counting<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.read
+            .fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
+        Ok(read)
+    }
+}
+
+/// Unpack a tar, decompressing on the way if it is wrapped in something.
+///
+/// Progress is measured on the input side, bytes consumed from the archive file, rather
+/// than bytes written to disk. A tar carries no index, so the uncompressed total is not
+/// knowable without decompressing the whole thing first; the compressed length is known
+/// before anything starts, and counting against it gives a bar that moves smoothly and
+/// finishes at 100% instead of one that sits at zero or overshoots.
+fn extract_tar<F>(
+    archive: &Path,
+    destination: &Path,
+    compression: TarCompression,
+    on_progress: &mut F,
+) -> CoreResult<u64>
+where
+    F: FnMut(ExtractProgress),
+{
+    let bytes_total = std::fs::metadata(archive)?.len();
+    let consumed = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let file = Counting {
+        inner: BufReader::new(File::open(archive)?),
+        read: consumed.clone(),
+    };
+
+    let stream: Box<dyn Read> = match compression {
+        TarCompression::None => Box::new(file),
+        TarCompression::Gzip => Box::new(flate2::read::MultiGzDecoder::new(file)),
+        TarCompression::Xz => Box::new(liblzma::read::XzDecoder::new(file)),
+        TarCompression::Bzip2 => Box::new(bzip2::read::MultiBzDecoder::new(file)),
+        TarCompression::Zstd => Box::new(
+            zstd::stream::read::Decoder::new(file)
+                .map_err(|e| CoreError::Other(format!("could not read the zstd stream: {e}")))?,
+        ),
+    };
+
+    let mut tar = tar::Archive::new(stream);
+    // Ownership and timestamps come from whoever built the archive and mean nothing on
+    // this machine; the executable bit is set explicitly below, where it matters.
+    tar.set_preserve_permissions(false);
+    tar.set_preserve_mtime(false);
+
+    let progress = |entries_done: u64, on_progress: &mut F| {
+        on_progress(ExtractProgress {
+            entries_done,
+            entries_total: 0,
+            bytes_written: consumed.load(std::sync::atomic::Ordering::Relaxed),
+            bytes_total,
+        });
+    };
+    progress(0, on_progress);
+
+    let entries = tar
+        .entries()
+        .map_err(|e| CoreError::Other(format!("could not read the tar archive: {e}")))?;
+
+    let mut written = 0u64;
+    let mut entries_done = 0u64;
+    let mut buffer = vec![0u8; 256 * 1024];
+
+    for entry in entries {
+        let mut entry =
+            entry.map_err(|e| CoreError::Other(format!("could not read a tar entry: {e}")))?;
+        let name = entry
+            .path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        let Some(target) = safe_join(destination, &name) else {
+            tracing::warn!("skipping unsafe archive entry: {name}");
+            entries_done += 1;
+            continue;
+        };
+
+        let kind = entry.header().entry_type();
+
+        if kind.is_dir() {
+            std::fs::create_dir_all(&target)?;
+        } else if kind.is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut out = File::create(&target)?;
+
+            // Copied in chunks rather than with `io::copy` so a single multi-gigabyte
+            // entry still reports progress as it goes.
+            loop {
+                let read = entry.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                std::io::Write::write_all(&mut out, &buffer[..read])?;
+                written += read as u64;
+                progress(entries_done, on_progress);
+            }
+
+            #[cfg(unix)]
+            if let Ok(mode) = entry.header().mode() {
+                use std::os::unix::fs::PermissionsExt;
+                // Preserve the executable bit; a game's launcher is useless without it.
+                let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode));
+            }
+        } else if kind.is_symlink() {
+            symlink_entry(destination, &target, &entry);
+        } else {
+            // Character devices, fifos and the like have no business in a game archive,
+            // and creating them needs privileges this app does not want.
+            tracing::warn!("skipping {name}: not a file, directory or link");
+        }
+
+        entries_done += 1;
+        progress(entries_done, on_progress);
+    }
+
+    Ok(written)
+}
+
+/// Recreate a symlink from a tar entry, if it stays inside the destination.
+///
+/// Linux game builds ship these for shared libraries, so dropping them silently leaves a
+/// game that will not start. A link is also another way out of the destination, hence the
+/// same containment rule the entry paths get.
+fn symlink_entry<R: Read>(destination: &Path, target: &Path, entry: &tar::Entry<'_, R>) {
+    let Ok(Some(link)) = entry.link_name() else {
+        return;
+    };
+
+    // Resolved against the *link's own directory*, which is what a relative link is
+    // relative to, not against the destination root.
+    let base = target.parent().unwrap_or(destination);
+    let Some(resolved) = resolve_link(destination, base, &link) else {
+        tracing::warn!(
+            "skipping link {} -> {}: it points outside the folder",
+            target.display(),
+            link.display()
+        );
+        return;
+    };
+
+    let _ = std::fs::remove_file(target);
+    place_link(&link, &resolved, target);
+}
+
+/// Resolve a link target without touching the disk, refusing anything that escapes.
+///
+/// Unlike [`safe_join`] this allows `..`, because `../lib/libfoo.so.1` is what an
+/// ordinary shared-library link looks like and refusing it would break the game the link
+/// exists for. What it does not allow is the result landing outside `destination`, which
+/// is the part that actually matters, or an absolute target, which points at the host's
+/// own files rather than at anything the archive brought.
+fn resolve_link(destination: &Path, base: &Path, link: &Path) -> Option<PathBuf> {
+    let normalised = link.to_string_lossy().replace('\\', "/");
+
+    let mut out = base.to_path_buf();
+    for component in Path::new(&normalised).components() {
+        match component {
+            Component::Normal(part) => out.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Never above the destination, whatever the archive claims.
+                if out == destination || !out.pop() {
+                    return None;
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+
+    out.starts_with(destination).then_some(out)
+}
+
+/// Put the link in place, however this platform can.
+#[cfg(unix)]
+fn place_link(link: &Path, _resolved: &Path, target: &Path) {
+    // Recreated as written, relative target and all, so the game sees the layout its
+    // archive described rather than a rewritten one.
+    if let Err(e) = std::os::unix::fs::symlink(link, target) {
+        tracing::warn!("could not create link {}: {e}", target.display());
+    }
+}
+
+/// The same, where symlinks are not freely available.
+///
+/// Windows needs Developer Mode or administrator rights to create one, neither of which
+/// this app is going to demand for an extraction. Games ship these as duplicate library
+/// names, which a copy satisfies at the cost of some disk space. A link whose target has
+/// not been unpacked yet simply fails here, and is reported.
+#[cfg(not(unix))]
+fn place_link(_link: &Path, resolved: &Path, target: &Path) {
+    if let Err(e) = std::fs::copy(resolved, target) {
+        tracing::warn!(
+            "could not copy {} for link {}: {e}",
+            resolved.display(),
+            target.display()
+        );
+    }
+}
+
 /// External programs that can unpack a RAR, in order of preference.
 ///
 /// `unar` and `7z` handle RAR 5 correctly and are packaged by every major distribution;
 /// `unrar` is the reference implementation where it happens to be installed.
+#[cfg(not(windows))]
 const RAR_TOOLS: &[(&str, &[&str])] = &[
     ("unar", &["-force-overwrite", "-quiet", "-output-directory"]),
     ("7zz", &["x", "-y", "-o"]),
@@ -311,6 +623,28 @@ const RAR_TOOLS: &[(&str, &[&str])] = &[
     ("unrar", &["x", "-y"]),
     ("bsdtar", &["-xf"]),
 ];
+
+/// The same, on Windows.
+///
+/// Ordered by what people actually have. None of these is on `PATH` after a normal
+/// install, so they are found by looking in the folders they install to; see
+/// [`crate::runtime::find_program`]. `UnRAR.exe` ships beside `WinRAR.exe`, so a WinRAR
+/// install is usable without driving its GUI program. `tar.exe` comes with Windows
+/// itself and is listed last for the same reason `bsdtar` is on Linux: it is libarchive,
+/// whose RAR support is partial.
+#[cfg(windows)]
+const RAR_TOOLS: &[(&str, &[&str])] = &[
+    ("7z", &["x", "-y", "-o"]),
+    ("7zz", &["x", "-y", "-o"]),
+    ("NanaZipC", &["x", "-y", "-o"]),
+    ("unrar", &["x", "-y"]),
+    ("unar", &["-force-overwrite", "-quiet", "-output-directory"]),
+    ("bsdtar", &["-xf"]),
+    ("tar", &["-xf"]),
+];
+
+/// Tools that unpack into the working directory instead of taking an output flag.
+const EXTRACTS_INTO_WORKING_DIR: &[&str] = &["unrar", "bsdtar", "tar"];
 
 /// Find an installed tool that can unpack RAR archives.
 pub fn rar_tool() -> Option<&'static str> {
@@ -321,10 +655,25 @@ pub fn rar_tool() -> Option<&'static str> {
 }
 
 /// What to install when no RAR tool is present.
+///
+/// RAR cannot be unpacked in-process: the only complete implementations carry licence
+/// terms that forbid shipping them inside another application, so the message has to name
+/// something the user installs themselves, on the system they are actually running.
 pub fn rar_tool_hint() -> String {
-    "RAR archives need an external tool. Install one of unar, p7zip (7z) or unrar, \
-     for example `sudo dnf install unar` or `sudo apt install unar`."
-        .to_string()
+    if cfg!(windows) {
+        // Named rather than described: "install a RAR tool" sends people to a search
+        // engine, and the first result for that is not 7-Zip.
+        return "RAR archives need 7-Zip or WinRAR. Install 7-Zip from https://7-zip.org \
+                (or WinRAR from https://rarlab.com), then try again \u{2014} Gameyfin finds it \
+                automatically, and nothing needs to be added to PATH."
+            .to_string();
+    }
+
+    format!(
+        "RAR archives need an external tool. Install one of unar, p7zip (7z) or unrar, \
+         for example `{}`.",
+        crate::runtime::install_command("unar")
+    )
 }
 
 fn extract_rar<F>(archive: &Path, destination: &Path, on_progress: &mut F) -> CoreResult<u64>
@@ -354,17 +703,12 @@ where
             command.arg(flag);
         }
     }
-    match tool {
-        "unar" => {
-            command.arg(destination).arg(archive);
-        }
-        "unrar" | "bsdtar" => {
-            // These extract into the working directory rather than taking an output flag.
-            command.arg(archive).current_dir(destination);
-        }
-        _ => {
-            command.arg(archive);
-        }
+    if tool == "unar" {
+        command.arg(destination).arg(archive);
+    } else if EXTRACTS_INTO_WORKING_DIR.contains(&tool) {
+        command.arg(archive).current_dir(destination);
+    } else {
+        command.arg(archive);
     }
 
     tracing::info!(
@@ -378,7 +722,7 @@ where
     // partial. Reaching it means nothing better is installed, and the result can be an
     // archive that unpacks "successfully" into files that are not what it contained, so
     // say so here rather than leaving it to be inferred from a game that will not start.
-    if tool == "bsdtar" {
+    if tool == "bsdtar" || tool == "tar" {
         tracing::warn!(
             "no full RAR tool found, falling back to bsdtar; install unar or 7z if this \
              archive unpacks incorrectly"
@@ -504,6 +848,149 @@ mod tests {
         assert_eq!(detect_bytes(b"Rar!\x1a\x07\x00"), ArchiveKind::Rar);
         // RAR 5 differs only after the shared prefix.
         assert_eq!(detect_bytes(b"Rar!\x1a\x07\x01\x00"), ArchiveKind::Rar);
+    }
+
+    #[test]
+    fn a_relative_link_that_stays_inside_is_kept() {
+        // `../lib/libfoo.so.1` is what an ordinary shared-library link looks like, and
+        // refusing every `..` broke exactly the games these links exist for.
+        let dest = Path::new("/games/celeste");
+        assert_eq!(
+            resolve_link(dest, &dest.join("bin"), Path::new("../lib/libfoo.so.1")),
+            Some(PathBuf::from("/games/celeste/lib/libfoo.so.1"))
+        );
+        assert_eq!(
+            resolve_link(dest, dest, Path::new("./libfoo.so.1.2.3")),
+            Some(PathBuf::from("/games/celeste/libfoo.so.1.2.3"))
+        );
+    }
+
+    #[test]
+    fn a_link_out_of_the_destination_is_refused() {
+        let dest = Path::new("/games/celeste");
+        assert_eq!(
+            resolve_link(dest, dest, Path::new("../../etc/passwd")),
+            None
+        );
+        assert_eq!(resolve_link(dest, dest, Path::new("/etc/passwd")), None);
+        // One level up from the root is already outside, even without naming a target.
+        assert_eq!(resolve_link(dest, dest, Path::new("..")), None);
+    }
+
+    #[test]
+    fn detects_the_tar_wrappers() {
+        assert_eq!(
+            detect_bytes(&[0x1F, 0x8B, 0x08, 0x00]),
+            ArchiveKind::Tar(TarCompression::Gzip)
+        );
+        assert_eq!(
+            detect_bytes(&[0xFD, b'7', b'z', b'X', b'Z', 0x00]),
+            ArchiveKind::Tar(TarCompression::Xz)
+        );
+        assert_eq!(
+            detect_bytes(&[0x28, 0xB5, 0x2F, 0xFD, 0x00]),
+            ArchiveKind::Tar(TarCompression::Zstd)
+        );
+        assert_eq!(
+            detect_bytes(b"BZh9"),
+            ArchiveKind::Tar(TarCompression::Bzip2)
+        );
+    }
+
+    #[test]
+    fn a_plain_tar_is_recognised_by_the_marker_inside_its_header() {
+        // Nothing identifies a tar at offset zero, so this only works by seeking; a
+        // detector that reads the first eight bytes alone reports "not an archive".
+        let dir = scratch("tar-detect");
+        let archive = dir.join("game.tar");
+        {
+            let mut builder = tar::Builder::new(File::create(&archive).unwrap());
+            let mut header = tar::Header::new_gnu();
+            header.set_size(5);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "readme.txt", &b"hello"[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+
+        assert_eq!(
+            detect(&archive).unwrap(),
+            ArchiveKind::Tar(TarCompression::None)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn extracts_a_real_tar_gz_with_progress() {
+        let dir = scratch("targz");
+        let archive = dir.join("game.tar.gz");
+
+        {
+            let encoder = flate2::write::GzEncoder::new(
+                File::create(&archive).unwrap(),
+                flate2::Compression::default(),
+            );
+            let mut builder = tar::Builder::new(encoder);
+            for (name, body) in [
+                ("readme.txt", &b"hello"[..]),
+                ("bin/game.sh", &b"binary"[..]),
+            ] {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(body.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder.append_data(&mut header, name, body).unwrap();
+            }
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+
+        let dest = dir.join("out");
+        let mut samples = Vec::new();
+        let written = extract(&archive, &dest, |p| samples.push(p)).unwrap();
+
+        assert_eq!(written, 11);
+        assert_eq!(
+            std::fs::read_to_string(dest.join("readme.txt")).unwrap(),
+            "hello"
+        );
+        assert!(dest.join("bin/game.sh").exists());
+        // Progress is counted against the compressed file, so it starts from a real
+        // total and ends having consumed all of it.
+        assert_eq!(
+            samples.first().unwrap().bytes_total,
+            std::fs::metadata(&archive).unwrap().len()
+        );
+        assert_eq!(samples.last().unwrap().percent(), 100.0);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_tar_entry_cannot_escape_the_destination() {
+        let dir = scratch("tar-escape");
+        let archive = dir.join("evil.tar");
+        {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(4);
+            header.set_mode(0o644);
+            // Written into the header directly: the `tar` builder refuses to *create* a
+            // traversing entry, which is exactly the entry a hostile archive contains.
+            let name = b"../escaped.txt";
+            header.as_mut_bytes()[..name.len()].copy_from_slice(name);
+            header.set_cksum();
+
+            let mut builder = tar::Builder::new(File::create(&archive).unwrap());
+            builder.append(&header, &b"evil"[..]).unwrap();
+            builder.finish().unwrap();
+        }
+
+        let dest = dir.join("out");
+        extract(&archive, &dest, |_| {}).unwrap();
+        assert!(!dir.join("escaped.txt").exists());
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

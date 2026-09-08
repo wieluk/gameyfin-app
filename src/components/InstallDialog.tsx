@@ -7,15 +7,10 @@ import type { LibraryEntry } from "@/types";
 import { Alert } from "@/components/Alert";
 
 /**
- * Choosing how to install a download.
- *
- * A Gameyfin library holds whatever its owner put there, an archive, a Windows installer,
- * a native Linux build, and those need different treatment. The app inspects the file and
- * offers only what applies, rather than assuming everything is a zip.
- *
- * For a setup program the app cannot know where files will land: the user drives the
- * wizard. So the suggested path is offered on the clipboard, and if they install somewhere
- * else they can point the app at it afterwards.
+ * Choosing how to install a download. Only applicable options are offered, since a
+ * library holds archives, Windows installers and native builds. For a setup program the
+ * suggested path goes to the clipboard, because the wizard, not the app, picks the
+ * destination.
  */
 export function InstallDialog({
   entry,
@@ -27,19 +22,15 @@ export function InstallDialog({
   const gameId = entry.game.id;
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  /// The option currently being started, so the dialog can show which one and refuse a
-  /// second click while it is under way.
+  // The option being started, so a second click is refused meanwhile.
   const [starting, setStarting] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  // Extracting is a mechanical step with one outcome; installing is where the choices
-  // about setup programs and destinations belong. Showing both at once was confusing.
+  // Extract is mechanical; install is where the choices belong. Showing both at once was confusing.
   const isExtractPhase = entry.state.kind === "downloaded";
-  // Only meaningful for extraction: the archive is a duplicate of the unpacked files, and
-  // for a large game that is a lot of disk to keep for no reason.
+  // The archive duplicates the unpacked files, so for a large game it is a lot of disk for nothing.
   const [deleteArchive, setDeleteArchive] = useState(true);
 
-  // Keyed by state as well as game: what can be done with a download changes once it is
-  // unpacked, and a plan cached from before extraction would keep offering "Extract".
+  // Keyed by state too: a plan cached from before extraction would keep offering "Extract".
   const plan = useQuery({
     queryKey: ["install-plan", gameId, entry.state.kind],
     queryFn: () => backend.installOptions(gameId),
@@ -48,19 +39,14 @@ export function InstallDialog({
   });
 
   async function start(method: string, interactive: boolean) {
-    // Starting an install is not instant, a setup program has a prefix to prepare first,
-    // and until now the dialog stayed fully interactive throughout, with every option
-    // still clickable. A second click was swallowed by the backend's busy check rather
-    // than starting anything twice, but from the user's side it simply looked like the
-    // first click had not registered.
+    // Starting takes a moment (a prefix may be prepared first); a second click used to
+    // look like the first never registered.
     if (starting) return;
     setStarting(method);
     setError(null);
     try {
       if (interactive && plan.data) {
-        // Give the user the path before the wizard asks for it. Under a compatibility
-        // layer that has to be the mapped drive letter, since a setup program cannot
-        // navigate to a Linux path.
+        // The wizard gets the mapped drive letter, not a Linux path it cannot navigate to.
         await backend.copyToClipboard(
           plan.data.windowsInstallPath ?? plan.data.defaultInstallDir,
         );
@@ -75,13 +61,11 @@ export function InstallDialog({
     }
   }
 
-  // Detection is heuristic and can miss an oddly named installer, so the user can point
-  // at one directly rather than being stuck with what was found.
+  // Detection can miss an oddly named installer, so the user can point at one directly.
   async function chooseSetup() {
     if (starting) return;
     setError(null);
     try {
-      // Open where the files actually are, so the user is not navigating back.
       const chosen = await backend.pickFile(plan.data?.browseDir ?? plan.data?.defaultInstallDir);
       if (!chosen) return;
       await backend.runSetupPath(gameId, chosen);
@@ -107,6 +91,7 @@ export function InstallDialog({
 
   return (
     <div
+      data-nav-scope
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
@@ -147,8 +132,8 @@ export function InstallDialog({
 
           {plan.data && plan.data.options.length === 0 && (
             <Alert>
-              The app does not know how to install a {plan.data.payload} yet. You can open
-              the folder and install it yourself, then use “I installed it myself”.
+              This app cannot install a {plan.data.payload} yet. Install it yourself, then
+              point the app at the folder below.
             </Alert>
           )}
 
@@ -163,8 +148,7 @@ export function InstallDialog({
               <span className="text-[13px] text-foreground/75">
                 Delete the archive after extracting
                 <span className="mt-1 block text-xs text-foreground/45">
-                  Frees the space it occupies. You would need to download the game again to
-                  get it back.
+                  Frees disk space. The only way back is downloading again.
                 </span>
               </span>
             </label>
@@ -226,10 +210,7 @@ export function InstallDialog({
             </div>
           )}
 
-          {/* Always offered, whatever was detected: the heuristics can miss an oddly
-              named installer, and a game may already be installed elsewhere. Held back
-              until the plan has loaded so both halves of the dialog appear together
-              rather than this one arriving first, alone. */}
+          {/* Held until the plan loads so both halves of the dialog appear together. */}
           {plan.data && (
           <div className="mt-4 flex flex-col gap-2 border-t border-default-200/60 pt-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-foreground/40">
@@ -245,7 +226,7 @@ export function InstallDialog({
                   Choose a setup program
                 </span>
                 <p className="mt-1 text-xs leading-relaxed text-foreground/55">
-                  Pick the installer yourself if the right one was not found.
+                  For when the right installer was not found.
                 </p>
               </button>
               <button
@@ -254,10 +235,10 @@ export function InstallDialog({
                 className="rounded-xl border border-default-200 p-3 text-left transition-colors hover:border-primary/50 hover:bg-primary/5"
               >
                 <span className="text-sm font-medium text-foreground">
-                  Point at an existing folder
+                  Installed it yourself
                 </span>
                 <p className="mt-1 text-xs leading-relaxed text-foreground/55">
-                  Already installed it? Show the app where the game lives.
+                  Show the app where the game lives.
                 </p>
               </button>
             </div>

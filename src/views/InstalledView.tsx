@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FolderActions } from "@/components/FolderActions";
+import { GameOptions } from "@/components/GameOptions";
 import { Icon } from "@/components/Icon";
+import { ShortcutOptions } from "@/components/ShortcutOptions";
+import { UninstallDialog } from "@/components/UninstallDialog";
 import { isInstalled } from "@/lib/actions";
 import { backend } from "@/lib/backend";
 import { formatPlaytime } from "@/lib/format";
@@ -99,13 +101,14 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
     }
   }
 
-  async function uninstall() {
+  async function uninstall(options: { runUninstaller: boolean; uninstaller: string | null }) {
     setConfirmUninstall(false);
     setError(null);
     try {
       // The game's own uninstaller runs first when it has one, so registry entries and
-      // shortcuts go too rather than being orphaned.
-      await backend.uninstall(entry.game.id, true);
+      // shortcuts go too rather than being orphaned. Which one that is comes from the
+      // dialog, because detection can miss an oddly named program.
+      await backend.uninstall(entry.game.id, options.runUninstaller, options.uninstaller);
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
     } catch (e) {
       setError(messageOf(e));
@@ -270,17 +273,11 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
       )}
 
       {confirmUninstall && (
-        <ConfirmDialog
-          title={`Uninstall ${entry.game.title}?`}
-          body={
-            <>
-              If this game came with its own uninstaller it will be run first, then any
-              remaining files are removed. A downloaded archive, if you still have one, is
-              kept so you can reinstall without downloading again.
-            </>
-          }
-          confirmLabel="Uninstall"
-          onConfirm={() => void uninstall()}
+        <UninstallDialog
+          title={entry.game.title}
+          gameId={entry.game.id}
+          installDir={path}
+          onConfirm={(options) => void uninstall(options)}
           onCancel={() => setConfirmUninstall(false)}
         />
       )}
@@ -343,6 +340,10 @@ function Options({
         </div>
       )}
 
+      <GameOptions gameId={gameId} />
+
+      <ShortcutOptions gameId={gameId} />
+
       {setups.length > 0 && (
         <div>
           <p className="mb-1 text-[11px] text-foreground/45">Setup programs</p>
@@ -375,7 +376,7 @@ function Options({
             // the click did nothing and explained nothing.
             setFolderError(null);
             try {
-              await backend.openFolder(gameId);
+              await backend.openFolder(gameId, "installations");
             } catch (e) {
               setFolderError(messageOf(e));
             }

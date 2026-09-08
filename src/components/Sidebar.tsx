@@ -12,18 +12,15 @@ interface NavItem {
 const COLLAPSED_KEY = "gameyfin.sidebar.collapsed";
 
 /**
- * Primary navigation.
- *
- * `h-full` keeps it the height of the window rather than the height of whatever the
- * current view happens to contain, otherwise the panel visibly resizes as you move
- * between a full library and an empty Downloads tab.
+ * Primary navigation. `h-full` keeps the panel the height of the window rather than the
+ * current view, so it does not visibly resize between tabs.
  */
 export function Sidebar({ downloadCount }: { downloadCount: number }) {
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSED_KEY) === "1";
     } catch {
-      // Private windows and blocked site data both throw here; the default is fine.
+      // localStorage can throw in private windows; the default is fine.
       return false;
     }
   });
@@ -67,8 +64,7 @@ export function Sidebar({ downloadCount }: { downloadCount: number }) {
         >
           <span className="relative shrink-0">
             <Icon name={item.icon} className="h-[18px] w-[18px]" />
-            {/* Collapsed, there is no room for a badge beside the label, so it becomes a
-                dot on the icon, the count still reads in the tooltip. */}
+            {/* Collapsed, the badge becomes a dot on the icon; the count reads in the tooltip. */}
             {collapsed && item.badge ? (
               <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-content1" />
             ) : null}

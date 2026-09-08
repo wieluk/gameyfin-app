@@ -3,16 +3,14 @@ import { backend } from "@/lib/backend";
 import { useAppSettings } from "@/lib/queries";
 
 /**
- * The download speed cap, where downloads are actually watched.
- *
- * Presets cover the common cases; the field accepts any value for the rest, because
- * "leave me 2 MB/s for a video call" is not a number anyone can guess in advance.
+ * The download speed cap, where downloads are watched. Presets cover the common cases;
+ * the field accepts anything else, because nobody can guess "leave me 2 MB/s for a
+ * video call" in advance.
  */
 
 const PRESETS = [
   { label: "Unlimited", kib: 0 },
-  // Below 1 MB/s matters on a shared or metered connection, and used to be unreachable:
-  // the custom field was whole MB/s, so the slowest cap anyone could set was 1 MB/s.
+  // Sub-1 MB/s caps matter on shared or metered connections.
   { label: "256 KB/s", kib: 256 },
   { label: "512 KB/s", kib: 512 },
   { label: "1 MB/s", kib: 1024 },
@@ -22,7 +20,7 @@ const PRESETS = [
   { label: "25 MB/s", kib: 25600 },
 ];
 
-/** MB/s for the custom field, keeping one decimal so 0.5 MB/s survives a round trip. */
+/** MB/s for the custom field, one decimal so 0.5 survives a round trip. */
 function toMegabytes(kib: number): string {
   return String(Math.round((kib / 1024) * 10) / 10);
 }
@@ -39,8 +37,7 @@ export function SpeedLimit() {
   const isPreset = PRESETS.some((p) => p.kib === current);
 
   useEffect(() => {
-    // Anything not on the list is shown in the field rather than silently snapping to a
-    // preset that is not what the user chose.
+    // Off-list values show in the field rather than silently snapping to a preset.
     if (!isPreset && current > 0) {
       setEditing(true);
       setDraft(toMegabytes(current));
@@ -52,8 +49,7 @@ export function SpeedLimit() {
     try {
       await backend.setDownloadLimit(kib);
     } catch {
-      // A rejected setting is not worth interrupting a download list for; the next read
-      // shows what actually stuck.
+      // A rejected setting is not worth an alert; the refetch shows what stuck.
       void settings.refetch();
     }
   }
@@ -68,9 +64,8 @@ export function SpeedLimit() {
         <div className="flex items-center gap-1">
           <input
             id="speed-limit"
-            // Deliberately not `type="number"`: it blanks anything the browser cannot
-            // parse, which silently turned a mistyped limit into "unlimited". `inputMode`
-            // still brings up a numeric keypad on touch.
+            // `type="number"` blanks unparseable input, which silently read as unlimited;
+            // `inputMode` still brings up a numeric keypad on touch.
             type="text"
             inputMode="decimal"
             value={draft}
@@ -113,19 +108,16 @@ export function SpeedLimit() {
   async function commit() {
     setEditing(false);
 
-    // A decimal comma is what most of Europe types, and `<input type="number">` reports an
-    // unparseable value as the empty string, so "2,5" arrived here as "", became 0, and 0
-    // means unlimited. Typing a limit therefore removed the limit. Parsed by hand instead,
-    // from a text field, so what the user typed is what gets read.
+    // Hand-parsed so decimal commas work; a blank from `type="number"` used to become 0,
+    // and 0 means unlimited, so typing a limit removed the limit.
     const typed = draft.trim().replace(",", ".");
     if (typed === "") return;
 
     const megabytes = Number(typed);
-    // Anything unusable leaves the setting alone. "Unlimited" is a deliberate choice from
-    // the list, never something a mistyped number falls into.
+    // Unusable input changes nothing; unlimited is only ever a deliberate choice.
     if (!Number.isFinite(megabytes) || megabytes <= 0) return;
 
-    // A positive request must never round down to zero, which would read as unlimited.
+    // Never round down to zero, which reads as unlimited.
     await apply(Math.max(Math.round(megabytes * 1024), 1));
   }
 }

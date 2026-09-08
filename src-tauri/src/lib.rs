@@ -5,14 +5,20 @@
 //! GUI toolchain.
 
 mod auth_flow;
+mod cli;
 mod downloads;
 mod error;
+mod gamepad;
 mod image_cache;
 mod images;
+mod integrations;
 mod ipc;
 mod library_state;
+mod notify;
 mod settings;
 mod state;
+mod tray;
+mod updater;
 
 use tauri::{Emitter, Manager};
 
@@ -129,9 +135,34 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // A second copy would fight the first over the library file and the download
+        // checkpoints. Launching from a desktop shortcut while the app is already open is
+        // the common case, so the second process hands its arguments over and exits.
+        // `--hidden` matches what the autostart entry passes, so a login launch goes
+        // straight to the tray rather than opening a window on top of the desktop.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                match cli::launch_target(&argv) {
+                    Some(game_id) => cli::handle_launch(&app, game_id).await,
+                    // Starting it again with no argument is how people ask for the window
+                    // back when it is hidden in the tray.
+                    None => tray::reveal(&app, None),
+                }
+            });
+        }))
         .register_asynchronous_uri_scheme_protocol(images::SCHEME, images::handle)
         .manage(AppState::default())
         .setup(|app| {
+            tray::install(app.handle())?;
+            tray::guard_window(app.handle());
+
             // Reconnect with a stored session before the window asks, so a returning
             // user lands on their library rather than flashing the wizard first.
             let handle = app.handle().clone();
@@ -141,7 +172,21 @@ pub fn run() {
                     .path()
                     .app_config_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                let restored = state.restore(config_dir).await;
+                let restored = state.restore(config_dir.clone()).await;
+
+                // The umu database decides which per-title Proton fixes a launch gets.
+                // Loaded from cache first so an early launch is not delayed by a fetch.
+                if state.load_umu_database(&config_dir).await {
+                    let refresh = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = refresh.state::<AppState>();
+                        if let Err(e) = state.refresh_umu_database().await {
+                            // Advisory data: a failure costs per-title fixes, not the
+                            // ability to play anything.
+                            tracing::info!("could not refresh the umu database: {e}");
+                        }
+                    });
+                }
                 // Keep the artwork cache within bounds on startup, when it costs nothing.
                 let cache = state.image_cache().await;
                 tokio::task::spawn_blocking(move || cache.prune());
@@ -151,8 +196,49 @@ pub fn run() {
                     tracing::warn!("{e}");
                 }
                 tracing::info!("stored session restored: {restored}");
+
+                let settings = state.settings().await;
+
+                // Controllers are polled on their own thread; the handle lets a settings
+                // change reach it without restarting anything.
+                let pad = gamepad::Handle::new(settings.gamepad_enabled, settings.gamepad_deadzone);
+                state.set_gamepad(pad.clone()).await;
+                gamepad::spawn(handle.clone(), pad);
+
+                // Asked for once at startup rather than polled: releases are not frequent
+                // enough for anything else to be worth the requests.
+                if settings.check_for_updates {
+                    let updates = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let status = updater::check(&updates.state::<AppState>()).await;
+                        if status.available {
+                            if let Some(version) = status.latest_version.clone() {
+                                notify::update_available(&updates, &version).await;
+                            }
+                            let _ = updates.emit("update-available", status);
+                        }
+                    });
+                }
+
+                // Starting hidden only makes sense with somewhere to be hidden *to*,
+                // which the tray provides. `--hidden` is what the autostart entry passes,
+                // so a login launch is quiet even when the setting is off.
+                let launched_hidden = std::env::args().any(|arg| arg == "--hidden");
+                if settings.start_minimized || launched_hidden {
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                }
+
                 // The UI waits for this before deciding what to show.
                 let _ = handle.emit("connection-restored", restored);
+
+                // Acted on last, once the session is back and the library is readable.
+                // A shortcut that started the app has to wait for that; one that reached
+                // an already-running copy goes through the single-instance hook instead.
+                if let Some(game_id) = cli::launch_target(&std::env::args().collect::<Vec<_>>()) {
+                    cli::handle_launch(&handle, game_id).await;
+                }
             });
             Ok(())
         })
@@ -182,6 +268,15 @@ pub fn run() {
             ipc::clear_prefixes,
             ipc::log_directory,
             ipc::set_library_root,
+            ipc::list_library_roots,
+            ipc::add_library_root,
+            ipc::remove_library_root,
+            ipc::set_default_library_root,
+            ipc::set_game_options,
+            ipc::game_options,
+            ipc::set_extraction_options,
+            ipc::set_theme,
+            ipc::set_autostart,
             ipc::list_libraries,
             ipc::list_entries,
             ipc::start_download,
@@ -189,10 +284,12 @@ pub fn run() {
             ipc::locate_install,
             ipc::run_setup,
             ipc::run_setup_path,
+            ipc::run_setup_elevated,
             ipc::rescan_library,
             ipc::install_game,
             ipc::delete_staging,
             ipc::uninstall_game,
+            ipc::find_game_uninstaller,
             ipc::delete_download,
             ipc::open_path,
             ipc::open_game_folder,
@@ -200,6 +297,23 @@ pub fn run() {
             ipc::set_game_executable,
             ipc::list_executables,
             ipc::launch_game,
+            ipc::set_notification_options,
+            ipc::set_window_options,
+            ipc::set_auto_install,
+            ipc::set_gamepad_options,
+            ipc::set_umu_fixes,
+            ipc::set_update_checking,
+            ipc::quit_app,
+            integrations::shortcut_status,
+            integrations::set_shortcut,
+            integrations::set_steam_shortcut,
+            integrations::list_prefixes,
+            integrations::delete_prefix,
+            integrations::open_prefix_tool,
+            integrations::umu_status,
+            integrations::refresh_umu_database,
+            updater::update_status,
+            updater::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gameyfin");

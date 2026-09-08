@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Route, Routes, useNavigate } from "react-router-dom";
+import { GamepadOverlay } from "@/components/GamepadOverlay";
 import { Icon } from "@/components/Icon";
 import { ResizeHandles } from "@/components/ResizeHandles";
 import { Sidebar } from "@/components/Sidebar";
 import { TitleBar } from "@/components/TitleBar";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { isMockBackend } from "@/lib/backend";
+import { useGamepad } from "@/lib/useGamepad";
+import { useCouch } from "@/state/couch";
 import type { LibraryEntry } from "@/types";
 import { DownloadsView } from "@/views/DownloadsView";
 import { InstalledView } from "@/views/InstalledView";
 import { LibraryView } from "@/views/LibraryView";
 import { SettingsView } from "@/views/SettingsView";
 import { WelcomeView } from "@/views/WelcomeView";
-import { useEntries, useStatus } from "@/lib/queries";
+import { useAppSettings, useEntries, useStatus } from "@/lib/queries";
 
 export function App() {
   const queryClient = useQueryClient();
@@ -20,8 +24,7 @@ export function App() {
 
   const status = useStatus();
 
-  // The backend restores a stored session at startup; until that resolves, showing the
-  // wizard would flash it in front of a user who is in fact already signed in.
+  // Don't flash the wizard while a stored session is still being restored.
   const [restoreSettled, setRestoreSettled] = useState(isMockBackend);
   useEffect(() => {
     if (isMockBackend) return;
@@ -34,8 +37,7 @@ export function App() {
         setRestoreSettled(true);
         void queryClient.invalidateQueries({ queryKey: ["status"] });
       });
-      // If the event already fired before this listener attached, the status query
-      // still settles things; don't wait forever on an event that will not come again.
+      // The event may have fired before this listener attached; this is the backstop.
       const timer = setTimeout(() => !cancelled && setRestoreSettled(true), 3000);
       return () => {
         clearTimeout(timer);
@@ -71,6 +73,7 @@ export function App() {
       <TitleBar />
       {isMockBackend && <MockBanner />}
       {offline && <OfflineBanner serverUrl={status.data?.serverUrl ?? null} />}
+      <UpdateBanner />
 
       {!ready ? (
         <Splash />
@@ -85,17 +88,66 @@ export function App() {
 
 function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const entries = useEntries();
+  const settings = useAppSettings();
+  const couch = useCouch((state) => state.couch);
 
-  // Anything mid-pipeline or waiting on a decision belongs in the Downloads badge.
+  // Controller bindings are mounted once, here, rather than per view: what a button does
+  // depends on what is on screen, which this reads at the time of the press.
+  useGamepad();
+
+  // The layout switch is an attribute on the root element so it can be expressed in CSS
+  // once, rather than as a prop every component has to accept and forward.
+  useEffect(() => {
+    document.documentElement.dataset.couch = couch ? "true" : "false";
+  }, [couch]);
+
+  // Tailwind and HeroUI both key off a `dark` class on the root element, so the palette
+  // is one class toggle rather than anything the components see.
+  const theme = settings.data?.theme ?? "dark";
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark = theme === "dark" || (theme === "system" && media.matches);
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.classList.toggle("light", !dark);
+    };
+    apply();
+    // Only worth listening to while actually following the system.
+    if (theme !== "system") return;
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [theme]);
+
+  // The tray's menu items navigate the window that is already open, rather than
+  // reloading it at a URL and losing every in-flight query.
+  useEffect(() => {
+    if (isMockBackend) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const off = await listen<string>("navigate", (event) => navigate(event.payload));
+      if (cancelled) off();
+      else unlisten = off;
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [navigate]);
+
+  // Anything mid-pipeline or awaiting a decision counts towards the Downloads badge.
   const pending = (entries.data ?? []).filter((e) =>
     ["downloading", "extracting", "extracted", "installing"].includes(e.state.kind),
   ).length;
 
-  // Two kinds of signal. `game-state` carries one game's new state and is patched into
-  // the cache directly, refetching instead would read the whole catalogue from the
-  // server several times a second, which left progress bars lagging so far behind that
-  // they appeared frozen. `library-changed` is for structural changes and does refetch.
+  // `game-state` is patched into the cache directly; refetching the whole catalogue
+  // several times a second left progress bars appearing frozen. `library-changed`
+  // is for structural changes and does refetch.
   useEffect(() => {
     if (isMockBackend) return;
     const unlisteners: Array<() => void> = [];
@@ -128,6 +180,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     <div className="flex min-h-0 flex-1">
       <Sidebar downloadCount={pending} />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <GamepadOverlay />
         <Routes>
           <Route path="/" element={<LibraryView />} />
           <Route path="/downloads" element={<DownloadsView />} />
@@ -178,7 +231,7 @@ function shortHost(url: string): string {
   }
 }
 
-/** Visible reminder that this is fixture data, so a screenshot is never mistaken for real. */
+/** Fixture-data banner, so a screenshot is never mistaken for the real thing. */
 function MockBanner() {
   return (
     <div className="shrink-0 bg-warning/15 px-4 py-1 text-center text-[11px] text-warning-600">

@@ -93,9 +93,25 @@ export function DownloadsView() {
 
   // `void backend.openFolder(...)` threw the promise away, so a rejection vanished: the
   // click did nothing, said nothing, and left nothing in the log to explain it.
+  //
+  // Asked for the download explicitly: from this list the interesting folder is the one
+  // holding the archive and the unpacked files, even for a game that also has a failed
+  // or finished install somewhere else.
   async function openFolder(gameId: number) {
     try {
-      await backend.openFolder(gameId);
+      await backend.openFolder(gameId, "downloads");
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
+  // Windows will not let this app elevate a program itself, so the retry goes back out
+  // through the shell and Windows shows its own consent dialog.
+  async function runAsAdministrator(gameId: number) {
+    setError(null);
+    try {
+      await backend.runSetupElevated(gameId);
+      await queryClient.invalidateQueries({ queryKey: ["entries"] });
     } catch (e) {
       setError(messageOf(e));
     }
@@ -122,6 +138,7 @@ export function DownloadsView() {
             onDelete={setDeleting}
             onCancel={cancelDownload}
             onOpenFolder={openFolder}
+            onElevate={runAsAdministrator}
           />
         ))}
       </div>
@@ -164,15 +181,20 @@ function DownloadRow({
   onDelete,
   onCancel,
   onOpenFolder,
+  onElevate,
 }: {
   entry: LibraryEntry;
   onInstall: (entry: LibraryEntry) => void;
   onDelete: (entry: LibraryEntry) => void;
   onCancel: (entry: LibraryEntry) => void;
   onOpenFolder: (gameId: number) => void;
+  onElevate: (gameId: number) => void;
 }) {
   const { game, state } = entry;
   const action = primaryAction(state);
+  // A plain "Retry install" would fail in exactly the same way, so when Windows asked
+  // for administrator rights that is the button offered instead.
+  const needsElevation = state.kind === "failed" && Boolean(state.elevationRequired);
 
   return (
     <article className="rounded-xl border border-default-200 bg-content1 p-4">
@@ -233,6 +255,12 @@ function DownloadRow({
           className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
         >
           {state.message}
+          {needsElevation && (
+            <span className="mt-1 block text-foreground/60">
+              Windows asks for permission before an installer may change the system.
+              Choosing this shows Windows&rsquo; own confirmation.
+            </span>
+          )}
         </p>
       )}
 
@@ -240,19 +268,30 @@ function DownloadRow({
         state.kind === "extracted" ||
         state.kind === "failed") && (
         <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              // Extracting and installing both involve a choice; retrying a download
-              // does not.
-              if (needsChooser(state)) onInstall(entry);
-              else void action.run(game.id);
-            }}
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
-          >
-            <Icon name={action.icon} className="h-3.5 w-3.5" />
-            {action.label}
-          </button>
+          {needsElevation ? (
+            <button
+              type="button"
+              onClick={() => onElevate(game.id)}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
+            >
+              <Icon name="installed" className="h-3.5 w-3.5" />
+              Run as administrator
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                // Extracting and installing both involve a choice; retrying a download
+                // does not.
+                if (needsChooser(state)) onInstall(entry);
+                else void action.run(game.id);
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
+            >
+              <Icon name={action.icon} className="h-3.5 w-3.5" />
+              {action.label}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onOpenFolder(game.id)}

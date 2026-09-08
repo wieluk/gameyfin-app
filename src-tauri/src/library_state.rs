@@ -65,6 +65,22 @@ pub struct GameRecord {
     pub staging_setups: Vec<String>,
     pub minutes_played: u32,
     pub last_played_at: Option<String>,
+    /// Extra options passed when the game starts, as the user typed them.
+    ///
+    /// Stored as one string rather than a parsed list because that is what is shown back
+    /// in the settings box, and a round trip through a list loses how it was written.
+    #[serde(default)]
+    pub launch_arguments: String,
+    /// Extra options passed to the game's setup program.
+    #[serde(default)]
+    pub installer_arguments: String,
+    /// A setup program Windows refused to start without administrator rights.
+    ///
+    /// Remembered so the offer to try again elevated survives a restart, and so the retry
+    /// runs the program that actually needed it rather than re-deriving a guess. Cleared
+    /// as soon as an install attempt gets past the spawn.
+    #[serde(default)]
+    pub elevation_program: Option<PathBuf>,
 }
 
 impl GameRecord {
@@ -207,6 +223,11 @@ pub enum GameState {
     Failed {
         message: String,
         stage: Stage,
+        /// Whether the step failed only because Windows wants it run as administrator.
+        ///
+        /// Kept apart from the message so the UI can offer the retry that actually helps,
+        /// rather than a plain "Retry install" that will fail again the same way.
+        elevation_required: bool,
     },
 }
 
@@ -322,6 +343,11 @@ impl LibraryState {
                 Activity::Failed { message, stage } => GameState::Failed {
                     message: message.clone(),
                     stage: *stage,
+                    // Recorded against the game rather than carried in the activity: the
+                    // program that needed elevation has to outlive the failure, because
+                    // it is what the retry runs.
+                    elevation_required: *stage == Stage::Install
+                        && record.elevation_program.is_some(),
                 },
             };
         }
@@ -454,6 +480,83 @@ pub type SharedLibraryState = Arc<LibraryState>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_refused_installer_offers_the_administrator_retry() {
+        // Windows returning "needs elevation" is not a broken download, and a plain
+        // "Retry install" would be refused identically. The record is what remembers it.
+        let state = LibraryState::default();
+        state
+            .update_record(7, |r| {
+                r.elevation_program = Some(PathBuf::from("C:/Downloads/(7) Game/setup.exe"))
+            })
+            .await;
+        state
+            .set_activity(
+                7,
+                Activity::Failed {
+                    message: "setup.exe needs to run as administrator.".into(),
+                    stage: Stage::Install,
+                },
+            )
+            .await;
+
+        match state.state_of(7).await {
+            GameState::Failed {
+                elevation_required, ..
+            } => assert!(elevation_required),
+            other => panic!("expected failed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_failure_offers_no_administrator_retry() {
+        let state = LibraryState::default();
+        state
+            .set_activity(
+                8,
+                Activity::Failed {
+                    message: "The installer exited with code 1.".into(),
+                    stage: Stage::Install,
+                },
+            )
+            .await;
+
+        match state.state_of(8).await {
+            GameState::Failed {
+                elevation_required, ..
+            } => assert!(!elevation_required),
+            other => panic!("expected failed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_download_never_offers_the_administrator_retry() {
+        // A leftover program from a previous install attempt must not turn an unrelated
+        // download failure into an offer to run something as administrator.
+        let state = LibraryState::default();
+        state
+            .update_record(9, |r| {
+                r.elevation_program = Some(PathBuf::from("setup.exe"))
+            })
+            .await;
+        state
+            .set_activity(
+                9,
+                Activity::Failed {
+                    message: "connection reset".into(),
+                    stage: Stage::Download,
+                },
+            )
+            .await;
+
+        match state.state_of(9).await {
+            GameState::Failed {
+                elevation_required, ..
+            } => assert!(!elevation_required),
+            other => panic!("expected failed, got {other:?}"),
+        }
+    }
 
     #[tokio::test]
     async fn an_unknown_game_is_not_installed() {

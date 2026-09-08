@@ -227,18 +227,189 @@ pub async fn run_capturing_limited(
     #[cfg(not(target_os = "linux"))]
     let _ = address_space;
 
-    let output = cmd.output().await.map_err(|source| {
-        CoreError::Other(format!(
-            "could not run {}: {source}",
-            command.program.to_string_lossy()
-        ))
-    })?;
+    let output = cmd
+        .output()
+        .await
+        .map_err(|source| spawn_error(command, source))?;
 
     Ok(CapturedRun {
         status: output.status.code(),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
+}
+
+/// Windows' `ERROR_ELEVATION_REQUIRED`.
+///
+/// `CreateProcess` returns it for a program whose manifest asks for administrator rights.
+/// Windows will not quietly elevate a child process, by design, so the request has to be
+/// made again through the shell, which is what shows the consent dialog.
+pub const ERROR_ELEVATION_REQUIRED: i32 = 740;
+
+/// Turn a failure to spawn into an error the caller can act on.
+fn spawn_error(command: &ResolvedCommand, source: std::io::Error) -> CoreError {
+    if source.raw_os_error() == Some(ERROR_ELEVATION_REQUIRED) {
+        return CoreError::ElevationRequired {
+            program: command.program.to_string_lossy().into_owned(),
+        };
+    }
+    CoreError::Other(format!(
+        "could not run {}: {source}",
+        command.program.to_string_lossy()
+    ))
+}
+
+/// Run a program with administrator rights, waiting for it to finish.
+///
+/// Windows has no way to elevate a child process from inside this one: the request must
+/// go through the shell, which puts the User Account Control dialog on screen and starts
+/// the program in a new, elevated process. That dialog *is* the consent step; there is no
+/// programmatic way around it, and asking for it without warning is why the call site
+/// confirms with the user first.
+///
+/// The elevated process is not our child, so its output cannot be captured. Only the exit
+/// code comes back, and [`CapturedRun::stdout`] and [`CapturedRun::stderr`] are empty.
+///
+/// This goes through PowerShell rather than `ShellExecuteEx` so that the whole thing is
+/// ordinary, reviewable code: the alternative is an `unsafe` FFI call with a hand-built
+/// struct, for a code path that cannot be exercised anywhere except on Windows.
+pub async fn run_elevated(command: &ResolvedCommand) -> CoreResult<CapturedRun> {
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+        Err(CoreError::Other(
+            "running a program as administrator is a Windows-only thing".to_string(),
+        ))
+    }
+
+    #[cfg(windows)]
+    {
+        // Passed base64-encoded so nothing in the script has to survive two rounds of
+        // command-line quoting, PowerShell's own being famously not the same as everyone
+        // else's. A game folder called `(76) Metal Slug Tactics` is exactly the sort of
+        // thing that does not survive.
+        let script = elevation_script(command);
+        let output = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                &encode_command(&script),
+            ])
+            // Without this a console window flashes up behind the consent dialog.
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .await
+            .map_err(|source| {
+                CoreError::Other(format!("could not ask for administrator rights: {source}"))
+            })?;
+
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        if output.status.code() == Some(EXIT_UAC_REFUSED) {
+            return Err(CoreError::Other(
+                "The administrator prompt was dismissed, so the program did not run.".to_string(),
+            ));
+        }
+
+        Ok(CapturedRun {
+            status: output.status.code(),
+            stdout: String::new(),
+            stderr,
+        })
+    }
+}
+
+/// Windows' flag for "start this process without a console window".
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(any(windows, test))]
+/// What [`elevation_script`] exits with when the user dismissed the consent dialog.
+///
+/// Chosen from the range Windows itself does not use for process exit codes, so it cannot
+/// be confused with something the installer returned.
+const EXIT_UAC_REFUSED: i32 = 223;
+
+#[cfg(any(windows, test))]
+/// A PowerShell single-quoted string.
+///
+/// The only rule inside one is that `'` doubles: no backslash escapes, no variable
+/// expansion. That makes it safe for a Windows path, which is full of backslashes, and
+/// for the parentheses and spaces this app puts in its folder names.
+fn ps_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(any(windows, test))]
+/// The script that asks Windows to run one command elevated and reports its exit code.
+fn elevation_script(command: &ResolvedCommand) -> String {
+    let mut script =
+        String::from("$ErrorActionPreference = 'Stop'; try { $process = Start-Process -FilePath ");
+    script.push_str(&ps_quote(&command.program.to_string_lossy()));
+
+    if !command.args.is_empty() {
+        let args: Vec<String> = command
+            .args
+            .iter()
+            .map(|arg| ps_quote(&arg.to_string_lossy()))
+            .collect();
+        script.push_str(" -ArgumentList ");
+        script.push_str(&args.join(","));
+    }
+
+    if let Some(dir) = &command.working_dir {
+        script.push_str(" -WorkingDirectory ");
+        script.push_str(&ps_quote(&dir.to_string_lossy()));
+    }
+
+    script.push_str(" -Verb RunAs -Wait -PassThru }");
+    // Dismissing the consent dialog is a refusal, not a failure of the program, and the
+    // two need to be told apart: one is worth reporting, the other the user just did.
+    script.push_str(&format!(
+        " catch {{ exit {EXIT_UAC_REFUSED} }}; if ($null -eq $process.ExitCode) {{ exit 0 }}; exit $process.ExitCode"
+    ));
+    script
+}
+
+#[cfg(any(windows, test))]
+/// Encode a script the way PowerShell's `-EncodedCommand` expects: UTF-16LE, then base64.
+fn encode_command(script: &str) -> String {
+    let utf16: Vec<u8> = script
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect();
+    base64(&utf16)
+}
+
+#[cfg(any(windows, test))]
+/// Standard base64, written out rather than pulled in.
+///
+/// One caller, thirty lines, and no other use for the dependency anywhere in the app.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let triple = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(ALPHABET[(triple >> 18) as usize & 0x3F] as char);
+        out.push(ALPHABET[(triple >> 12) as usize & 0x3F] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(triple >> 6) as usize & 0x3F] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[triple as usize & 0x3F] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 /// A game process tree being watched.
@@ -500,6 +671,69 @@ mod tests {
             env: BTreeMap::new(),
             working_dir: None,
         }
+    }
+
+    #[test]
+    fn base64_matches_the_standard_alphabet_and_padding() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        // The high bits, where a sloppy shift shows up.
+        assert_eq!(base64(&[0xFF, 0xFF, 0xFF]), "////");
+    }
+
+    #[test]
+    fn the_encoded_command_is_utf16_little_endian() {
+        // PowerShell rejects anything else, silently, by running nothing at all.
+        assert_eq!(encode_command("hi"), base64(&[b'h', 0, b'i', 0]));
+    }
+
+    #[test]
+    fn quoting_survives_the_characters_this_app_puts_in_paths() {
+        // Backslashes are literal inside a PowerShell single-quoted string, which is why
+        // it is the right quote for a Windows path.
+        assert_eq!(
+            ps_quote("C:\\Games\\(76) Metal Slug Tactics"),
+            "'C:\\Games\\(76) Metal Slug Tactics'"
+        );
+        // The one character that has to be escaped, and the only way to do it.
+        assert_eq!(ps_quote("it's"), "'it''s'");
+    }
+
+    #[test]
+    fn the_elevation_script_passes_the_program_its_arguments_and_folder() {
+        let mut command = command(
+            "C:\\Downloads\\(76) Game\\setup.exe",
+            &["/SP-", "/DIR=C:\\Games\\(76) Game"],
+        );
+        command.working_dir = Some(std::path::PathBuf::from("C:\\Downloads\\(76) Game"));
+
+        let script = elevation_script(&command);
+        assert!(script.contains("-Verb RunAs"), "got: {script}");
+        assert!(script.contains("-Wait"), "got: {script}");
+        assert!(
+            script.contains("-ArgumentList '/SP-','/DIR=C:\\Games\\(76) Game'"),
+            "got: {script}"
+        );
+        assert!(
+            script.contains("-WorkingDirectory 'C:\\Downloads\\(76) Game'"),
+            "got: {script}"
+        );
+        // A dismissed consent dialog has to be distinguishable from a failed install.
+        assert!(
+            script.contains(&format!("exit {EXIT_UAC_REFUSED}")),
+            "got: {script}"
+        );
+        assert!(script.contains("exit $process.ExitCode"), "got: {script}");
+    }
+
+    #[test]
+    fn a_program_without_arguments_gets_no_empty_argument_list() {
+        // `Start-Process -ArgumentList` with nothing after it is a syntax error.
+        let script = elevation_script(&command("C:\\setup.exe", &[]));
+        assert!(!script.contains("-ArgumentList"), "got: {script}");
     }
 
     #[tokio::test]

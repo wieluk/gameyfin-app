@@ -32,6 +32,11 @@ pub struct LibraryEntry {
     pub cover_url: Option<String>,
     pub header_url: Option<String>,
     pub screenshot_urls: Vec<String>,
+    /// Gameplay videos, as the server recorded them.
+    ///
+    /// Passed through untouched, unlike the artwork: these are third-party links the
+    /// webview loads directly on request, not files fetched with our session.
+    pub video_urls: Vec<String>,
 }
 
 /// What the UI needs to decide between the wizard and the library.
@@ -243,6 +248,84 @@ pub async fn sign_out(state: State<'_, AppState>) -> CommandResult<()> {
     // The cached catalogue belongs to the account that was signed in, not to the machine.
     state.forget_catalog().await;
     mutate_settings(&state, Settings::clear_session).await
+}
+
+/// Which desktop notifications to show.
+#[tauri::command]
+pub async fn set_notification_options(
+    state: State<'_, AppState>,
+    transfers: bool,
+    failures: bool,
+    updates: bool,
+) -> CommandResult<()> {
+    mutate_settings(&state, |s| {
+        s.notify_transfers = transfers;
+        s.notify_failures = failures;
+        s.notify_updates = updates;
+    })
+    .await
+}
+
+/// What the close button does, and whether to start hidden.
+#[tauri::command]
+pub async fn set_window_options(
+    state: State<'_, AppState>,
+    close_to_tray: bool,
+    start_minimized: bool,
+) -> CommandResult<()> {
+    mutate_settings(&state, |s| {
+        s.close_to_tray = close_to_tray;
+        s.start_minimized = start_minimized;
+    })
+    .await
+}
+
+/// Whether a finished download should install itself.
+#[tauri::command]
+pub async fn set_auto_install(state: State<'_, AppState>, enabled: bool) -> CommandResult<()> {
+    mutate_settings(&state, |s| s.auto_install = enabled).await
+}
+
+/// Controller reading and its dead zone.
+#[tauri::command]
+pub async fn set_gamepad_options(
+    state: State<'_, AppState>,
+    enabled: bool,
+    deadzone: f64,
+    couch_mode_auto: bool,
+) -> CommandResult<()> {
+    mutate_settings(&state, |s| {
+        s.gamepad_enabled = enabled;
+        s.gamepad_deadzone = deadzone;
+        s.couch_mode_auto = couch_mode_auto;
+    })
+    .await?;
+    // The poll thread reads these through a shared handle, so a change takes effect at
+    // once rather than on the next start.
+    state.apply_gamepad_settings().await;
+    Ok(())
+}
+
+/// Whether to look up per-title Proton fixes.
+#[tauri::command]
+pub async fn set_umu_fixes(state: State<'_, AppState>, enabled: bool) -> CommandResult<()> {
+    mutate_settings(&state, |s| s.umu_fixes = enabled).await
+}
+
+/// Whether to check for a new release at startup.
+#[tauri::command]
+pub async fn set_update_checking(state: State<'_, AppState>, enabled: bool) -> CommandResult<()> {
+    mutate_settings(&state, |s| s.check_for_updates = enabled).await
+}
+
+/// Quit for real, from the UI rather than the tray.
+///
+/// Needed because the close button may be set to hide the window, which leaves no way to
+/// end the app from inside it.
+#[tauri::command]
+pub async fn quit_app(app: AppHandle) -> CommandResult<()> {
+    crate::tray::quit_now(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -572,6 +655,193 @@ pub async fn log_directory() -> CommandResult<String> {
     Ok(crate::log_directory().to_string_lossy().into_owned())
 }
 
+/// One configured games folder, with how much room is left on its drive.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryRoot {
+    pub path: String,
+    /// True for the folder new downloads go to unless told otherwise.
+    pub is_default: bool,
+    /// Free space on the drive it sits on, or null when that cannot be read.
+    pub free_bytes: Option<u64>,
+    /// False when the folder is not there any more, so the UI can say so.
+    pub exists: bool,
+}
+
+/// Every configured games folder.
+#[tauri::command]
+pub async fn list_library_roots(state: State<'_, AppState>) -> CommandResult<Vec<LibraryRoot>> {
+    let settings = state.settings().await;
+    let roots = settings.library_roots();
+
+    let probed = tokio::task::spawn_blocking(move || {
+        roots
+            .into_iter()
+            .enumerate()
+            .map(|(index, path)| {
+                let as_path = PathBuf::from(&path);
+                LibraryRoot {
+                    is_default: index == 0,
+                    // Free space is read from the nearest folder that exists: a root on a
+                    // drive that is not mounted should report nothing rather than the
+                    // space on whatever its mount point happens to sit inside.
+                    free_bytes: as_path
+                        .exists()
+                        .then(|| gameyfin_core::download::available_space(&as_path))
+                        .flatten(),
+                    exists: as_path.is_dir(),
+                    path,
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| CommandError::Message(format!("could not read your games folders: {e}")))?;
+
+    Ok(probed)
+}
+
+/// Add a games folder.
+#[tauri::command]
+pub async fn add_library_root(state: State<'_, AppState>, path: String) -> CommandResult<()> {
+    let trimmed = path.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(CommandError::Message("That is not a folder.".into()));
+    }
+    tokio::fs::create_dir_all(&trimmed)
+        .await
+        .map_err(|e| CommandError::Message(format!("could not use {trimmed}: {e}")))?;
+
+    let settings = state.settings().await;
+    if settings.is_library_root(&trimmed) {
+        return Ok(());
+    }
+
+    mutate_settings(&state, |s| {
+        // The first folder configured becomes the default; later ones are additions.
+        if s.library_root.is_none() {
+            s.library_root = Some(trimmed.clone());
+        } else {
+            s.extra_library_roots.push(trimmed.clone());
+        }
+    })
+    .await
+}
+
+/// Stop using a games folder.
+///
+/// Only forgets it. Nothing on disk is touched, because the games in it are still games,
+/// and a settings screen is not where someone expects to lose a library.
+#[tauri::command]
+pub async fn remove_library_root(state: State<'_, AppState>, path: String) -> CommandResult<()> {
+    let settings = state.settings().await;
+    let remaining: Vec<String> = settings
+        .library_roots()
+        .into_iter()
+        .filter(|root| root != &path)
+        .collect();
+
+    if remaining.is_empty() {
+        return Err(CommandError::Message(
+            "At least one games folder is needed. Add another before removing this one.".into(),
+        ));
+    }
+
+    mutate_settings(&state, |s| {
+        s.library_root = remaining.first().cloned();
+        s.extra_library_roots = remaining.into_iter().skip(1).collect();
+    })
+    .await
+}
+
+/// Make a folder the one new downloads go to.
+#[tauri::command]
+pub async fn set_default_library_root(
+    state: State<'_, AppState>,
+    path: String,
+) -> CommandResult<()> {
+    let settings = state.settings().await;
+    if !settings.is_library_root(&path) {
+        return Err(CommandError::Message(
+            "That folder is not one of your games folders.".into(),
+        ));
+    }
+
+    let reordered: Vec<String> = std::iter::once(path.clone())
+        .chain(settings.library_roots().into_iter().filter(|r| r != &path))
+        .collect();
+
+    mutate_settings(&state, |s| {
+        s.library_root = reordered.first().cloned();
+        s.extra_library_roots = reordered.into_iter().skip(1).collect();
+    })
+    .await
+}
+
+/// Options a game can be given of its own.
+#[tauri::command]
+pub async fn set_game_options(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_id: i64,
+    launch_arguments: String,
+    installer_arguments: String,
+) -> CommandResult<()> {
+    state
+        .library()
+        .update_record(game_id, |r| {
+            r.launch_arguments = launch_arguments;
+            r.installer_arguments = installer_arguments;
+        })
+        .await;
+    notify(&app);
+    Ok(())
+}
+
+/// The options a game currently has.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameOptions {
+    pub launch_arguments: String,
+    pub installer_arguments: String,
+}
+
+#[tauri::command]
+pub async fn game_options(state: State<'_, AppState>, game_id: i64) -> CommandResult<GameOptions> {
+    let record = state.library().record(game_id).await;
+    Ok(GameOptions {
+        launch_arguments: record.launch_arguments,
+        installer_arguments: record.installer_arguments,
+    })
+}
+
+/// Executables never offered as a launch candidate, and the archive password.
+#[tauri::command]
+pub async fn set_extraction_options(
+    state: State<'_, AppState>,
+    password: Option<String>,
+    ignored_executables: Vec<String>,
+) -> CommandResult<()> {
+    mutate_settings(&state, |s| {
+        s.extraction_password = password.filter(|p| !p.is_empty());
+        s.ignored_executables = ignored_executables
+            .into_iter()
+            .map(|entry| entry.trim().to_string())
+            .filter(|entry| !entry.is_empty())
+            .collect();
+    })
+    .await
+}
+
+/// Which palette to use.
+#[tauri::command]
+pub async fn set_theme(state: State<'_, AppState>, theme: String) -> CommandResult<()> {
+    let parsed = crate::settings::Theme::from_key(&theme)
+        .ok_or_else(|| CommandError::Message(format!("{theme} is not a theme.")))?;
+    tracing::info!(theme = parsed.key(), "theme changed");
+    mutate_settings(&state, |s| s.theme = parsed).await
+}
+
 #[tauri::command]
 pub async fn set_library_root(
     app: AppHandle,
@@ -624,6 +894,7 @@ pub async fn list_entries(state: State<'_, AppState>) -> CommandResult<Vec<Libra
                 .iter()
                 .map(|i| crate::images::url_for(&i.path()))
                 .collect(),
+            video_urls: game.video_urls.clone(),
             minutes_played: record.minutes_played,
             last_played_at: record.last_played_at.clone(),
             archive_present: record.archive_path.as_ref().is_some_and(|p| p.exists()),
@@ -643,6 +914,7 @@ pub async fn start_download(
     app: AppHandle,
     state: State<'_, AppState>,
     game_id: i64,
+    root: Option<String>,
 ) -> CommandResult<()> {
     if state.library().is_busy(game_id).await {
         // Two transfers would write to the same file.
@@ -652,7 +924,20 @@ pub async fn start_download(
     let client = state.client().await.ok_or(CommandError::NotConnected)?;
     let settings = state.settings().await;
 
-    let library_root = library_root(&state).await?;
+    // Where the download lands. Validated against the configured list rather than taken
+    // as given, so the destination cannot be steered to somewhere the user never chose.
+    let library_root = match root {
+        Some(requested) if settings.is_library_root(&requested) => requested,
+        Some(requested) => {
+            return Err(CommandError::Message(format!(
+                "{requested} is not one of your games folders."
+            )))
+        }
+        // No folder named, so follow the game itself: a retry after a failed download
+        // must resume beside the partial file, not start again in whatever the default
+        // has since become.
+        None => root_for_game(&state, game_id).await?,
+    };
 
     let game = state
         .games()
@@ -787,8 +1072,19 @@ pub async fn start_download(
                     })
                     .await;
                 // A finished download is not an install: it rests in Downloaded until the
-                // user chooses to install it.
+                // user chooses to install it, unless they have asked not to be asked.
                 library.clear_activity(game_id).await;
+
+                let settings = app.state::<AppState>().settings().await;
+                if settings.auto_install {
+                    // Notified as one step rather than two: somebody who turned this on
+                    // does not think of downloading and installing as separate events.
+                    tracing::info!(game_id, "installing automatically");
+                    notify(&app);
+                    auto_install(app.clone(), game_id).await;
+                } else {
+                    crate::notify::download_finished(&app, &game.title).await;
+                }
             }
             // Cancelling is something the user asked for, so it returns the game to its
             // previous state rather than flagging a failure they would have to dismiss.
@@ -807,6 +1103,7 @@ pub async fn start_download(
                         },
                     )
                     .await;
+                crate::notify::failed(&app, "Download", &game.title, &e.to_string()).await;
             }
         }
 
@@ -1070,15 +1367,47 @@ async fn library_root(state: &State<'_, AppState>) -> CommandResult<String> {
     })
 }
 
+/// Which games folder a particular game lives in.
+///
+/// A game is not tied to the default root: it went wherever it was sent when it was
+/// downloaded. That is recovered from the paths already recorded for it, so an install or
+/// an archive on a second drive keeps working after the default changes.
+async fn root_for_game(state: &State<'_, AppState>, game_id: i64) -> CommandResult<String> {
+    let record = state.library().record(game_id).await;
+    let settings = state.settings().await;
+    let known = settings.library_roots();
+
+    let existing = record
+        .install_dir
+        .iter()
+        .chain(
+            record
+                .archive_path
+                .iter()
+                .filter_map(|p| p.parent().map(|_| p)),
+        )
+        .find_map(|path| {
+            known
+                .iter()
+                .find(|root| path.starts_with(root))
+                .map(|root| root.to_string())
+        });
+
+    match existing {
+        Some(root) => Ok(root),
+        None => library_root(state).await,
+    }
+}
+
 /// Where a game's compatibility prefix lives.
 async fn prefix_dir_for(state: &State<'_, AppState>, game_id: i64) -> CommandResult<PathBuf> {
-    let root = library_root(state).await?;
+    let root = root_for_game(state, game_id).await?;
     Ok(gameyfin_core::InstallLayout::new(&root).prefix_dir(game_id))
 }
 
 /// Where a game is installed, given the configured library root.
 async fn install_dir_for(state: &State<'_, AppState>, game_id: i64) -> CommandResult<PathBuf> {
-    let root = library_root(state).await?;
+    let root = root_for_game(state, game_id).await?;
 
     let title = state
         .games()
@@ -1089,6 +1418,34 @@ async fn install_dir_for(state: &State<'_, AppState>, game_id: i64) -> CommandRe
         .unwrap_or_else(|| format!("Game {game_id}"));
 
     Ok(gameyfin_core::InstallLayout::new(&root).install_dir(game_id, &title))
+}
+
+/// The Downloads or Installations folder of the games folder a particular game is in.
+async fn library_folder_root(
+    state: &State<'_, AppState>,
+    game_id: i64,
+    folder: LibraryFolder,
+) -> CommandResult<PathBuf> {
+    let layout = gameyfin_core::InstallLayout::new(root_for_game(state, game_id).await?);
+    Ok(match folder {
+        LibraryFolder::Downloads => layout.downloads_root(),
+        LibraryFolder::Installations => layout.installs_root(),
+    })
+}
+
+/// Where a game's download folder is, given the games folder it belongs to.
+async fn downloads_dir_for(state: &State<'_, AppState>, game_id: i64) -> CommandResult<PathBuf> {
+    let root = root_for_game(state, game_id).await?;
+
+    let title = state
+        .games()
+        .await?
+        .into_iter()
+        .find(|g| g.id == game_id)
+        .map(|g| g.title)
+        .unwrap_or_else(|| format!("Game {game_id}"));
+
+    Ok(gameyfin_core::InstallLayout::new(&root).downloads_dir(game_id, &title))
 }
 
 /// Unpack a download, staging the files beside the archive.
@@ -1117,6 +1474,12 @@ pub async fn extract_download(
         .ok_or_else(|| CommandError::Message("The download has no folder.".into()))?
         .join(crate::library_state::EXTRACT_DIR);
 
+    let extraction_password = state
+        .settings()
+        .await
+        .extraction_password
+        .filter(|password| !password.is_empty());
+
     let library = state.library_handle();
     let delete_archive = delete_archive.unwrap_or(false);
 
@@ -1132,6 +1495,9 @@ pub async fn extract_download(
         let progress_library = library.clone();
         let progress_app = app.clone();
         let archive_for_extract = archive.clone();
+        // Tried whether or not the archive turns out to be encrypted; an unencrypted
+        // entry ignores it, so there is nothing to detect first.
+        let password = extraction_password.clone();
 
         // Extraction is synchronous and CPU-bound, so it runs on the blocking pool rather
         // than stalling the async runtime for the duration of a large archive.
@@ -1139,21 +1505,26 @@ pub async fn extract_download(
             // Starts in the past so the first update is emitted immediately rather than
             // being swallowed by the throttle.
             let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
-            gameyfin_core::extract::extract(&archive_for_extract, &dir, |progress| {
-                if last.elapsed() < std::time::Duration::from_millis(200) {
-                    return;
-                }
-                last = std::time::Instant::now();
-                let percent = progress.percent();
-                let library = progress_library.clone();
-                let app = progress_app.clone();
-                tauri::async_runtime::spawn(async move {
-                    library
-                        .set_activity(game_id, Activity::Extracting { percent })
-                        .await;
-                    notify_state(&app, &library, game_id).await;
-                });
-            })
+            gameyfin_core::extract::extract_with(
+                &archive_for_extract,
+                &dir,
+                password.as_deref(),
+                |progress| {
+                    if last.elapsed() < std::time::Duration::from_millis(200) {
+                        return;
+                    }
+                    last = std::time::Instant::now();
+                    let percent = progress.percent();
+                    let library = progress_library.clone();
+                    let app = progress_app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        library
+                            .set_activity(game_id, Activity::Extracting { percent })
+                            .await;
+                        notify_state(&app, &library, game_id).await;
+                    });
+                },
+            )
         })
         .await;
 
@@ -1198,7 +1569,7 @@ pub async fn extract_download(
                     .update_record(game_id, |r| {
                         r.extracted_dir = Some(staging.clone());
                         r.staging_setups = relative.clone();
-                        r.setup_candidates = relative;
+                        r.setup_candidates = relative.clone();
                         if delete_archive {
                             r.archive_path = None;
                             r.archive_bytes = 0;
@@ -1206,9 +1577,32 @@ pub async fn extract_download(
                     })
                     .await;
                 library.clear_activity(game_id).await;
+
+                // Automatic installing stops here when the archive turned out to hold an
+                // installer. A setup wizard asks questions, sometimes about where to put
+                // the game and sometimes about a licence, and answering them on the
+                // user's behalf is not something a checkbox should authorise.
+                let settings = app.state::<AppState>().settings().await;
+                if settings.auto_install {
+                    if relative.is_empty() {
+                        finish_auto_install(app.clone(), game_id).await;
+                    } else {
+                        tracing::info!(game_id, "not installing automatically: setup required");
+                        let title = title_of_game(&app, game_id).await;
+                        crate::notify::send(
+                            &app,
+                            crate::notify::Category::Transfer,
+                            "Setup needed",
+                            &format!("{title} came with an installer. Run it from Downloads."),
+                        )
+                        .await;
+                    }
+                }
             }
             Ok(Err(e)) => {
                 tracing::error!(game_id, error = %e, "extraction failed");
+                let title = title_of_game(&app, game_id).await;
+                crate::notify::failed(&app, "Extract", &title, &e.to_string()).await;
                 library
                     .set_activity(
                         game_id,
@@ -1278,8 +1672,15 @@ pub async fn install_game(
             .library()
             .update_record(game_id, |r| r.used_setup = Some(relative.to_string()))
             .await;
-        return run_program_as_installer(&app, &state, game_id, &base.join(relative), &install_dir)
-            .await;
+        return run_program_as_installer(
+            &app,
+            &state,
+            game_id,
+            &base.join(relative),
+            &install_dir,
+            false,
+        )
+        .await;
     }
 
     // Not an archive: act on the downloaded file itself.
@@ -1294,7 +1695,7 @@ pub async fn install_game(
         Some(
             gameyfin_core::InstallMethod::RunWindowsInstaller
             | gameyfin_core::InstallMethod::RunWindowsInstallerViaProton,
-        ) => run_program_as_installer(&app, &state, game_id, &archive, &install_dir).await,
+        ) => run_program_as_installer(&app, &state, game_id, &archive, &install_dir, false).await,
         _ => Err(CommandError::Message(format!(
             "{method} is not a way to install this."
         ))),
@@ -1382,23 +1783,77 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The uninstaller found in a game's install folder, if there is one.
+///
+/// Reported to the UI before anything is removed, so the confirmation can say which
+/// program will run, or offer to be pointed at it when detection came up empty. The
+/// names an uninstaller goes by are a convention, not a rule, and a game that named
+/// its own `cleanup.exe` used to be uninstalled by deleting the folder underneath it.
+#[tauri::command]
+pub async fn find_game_uninstaller(
+    state: State<'_, AppState>,
+    game_id: i64,
+) -> CommandResult<Option<String>> {
+    let record = state.library().record(game_id).await;
+    let Some(dir) = record.install_dir.filter(|d| d.is_dir()) else {
+        return Ok(None);
+    };
+
+    let found = tokio::task::spawn_blocking(move || gameyfin_core::find_uninstaller(&dir))
+        .await
+        .unwrap_or(None);
+
+    Ok(found.map(|p| p.to_string_lossy().into_owned()))
+}
+
 /// Remove an installed game's files, keeping the downloaded archive.
+///
+/// `uninstaller` is a program the user picked themselves, for the case where detection
+/// found nothing. It has to live inside the game's own folder: this runs whatever it is
+/// given, and "uninstall this game" is not consent to run an arbitrary program.
 #[tauri::command]
 pub async fn uninstall_game(
     app: AppHandle,
     state: State<'_, AppState>,
     game_id: i64,
     run_uninstaller: Option<bool>,
+    uninstaller: Option<String>,
 ) -> CommandResult<()> {
     let record = state.library().record(game_id).await;
     let Some(dir) = record.install_dir else {
         return Ok(());
     };
 
+    let chosen = match uninstaller.filter(|p| !p.is_empty()) {
+        Some(path) => {
+            let path = PathBuf::from(path);
+            if !path.is_file() {
+                return Err(CommandError::Message(format!(
+                    "{} is not a file.",
+                    path.display()
+                )));
+            }
+            // Compared after resolving both sides: a path holding `..`, or reached
+            // through a symlink, would otherwise pass a plain prefix check.
+            let inside = match (path.canonicalize(), dir.canonicalize()) {
+                (Ok(program), Ok(root)) => program.starts_with(&root),
+                _ => false,
+            };
+            if !inside {
+                return Err(CommandError::Message(format!(
+                    "{} is not inside this game's folder.",
+                    path.display()
+                )));
+            }
+            Some(path)
+        }
+        None => None,
+    };
+
     // A game installed by a setup program usually ships its own uninstaller. Running it
     // clears registry entries and shortcuts that deleting the folder would leave behind.
     if run_uninstaller.unwrap_or(true) {
-        if let Some(uninstaller) = gameyfin_core::find_uninstaller(&dir) {
+        if let Some(uninstaller) = chosen.or_else(|| gameyfin_core::find_uninstaller(&dir)) {
             tracing::info!(game_id, ?uninstaller, "running the game's uninstaller");
             match run_uninstaller_program(&state, game_id, &uninstaller).await {
                 Ok(()) => tracing::info!(game_id, "uninstaller finished"),
@@ -1420,6 +1875,7 @@ pub async fn uninstall_game(
             r.executable = None;
             r.installed_at = None;
             r.setup_candidates.clear();
+            r.elevation_program = None;
         })
         .await;
     state.library().clear_activity(game_id).await;
@@ -1446,9 +1902,18 @@ async fn run_uninstaller_program(
     };
 
     let command = gameyfin_core::resolve_command(&config).map_err(|e| e.to_string())?;
-    let run = gameyfin_core::run_capturing(&command)
-        .await
-        .map_err(|e| e.to_string())?;
+    let run = match gameyfin_core::run_capturing(&command).await {
+        // Uninstallers written by an installer that needed administrator rights need them
+        // too. Retried without asking, unlike an install: the user has already said to
+        // uninstall this game, and Windows still shows its own consent dialog.
+        Err(gameyfin_core::CoreError::ElevationRequired { .. }) => {
+            tracing::info!(game_id, "the uninstaller needs administrator rights");
+            gameyfin_core::run_elevated(&command)
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        other => other.map_err(|e| e.to_string())?,
+    };
 
     if run.success() {
         Ok(())
@@ -1565,7 +2030,46 @@ pub async fn run_setup_path(
 
     let install_dir = install_dir_for(&state, game_id).await?;
     tracing::info!(game_id, %path, "running a user-chosen setup program");
-    run_program_as_installer(&app, &state, game_id, &program, &install_dir).await
+    run_program_as_installer(&app, &state, game_id, &program, &install_dir, false).await
+}
+
+/// Run the setup program again, this time as administrator.
+///
+/// Windows will not let a process quietly elevate a child of its own, so the request goes
+/// back out through the shell and the user confirms in the system's own consent dialog.
+/// Only reachable after an attempt has actually been refused, which is what records which
+/// program to run: guessing would mean asking for administrator rights speculatively.
+#[tauri::command]
+pub async fn run_setup_elevated(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_id: i64,
+) -> CommandResult<()> {
+    if !cfg!(windows) {
+        return Err(CommandError::Message(
+            "Running a program as administrator is a Windows thing.".into(),
+        ));
+    }
+
+    let program = state
+        .library()
+        .record(game_id)
+        .await
+        .elevation_program
+        .ok_or_else(|| {
+            CommandError::Message("Nothing is waiting to be run as administrator.".into())
+        })?;
+
+    if !program.is_file() {
+        return Err(CommandError::Message(format!(
+            "{} is no longer there.",
+            program.display()
+        )));
+    }
+
+    let install_dir = install_dir_for(&state, game_id).await?;
+    tracing::info!(game_id, ?program, "retrying the installer as administrator");
+    run_program_as_installer(&app, &state, game_id, &program, &install_dir, true).await
 }
 
 /// Reveal any path in the desktop file manager.
@@ -1579,43 +2083,67 @@ pub async fn open_path(app: AppHandle, path: String) -> CommandResult<()> {
 }
 
 /// Reveal a game's folder in the desktop file manager.
+///
+/// `folder` says which of the game's two folders was asked for. The Downloads list must
+/// open the download even for a game that is also installed, and, more to the point, for
+/// one whose install *failed*: nothing was recorded as installed, extracting with
+/// "delete the archive" cleared the archive path too, and the button was left with
+/// nothing to open at all while the unpacked files sat in Downloads the whole time.
 #[tauri::command]
 pub async fn open_game_folder(
     app: AppHandle,
     state: State<'_, AppState>,
     game_id: i64,
+    folder: Option<LibraryFolder>,
 ) -> CommandResult<()> {
     use tauri_plugin_opener::OpenerExt;
 
     let record = state.library().record(game_id).await;
-    let target = record
-        .install_dir
-        .or_else(|| {
-            record
-                .archive_path
-                .and_then(|p| p.parent().map(Path::to_path_buf))
-        })
-        .ok_or_else(|| CommandError::Message("There is nothing on disk for this game.".into()))?;
+
+    // Every place this game's files could be. The download folder is derived from the
+    // library layout rather than from a recorded path, so it is still known after the
+    // archive has been deleted and when staging was never created.
+    let downloads: Vec<PathBuf> = [
+        record
+            .extracted_dir
+            .as_ref()
+            .and_then(|d| d.parent().map(Path::to_path_buf)),
+        record
+            .archive_path
+            .as_ref()
+            .and_then(|p| p.parent().map(Path::to_path_buf)),
+        downloads_dir_for(&state, game_id).await.ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let installed: Vec<PathBuf> = record.install_dir.clone().into_iter().collect();
+
+    let candidates: Vec<PathBuf> = match folder {
+        // Asked for one folder in particular: the other one is not a substitute. Showing
+        // Installations to someone who clicked a row in Downloads is not "close enough",
+        // it is the wrong folder with no indication that it is.
+        Some(LibraryFolder::Downloads) => downloads,
+        Some(LibraryFolder::Installations) => installed,
+        None => installed.into_iter().chain(downloads).collect(),
+    };
 
     // The recorded folder can be gone: a failed install may never have created it, and a
     // finished one has its download folder removed. Opening a path that is not there is a
-    // silent no-op through the desktop portal, the click appears to do nothing at all,
-    // so fall back to the nearest folder that does exist and say what happened.
-    let opened = if target.is_dir() {
-        target.clone()
-    } else {
-        let parent = target
-            .ancestors()
-            .skip(1)
-            .find(|p| p.is_dir())
-            .ok_or_else(|| {
-                CommandError::Message(format!(
-                    "{} no longer exists, and neither does the folder that contained it.",
-                    target.display()
-                ))
+    // silent no-op through the desktop portal, the click appears to do nothing at all, so
+    // fall back to the containing folder, which is ours and can simply be created.
+    let opened = match candidates.iter().find(|p| p.is_dir()) {
+        Some(existing) => existing.clone(),
+        None => {
+            let root =
+                library_folder_root(&state, game_id, folder.unwrap_or(LibraryFolder::Downloads))
+                    .await?;
+            tracing::warn!(game_id, ?candidates, fallback = ?root, "this game has no folder yet; opening the library folder");
+            tokio::fs::create_dir_all(&root).await.map_err(|e| {
+                CommandError::Message(format!("could not create {}: {e}", root.display()))
             })?;
-        tracing::warn!(game_id, ?target, fallback = ?parent, "the game's folder is gone; opening its parent");
-        parent.to_path_buf()
+            root
+        }
     };
 
     // Logged because the failure mode is invisible otherwise: through the desktop portal,
@@ -1629,7 +2157,7 @@ pub async fn open_game_folder(
 }
 
 /// Which of the library's own folders to reveal.
-#[derive(serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LibraryFolder {
     Downloads,
@@ -1646,10 +2174,21 @@ pub async fn open_library_folder(
     app: AppHandle,
     state: State<'_, AppState>,
     folder: LibraryFolder,
+    root: Option<String>,
 ) -> CommandResult<()> {
     use tauri_plugin_opener::OpenerExt;
 
-    let root = library_root(&state).await?;
+    // A named root has to be one of the configured ones. Opening an arbitrary path
+    // because it arrived in an argument is not something this should do.
+    let root = match root {
+        Some(requested) if state.settings().await.is_library_root(&requested) => requested,
+        Some(requested) => {
+            return Err(CommandError::Message(format!(
+                "{requested} is not one of your games folders."
+            )))
+        }
+        None => library_root(&state).await?,
+    };
     let layout = gameyfin_core::InstallLayout::new(&root);
     let dir = match folder {
         LibraryFolder::Downloads => layout.downloads_root(),
@@ -1708,6 +2247,7 @@ pub async fn list_executables(
         gameyfin_core::Detection::None => Vec::new(),
     };
 
+    let settings = state.settings().await;
     Ok(paths
         .into_iter()
         .filter_map(|p| {
@@ -1715,6 +2255,9 @@ pub async fn list_executables(
                 .ok()
                 .map(|rel| rel.to_string_lossy().into_owned())
         })
+        // Redistributables and crash handlers ship beside a game in numbers; on a large
+        // install the actual launcher is easily lost among them.
+        .filter(|relative| !settings.is_ignored_executable(relative))
         .collect())
 }
 
@@ -1766,12 +2309,17 @@ async fn copy_executable(
 /// The app cannot drive a setup wizard, so it cannot know where files will land. It runs
 /// the program, then checks the suggested folder; if the user chose elsewhere they can
 /// point the app at it afterwards.
+///
+/// `elevated` asks Windows to run the program as administrator, which puts a consent
+/// dialog on screen. It is never set on the first attempt: the app finds out that a
+/// particular installer needs it by being refused, then offers the retry.
 async fn run_program_as_installer(
     app: &AppHandle,
     state: &State<'_, AppState>,
     game_id: i64,
     program: &Path,
     install_dir: &Path,
+    elevated: bool,
 ) -> CommandResult<()> {
     if !program.exists() {
         return Err(CommandError::Message(format!(
@@ -1890,6 +2438,15 @@ async fn run_program_as_installer(
     }
     config.arguments.extend(extra);
 
+    // The user's own installer options last, so a silent-install flag they added wins
+    // over the toolkit defaults guessed above.
+    let installer_arguments =
+        gameyfin_core::arguments::split(&state.library().record(game_id).await.installer_arguments);
+    if !installer_arguments.is_empty() {
+        tracing::info!(game_id, arguments = ?installer_arguments, "applying the game's installer options");
+        config.arguments.extend(installer_arguments);
+    }
+
     let mut command = gameyfin_core::resolve_command(&config)
         .map_err(|e| CommandError::Message(e.to_string()))?;
     tracing::debug!(game_id, program = ?command.program, args = ?command.args, "installer command");
@@ -1899,6 +2456,12 @@ async fn run_program_as_installer(
         .await
         .map_err(fs_err("create", install_dir))?;
 
+    // A new attempt supersedes whatever the last one concluded, so the offer to retry as
+    // administrator goes now rather than being left to contradict the next failure.
+    state
+        .library()
+        .update_record(game_id, |r| r.elevation_program = None)
+        .await;
     state
         .library()
         .set_activity(game_id, Activity::Installing { percent: 0.0 })
@@ -1930,13 +2493,22 @@ async fn run_program_as_installer(
 
     let library = state.library_handle();
     let install_dir = install_dir.to_path_buf();
+    let program = program.to_path_buf();
     let app = app.clone();
 
     tauri::async_runtime::spawn(async move {
         let started = std::time::Instant::now();
-        // Captured rather than supervised: when a setup program fails immediately, the
-        // reason is in its output, and discarding that leaves nothing to diagnose.
-        let run = gameyfin_core::run_capturing_limited(&command, address_space).await;
+        let run = if elevated {
+            // Nothing to capture and no limit to apply: the elevated process is started
+            // by the shell, not by us, so it is not our child.
+            tracing::info!(game_id, ?program, "running the installer as administrator");
+            gameyfin_core::run_elevated(&command).await
+        } else {
+            // Captured rather than supervised: when a setup program fails immediately,
+            // the reason is in its output, and discarding that leaves nothing to
+            // diagnose.
+            gameyfin_core::run_capturing_limited(&command, address_space).await
+        };
         let elapsed = started.elapsed();
 
         let failure = match &run {
@@ -1968,6 +2540,27 @@ async fn run_program_as_installer(
                         run.status.unwrap_or(-1)
                     )
                 })
+            }
+            // Windows refusing to start an installer without administrator rights is
+            // not a broken download: the file is fine, and running it again through the
+            // shell works. Remembering the program is what lets the UI offer that,
+            // rather than a retry that fails identically.
+            Err(gameyfin_core::CoreError::ElevationRequired { .. }) => {
+                tracing::warn!(
+                    game_id,
+                    ?program,
+                    "the installer needs administrator rights"
+                );
+                library
+                    .update_record(game_id, |r| r.elevation_program = Some(program.clone()))
+                    .await;
+                Some(format!(
+                    "{} needs to run as administrator.",
+                    program
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| program.display().to_string())
+                ))
             }
             Err(e) => {
                 tracing::error!(game_id, error = %e, "could not run the installer");
@@ -2173,7 +2766,15 @@ pub async fn run_setup(
         .library()
         .update_record(game_id, |r| r.used_setup = Some(relative.clone()))
         .await;
-    run_program_as_installer(&app, &state, game_id, &base.join(&relative), &install_dir).await
+    run_program_as_installer(
+        &app,
+        &state,
+        game_id,
+        &base.join(&relative),
+        &install_dir,
+        false,
+    )
+    .await
 }
 
 /// Locate a Windows runtime and get this game's prefix ready to run in.
@@ -2370,7 +2971,12 @@ async fn notify_state(app: &AppHandle, library: &crate::library_state::LibrarySt
 /// machine are invisible until something looks for them.
 #[tauri::command]
 pub async fn rescan_library(app: AppHandle, state: State<'_, AppState>) -> CommandResult<usize> {
-    let root = library_root(&state).await?;
+    let roots = state.settings().await.library_roots();
+    if roots.is_empty() {
+        return Err(CommandError::Message(
+            "No games folder configured yet. Set one in Settings.".into(),
+        ));
+    }
 
     // A rescan is also the natural moment to re-read the catalogue, but only when there
     // is a server to read it from. Every view rescans as it opens, and against a server
@@ -2382,10 +2988,70 @@ pub async fn rescan_library(app: AppHandle, state: State<'_, AppState>) -> Comma
         state.invalidate_catalog().await;
     }
 
-    let found = state.library().rescan(Path::new(&root)).await;
-    tracing::info!(root = %root, found, "rescanned the library folder");
+    // Every root, not just the default: a game on a second drive is no less installed.
+    let mut found = 0;
+    for root in &roots {
+        found += state.library().rescan(Path::new(root)).await;
+    }
+    tracing::info!(roots = roots.len(), found, "rescanned the library folders");
     notify(&app);
     Ok(found)
+}
+
+/// A game's title, for a message. Falls back to something printable.
+pub async fn title_of_game(app: &AppHandle, game_id: i64) -> String {
+    app.state::<AppState>()
+        .games()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|g| g.id == game_id)
+        .map(|g| g.title)
+        .unwrap_or_else(|| format!("Game {game_id}"))
+}
+
+/// Begin an automatic install, from the task that finished the download.
+///
+/// Only the unpack: what happens after it depends on what came out, which the extraction
+/// handler decides once it can see.
+async fn auto_install(app: AppHandle, game_id: i64) {
+    let state = app.state::<AppState>();
+    // The archive is kept. Deleting it as part of something the user did not explicitly
+    // ask for would make a re-install a re-download.
+    if let Err(e) = extract_download(app.clone(), state, game_id, Some(false)).await {
+        tracing::warn!(game_id, "could not start the automatic install: {e}");
+        let title = title_of_game(&app, game_id).await;
+        crate::notify::failed(&app, "Install", &title, &e.to_string()).await;
+    }
+}
+
+/// Finish an automatic install by moving the unpacked files into place.
+async fn finish_auto_install(app: AppHandle, game_id: i64) {
+    let title = title_of_game(&app, game_id).await;
+    let state = app.state::<AppState>();
+
+    let result = async {
+        let install_dir = install_dir_for(&state, game_id).await?;
+        let source = state
+            .library()
+            .record(game_id)
+            .await
+            .existing_staging()
+            .ok_or_else(|| CommandError::Message("Nothing was unpacked.".into()))?;
+        move_into_place(&app, &state, game_id, &source, &install_dir).await
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            tracing::info!(game_id, "automatic install finished");
+            crate::notify::install_finished(&app, &title).await;
+        }
+        Err(e) => {
+            tracing::error!(game_id, "automatic install failed: {e}");
+            crate::notify::failed(&app, "Install", &title, &e.to_string()).await;
+        }
+    }
 }
 
 fn cookie_header(cookies: &std::collections::HashMap<String, String>) -> String {
@@ -2469,7 +3135,7 @@ pub async fn launch_game(
         )));
     }
 
-    let config = if gameyfin_core::needs_proton(&executable) {
+    let mut config = if gameyfin_core::needs_proton(&executable) {
         let (runtime, prefix) = ready_windows_prefix(&app, &state, game_id).await?;
         tracing::info!(
             game_id,
@@ -2483,6 +3149,14 @@ pub async fn launch_game(
         tracing::info!(game_id, ?executable, "launching a native game");
         gameyfin_core::LaunchConfig::native(executable)
     };
+
+    // The user's own options, appended after anything the runtime needs. A game that
+    // wants `-windowed` or `-nolauncher` has no other way to be told.
+    let launch_arguments = gameyfin_core::arguments::split(&record.launch_arguments);
+    if !launch_arguments.is_empty() {
+        tracing::info!(game_id, arguments = ?launch_arguments, "applying the game's launch options");
+        config.arguments.extend(launch_arguments);
+    }
 
     let command = gameyfin_core::resolve_command(&config).map_err(|e| {
         tracing::error!(game_id, error = %e, "could not build the launch command");
@@ -2578,4 +3252,28 @@ pub async fn launch_game(
     });
 
     Ok(())
+}
+
+/// Start Gameyfin when the user logs in.
+///
+/// The registration itself belongs to the desktop, not to our settings file, so the
+/// plugin is the source of truth and the stored flag only mirrors it for display.
+#[tauri::command]
+pub async fn set_autostart(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> CommandResult<()> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    result
+        .map_err(|e| CommandError::Message(format!("could not change the startup setting: {e}")))?;
+
+    mutate_settings(&state, |s| s.autostart = enabled).await
 }

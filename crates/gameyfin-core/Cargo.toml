@@ -21,6 +21,11 @@ zip = { version = "2", default-features = false, features = ["deflate", "bzip2",
 sevenz-rust2 = "0.13"
 tar = "0.4.46"
 liblzma = { version = "0.4.8", features = ["static"] }
+# The other tar wrappers. All three are already in the tree as `zip` dependencies,
+# so depending on them directly adds nothing to the build.
+flate2 = "1"
+bzip2 = "0.5"
+zstd = "0.13"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

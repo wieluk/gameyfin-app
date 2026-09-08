@@ -32,6 +32,71 @@ export interface ConnectionStatus {
 /** One of the two folders the app owns inside the games folder. */
 export type LibraryFolder = "downloads" | "installations";
 
+/** Where a game's shortcut can be put. */
+export type ShortcutLocation = "desktop" | "menu";
+
+export interface ShortcutStatus {
+  desktop: boolean;
+  menu: boolean;
+  /** False when Steam is not installed, in which case the option is not offered. */
+  steamAvailable: boolean;
+  steam: boolean;
+}
+
+/** How this copy of the app can be updated. See `updater.rs`. */
+export type UpdateChannel = "self-install" | "flatpak" | "system-package" | "development";
+
+export interface UpdateStatus {
+  currentVersion: string;
+  latestVersion: string | null;
+  available: boolean;
+  channel: UpdateChannel;
+  /** Whether the app can install the update itself, or can only point at it. */
+  canInstall: boolean;
+  releaseUrl: string;
+  notes: string | null;
+  /** Why the check failed, when it did. */
+  error: string | null;
+}
+
+export interface PrefixEntry {
+  gameId: number;
+  /** Null for a prefix whose game is no longer in the library. */
+  title: string | null;
+  path: string;
+  bytes: number;
+}
+
+/** A Wine tool that can be pointed at one prefix. */
+export type PrefixTool = "winecfg" | "explorer" | "regedit";
+
+/** One configured games folder. */
+export interface LibraryRoot {
+  path: string;
+  /** The folder new downloads go to unless told otherwise. */
+  isDefault: boolean;
+  /** Free space on its drive, or null when that cannot be read. */
+  freeBytes: number | null;
+  /** False when the folder is gone, so the UI can say so rather than failing later. */
+  exists: boolean;
+}
+
+/** Extra options a single game is given. */
+export interface GameOptions {
+  launchArguments: string;
+  installerArguments: string;
+}
+
+/** Which palette the interface uses. */
+export type Theme = "system" | "light" | "dark";
+
+export interface UmuStatus {
+  entries: number;
+  enabled: boolean;
+  /** The id a launch would use for the game that was asked about. */
+  resolved: string | null;
+}
+
 export interface ServerProbe {
   url: string;
   reachable: boolean;
@@ -97,6 +162,30 @@ export interface WineStatus {
   latest: WineRelease | null;
 }
 
+/** Everything stored in `settings.json` that the interface can change. */
+export interface AppSettings {
+  logLevel: string;
+  libraryRoot: string | null;
+  installerMemoryLimitMb: number;
+  downloadLimitKib: number;
+  wineVariant: WineVariant;
+  notifyTransfers: boolean;
+  notifyFailures: boolean;
+  notifyUpdates: boolean;
+  closeToTray: boolean;
+  startMinimized: boolean;
+  autoInstall: boolean;
+  umuFixes: boolean;
+  gamepadEnabled: boolean;
+  gamepadDeadzone: number;
+  couchModeAuto: boolean;
+  checkForUpdates: boolean;
+  extractionPassword: string | null;
+  ignoredExecutables: string[];
+  theme: Theme;
+  autostart: boolean;
+}
+
 export interface WineProgress {
   receivedBytes: number;
   totalBytes: number;
@@ -106,18 +195,23 @@ export interface WineProgress {
 export interface Backend {
   listLibraries(): Promise<Library[]>;
   listEntries(): Promise<LibraryEntry[]>;
-  startDownload(gameId: number): Promise<void>;
+  /** `root` must be one of the configured games folders; omitted means the default. */
+  startDownload(gameId: number, root?: string): Promise<void>;
   installOptions(gameId: number): Promise<InstallPlan>;
   install(gameId: number, method?: string, deleteArchive?: boolean): Promise<void>;
   rescanLibrary(): Promise<number>;
   locateInstall(gameId: number, path: string): Promise<void>;
   copyToClipboard(text: string): Promise<void>;
-  uninstall(gameId: number, runUninstaller?: boolean): Promise<void>;
+  /** `uninstaller` overrides detection, for a game whose uninstaller is oddly named. */
+  uninstall(gameId: number, runUninstaller?: boolean, uninstaller?: string | null): Promise<void>;
+  /** The uninstaller in the game's folder, or null when nothing looks like one. */
+  findUninstaller(gameId: number): Promise<string | null>;
   deleteStaging(gameId: number): Promise<void>;
   deleteDownload(gameId: number): Promise<void>;
-  openFolder(gameId: number): Promise<void>;
+  /** `folder` picks which of the game's folders to reveal; Downloads by default there. */
+  openFolder(gameId: number, folder?: LibraryFolder): Promise<void>;
   /** Reveal the Downloads or Installations folder itself, not one game's. */
-  openLibraryFolder(folder: LibraryFolder): Promise<void>;
+  openLibraryFolder(folder: LibraryFolder, root?: string): Promise<void>;
   openPath(path: string): Promise<void>;
   launch(gameId: number): Promise<void>;
   listExecutables(gameId: number): Promise<string[]>;
@@ -132,13 +226,7 @@ export interface Backend {
   cancelLogin(): Promise<void>;
   resetLogin(): Promise<void>;
   signOut(): Promise<void>;
-  getSettings(): Promise<{
-    logLevel: string;
-    libraryRoot: string | null;
-    installerMemoryLimitMb: number;
-    downloadLimitKib: number;
-    wineVariant: WineVariant;
-  }>;
+  getSettings(): Promise<AppSettings>;
   wineStatus(): Promise<WineStatus>;
   /** Download and install Wine, replacing any existing build. Also used to update. */
   installWine(): Promise<InstalledWine>;
@@ -157,18 +245,62 @@ export interface Backend {
   /** Native file picker; null when the user cancels. */
   pickFile(startIn?: string): Promise<string | null>;
   runSetupPath(gameId: number, path: string): Promise<void>;
+  /** Retry the setup program Windows refused to start, as administrator. */
+  runSetupElevated(gameId: number): Promise<void>;
   logDirectory(): Promise<string>;
   imageCacheSize(): Promise<number>;
   clearImageCache(): Promise<void>;
   setLogLevel(level: string): Promise<void>;
   runSetup(gameId: number, relative: string): Promise<void>;
   setLibraryRoot(path: string): Promise<void>;
+
+  setNotificationOptions(transfers: boolean, failures: boolean, updates: boolean): Promise<void>;
+  setWindowOptions(closeToTray: boolean, startMinimized: boolean): Promise<void>;
+  setAutoInstall(enabled: boolean): Promise<void>;
+  setGamepadOptions(enabled: boolean, deadzone: number, couchModeAuto: boolean): Promise<void>;
+  setUmuFixes(enabled: boolean): Promise<void>;
+  setUpdateChecking(enabled: boolean): Promise<void>;
+  /** Quit for real. The close button may be set to hide the window instead. */
+  quitApp(): Promise<void>;
+
+  shortcutStatus(gameId: number): Promise<ShortcutStatus>;
+  setShortcut(gameId: number, location: ShortcutLocation, enabled: boolean): Promise<void>;
+  /** Returns a sentence to show, because Steam has to be restarted to see the change. */
+  setSteamShortcut(gameId: number, enabled: boolean): Promise<string>;
+
+  listPrefixes(): Promise<PrefixEntry[]>;
+  deletePrefix(gameId: number): Promise<void>;
+  openPrefixTool(gameId: number, tool: PrefixTool): Promise<void>;
+
+  umuStatus(gameId?: number): Promise<UmuStatus>;
+  refreshUmuDatabase(): Promise<number>;
+
+  updateStatus(): Promise<UpdateStatus>;
+  /** Returns what to tell the user; what happens next differs by package format. */
+  installUpdate(): Promise<string>;
+
+  listLibraryRoots(): Promise<LibraryRoot[]>;
+  addLibraryRoot(path: string): Promise<void>;
+  /** Forgets the folder. Nothing on disk is touched. */
+  removeLibraryRoot(path: string): Promise<void>;
+  setDefaultLibraryRoot(path: string): Promise<void>;
+
+  gameOptions(gameId: number): Promise<GameOptions>;
+  setGameOptions(
+    gameId: number,
+    launchArguments: string,
+    installerArguments: string,
+  ): Promise<void>;
+
+  setExtractionOptions(password: string | null, ignoredExecutables: string[]): Promise<void>;
+  setTheme(theme: Theme): Promise<void>;
+  setAutostart(enabled: boolean): Promise<void>;
 }
 
 const tauriBackend: Backend = {
   listLibraries: () => invoke<Library[]>("list_libraries"),
   listEntries: () => invoke<LibraryEntry[]>("list_entries"),
-  startDownload: (gameId) => invoke("start_download", { gameId }),
+  startDownload: (gameId, root) => invoke("start_download", { gameId, root: root ?? null }),
   installOptions: (gameId) => invoke<InstallPlan>("install_options", { gameId }),
   install: (gameId, method, deleteArchive) =>
     invoke("install_game", {
@@ -182,12 +314,18 @@ const tauriBackend: Backend = {
     const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
     await writeText(text);
   },
-  uninstall: (gameId, runUninstaller) =>
-    invoke("uninstall_game", { gameId, runUninstaller: runUninstaller ?? true }),
+  uninstall: (gameId, runUninstaller, uninstaller) =>
+    invoke("uninstall_game", {
+      gameId,
+      runUninstaller: runUninstaller ?? true,
+      uninstaller: uninstaller ?? null,
+    }),
+  findUninstaller: (gameId) => invoke<string | null>("find_game_uninstaller", { gameId }),
   deleteStaging: (gameId) => invoke("delete_staging", { gameId }),
   deleteDownload: (gameId) => invoke("delete_download", { gameId }),
-  openFolder: (gameId) => invoke("open_game_folder", { gameId }),
-  openLibraryFolder: (folder) => invoke("open_library_folder", { folder }),
+  openFolder: (gameId, folder) => invoke("open_game_folder", { gameId, folder: folder ?? null }),
+  openLibraryFolder: (folder, root) =>
+    invoke("open_library_folder", { folder, root: root ?? null }),
   openPath: (path) => invoke("open_path", { path }),
   launch: (gameId) => invoke("launch_game", { gameId }),
   listExecutables: (gameId) => invoke<string[]>("list_executables", { gameId }),
@@ -233,12 +371,54 @@ const tauriBackend: Backend = {
     return typeof chosen === "string" ? chosen : null;
   },
   runSetupPath: (gameId, path) => invoke("run_setup_path", { gameId, path }),
+  runSetupElevated: (gameId) => invoke("run_setup_elevated", { gameId }),
   logDirectory: () => invoke<string>("log_directory"),
   imageCacheSize: () => invoke<number>("image_cache_size"),
   clearImageCache: () => invoke("clear_image_cache"),
   setLogLevel: (level) => invoke("set_log_level", { level }),
   runSetup: (gameId, relative) => invoke("run_setup", { gameId, relative }),
   setLibraryRoot: (path) => invoke("set_library_root", { path }),
+
+  setNotificationOptions: (transfers, failures, updates) =>
+    invoke("set_notification_options", { transfers, failures, updates }),
+  setWindowOptions: (closeToTray, startMinimized) =>
+    invoke("set_window_options", { closeToTray, startMinimized }),
+  setAutoInstall: (enabled) => invoke("set_auto_install", { enabled }),
+  setGamepadOptions: (enabled, deadzone, couchModeAuto) =>
+    invoke("set_gamepad_options", { enabled, deadzone, couchModeAuto }),
+  setUmuFixes: (enabled) => invoke("set_umu_fixes", { enabled }),
+  setUpdateChecking: (enabled) => invoke("set_update_checking", { enabled }),
+  quitApp: () => invoke("quit_app"),
+
+  shortcutStatus: (gameId) => invoke<ShortcutStatus>("shortcut_status", { gameId }),
+  setShortcut: (gameId, location, enabled) =>
+    invoke("set_shortcut", { gameId, location, enabled }),
+  setSteamShortcut: (gameId, enabled) =>
+    invoke<string>("set_steam_shortcut", { gameId, enabled }),
+
+  listPrefixes: () => invoke<PrefixEntry[]>("list_prefixes"),
+  deletePrefix: (gameId) => invoke("delete_prefix", { gameId }),
+  openPrefixTool: (gameId, tool) => invoke("open_prefix_tool", { gameId, tool }),
+
+  umuStatus: (gameId) => invoke<UmuStatus>("umu_status", { gameId: gameId ?? null }),
+  refreshUmuDatabase: () => invoke<number>("refresh_umu_database"),
+
+  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  installUpdate: () => invoke<string>("install_update"),
+
+  listLibraryRoots: () => invoke<LibraryRoot[]>("list_library_roots"),
+  addLibraryRoot: (path) => invoke("add_library_root", { path }),
+  removeLibraryRoot: (path) => invoke("remove_library_root", { path }),
+  setDefaultLibraryRoot: (path) => invoke("set_default_library_root", { path }),
+
+  gameOptions: (gameId) => invoke<GameOptions>("game_options", { gameId }),
+  setGameOptions: (gameId, launchArguments, installerArguments) =>
+    invoke("set_game_options", { gameId, launchArguments, installerArguments }),
+
+  setExtractionOptions: (password, ignoredExecutables) =>
+    invoke("set_extraction_options", { password, ignoredExecutables }),
+  setTheme: (theme) => invoke("set_theme", { theme }),
+  setAutostart: (enabled) => invoke("set_autostart", { enabled }),
 };
 
 const mockBackend: Backend = {
@@ -267,6 +447,7 @@ const mockBackend: Backend = {
   locateInstall: async () => {},
   copyToClipboard: async () => {},
   uninstall: async (gameId) => console.info(`[mock] uninstall ${gameId}`),
+  findUninstaller: async () => null,
   deleteStaging: async () => {},
   deleteDownload: async (gameId) => console.info(`[mock] delete ${gameId}`),
   openFolder: async (gameId) => console.info(`[mock] open folder ${gameId}`),
@@ -298,6 +479,21 @@ const mockBackend: Backend = {
     installerMemoryLimitMb: 3072,
     downloadLimitKib: 0,
     wineVariant: "staging-wow64" as WineVariant,
+    notifyTransfers: true,
+    notifyFailures: true,
+    notifyUpdates: true,
+    closeToTray: true,
+    startMinimized: false,
+    autoInstall: false,
+    umuFixes: true,
+    gamepadEnabled: true,
+    gamepadDeadzone: 0.25,
+    couchModeAuto: true,
+    checkForUpdates: true,
+    extractionPassword: null,
+    ignoredExecutables: ["unitycrashhandler", "vcredist"],
+    theme: "dark" as Theme,
+    autostart: false,
   }),
   wineStatus: async () => ({
     installed: { version: "11.17", variant: "staging-wow64" as WineVariant, binary: "/tmp/wine" },
@@ -320,12 +516,68 @@ const mockBackend: Backend = {
   pickFolder: async () => null,
   pickFile: async () => null,
   runSetupPath: async () => {},
+  runSetupElevated: async () => {},
   logDirectory: async () => "/tmp/gameyfin/logs",
   imageCacheSize: async () => 0,
   clearImageCache: async () => {},
   setLogLevel: async (level) => console.info(`[mock] log level ${level}`),
   runSetup: async () => {},
   setLibraryRoot: async (path) => console.info(`[mock] library root ${path}`),
+
+  setNotificationOptions: async () => {},
+  setWindowOptions: async () => {},
+  setAutoInstall: async (enabled) => console.info(`[mock] auto install ${enabled}`),
+  setGamepadOptions: async () => {},
+  setUmuFixes: async () => {},
+  setUpdateChecking: async () => {},
+  quitApp: async () => console.info("[mock] quit"),
+
+  shortcutStatus: async () => ({
+    desktop: false,
+    menu: true,
+    steamAvailable: true,
+    steam: false,
+  }),
+  setShortcut: async (gameId, location, enabled) =>
+    console.info(`[mock] shortcut ${location} ${gameId} ${enabled}`),
+  setSteamShortcut: async () => "Added to Steam. Restart Steam to see it in your library.",
+
+  listPrefixes: async () => [
+    { gameId: 1, title: "Celeste", path: "/games/Gameyfin/Prefixes/1", bytes: 620_000_000 },
+    { gameId: 7, title: null, path: "/games/Gameyfin/Prefixes/7", bytes: 410_000_000 },
+  ],
+  deletePrefix: async (gameId) => console.info(`[mock] delete prefix ${gameId}`),
+  openPrefixTool: async (gameId, tool) => console.info(`[mock] ${tool} for ${gameId}`),
+
+  umuStatus: async () => ({ entries: 3120, enabled: true, resolved: "umu-504230" }),
+  refreshUmuDatabase: async () => 3120,
+
+  listLibraryRoots: async () => [
+    { path: "/games", isDefault: true, freeBytes: 512_000_000_000, exists: true },
+    { path: "/mnt/big", isDefault: false, freeBytes: 2_400_000_000_000, exists: true },
+  ],
+  addLibraryRoot: async (path) => console.info(`[mock] add root ${path}`),
+  removeLibraryRoot: async (path) => console.info(`[mock] remove root ${path}`),
+  setDefaultLibraryRoot: async (path) => console.info(`[mock] default root ${path}`),
+
+  gameOptions: async () => ({ launchArguments: "", installerArguments: "" }),
+  setGameOptions: async () => {},
+
+  setExtractionOptions: async () => {},
+  setTheme: async (theme) => console.info(`[mock] theme ${theme}`),
+  setAutostart: async (enabled) => console.info(`[mock] autostart ${enabled}`),
+
+  updateStatus: async () => ({
+    currentVersion: "0.1.0",
+    latestVersion: "0.1.0",
+    available: false,
+    channel: "development" as UpdateChannel,
+    canInstall: false,
+    releaseUrl: "https://github.com/gameyfin/gameyfin-app/releases/latest",
+    notes: null,
+    error: null,
+  }),
+  installUpdate: async () => "Nothing to update outside Tauri.",
 };
 
 export const backend: Backend = inTauri() ? tauriBackend : mockBackend;

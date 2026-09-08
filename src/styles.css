@@ -15,3 +15,40 @@
 /* Window dragging is handled by Tauri's `data-tauri-drag-region` attribute, not by CSS.
    `-webkit-app-region` is an Electron feature and does nothing here. */
 [data-tauri-drag-region] { cursor: default; }
+
+/* --- Driving the app from a controller ---------------------------------------------
+
+   Focus has to be *visible* for a controller to be usable: with no pointer and no caret,
+   the focus ring is the only thing telling the user where they are. The browser default is
+   suppressed by Tailwind's reset and is too subtle at sofa distance regardless, so a ring
+   is drawn explicitly.
+
+   `:focus-visible` rather than `:focus` so a mouse click does not leave a ring behind,
+   which is the reason the default behaves that way. Controller and keyboard focus both
+   count as visible, which is exactly the set we want. */
+:focus-visible {
+  /* Applied through Tailwind rather than written out, because HeroUI's colours are
+     alpha-aware CSS variables that `theme()` cannot resolve to a plain value. */
+  @apply outline outline-2 outline-offset-2 outline-primary;
+  border-radius: 0.5rem;
+}
+
+/* The large-format layout, for reading across a room.
+
+   Scaling the root font size rather than restyling each component: every size in the app
+   is already in rem or in Tailwind's rem-based scale, so one change carries through to
+   text, padding and the grid's track size together, and nothing can be missed. */
+html[data-couch="true"] {
+  font-size: 20px;
+}
+
+html[data-couch="true"] :focus-visible {
+  outline-width: 3px;
+  outline-offset: 3px;
+}
+
+/* Fewer, larger tiles per row. The grid is defined in px so it does not follow the root
+   font size, which is deliberate elsewhere: a cover is an image, not text. */
+html[data-couch="true"] [data-library-grid] {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}

@@ -5,13 +5,9 @@ import { Alert } from "@/components/Alert";
 import { messageOf } from "@/lib/errors";
 
 /**
- * First-run setup: choose a server, sign in, choose where games live.
- *
- * Sign-in deliberately hands off to a real browser window rather than collecting a
- * username and password here. Gameyfin instances commonly sit behind an OIDC provider
- * such as Authentik, and a form in this app could not carry a user through a redirect,
- * a consent screen or MFA. Handing the whole exchange to a browser means every provider
- * works, and this app never handles the password at all.
+ * First-run setup: choose a server, sign in, choose where games live. Sign-in hands off
+ * to a real browser window, so SSO, MFA and any OIDC provider work and the app never
+ * touches the password.
  */
 
 type Step = "server" | "signin" | "library";
@@ -29,9 +25,9 @@ export function WelcomeView({ onComplete }: { onComplete: () => void }) {
           </div>
           <h1 className="text-2xl font-semibold text-foreground">Welcome to Gameyfin</h1>
           <p className="mt-1 text-sm text-foreground/55">
-            {step === "server" && "Connect to your Gameyfin server to get started."}
+            {step === "server" && "Connect to your Gameyfin server."}
             {step === "signin" && "Sign in to your account."}
-            {step === "library" && "Choose where your games should be stored."}
+            {step === "library" && "Choose where games are stored."}
           </p>
         </header>
 
@@ -63,7 +59,7 @@ export function WelcomeView({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-/** A quiet way back, present on every step after the first. */
+/** Back navigation, present on every step after the first. */
 function BackLink({ onClick, label = "Back" }: { onClick: () => void; label?: string }) {
   return (
     <button
@@ -169,7 +165,7 @@ function ServerStep({
   );
 }
 
-/** How often the wizard asks whether the sign-in window has succeeded. */
+/** How often the wizard polls the sign-in window. */
 const POLL_INTERVAL_MS = 1000;
 
 function SignInStep({
@@ -195,8 +191,8 @@ function SignInStep({
     };
   }, []);
 
-  // Show which origin the sign-in window is on. A login can cross the server, an identity
-  // provider and sometimes a proxy, and when it stalls this is the only clue as to where.
+  // A login can cross server, identity provider and proxy; the origin is the only clue
+  // to where a stalled one is.
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let unlisten: (() => void) | undefined;
@@ -211,9 +207,8 @@ function SignInStep({
     return () => unlisten?.();
   }, []);
 
-  // The sign-in window is a separate browser window, so its progress cannot be observed
-  // directly. Poll the backend, which reports success only once the harvested cookies
-  // actually authenticate, not merely once the provider has set some of its own.
+  // Poll the backend: it reports success only once the harvested cookies actually
+  // authenticate, not merely once the provider has set some of its own.
   useEffect(() => {
     if (!waiting) return;
 
@@ -232,7 +227,7 @@ function SignInStep({
           // The user closed the window; waiting any longer would spin forever.
           clearInterval(timer);
           setWaiting(false);
-          setError("The sign-in window was closed before the login finished.");
+          setError("The login window was closed before sign in finished.");
         }
       } catch (e) {
         clearInterval(timer);
@@ -301,9 +296,8 @@ function SignInStep({
           )}
 
           <p className="text-[11px] text-foreground/45">
-            A window has opened for your server's login page. Single sign-on providers such
-            as Authentik are supported, including one sitting in front of Gameyfin.
-            Complete the login there and this will continue on its own.
+            A window has opened for your server's login page. Single sign-on providers
+            like Authentik are supported. Finish there and this continues on its own.
           </p>
 
           <div className="flex gap-2">
@@ -330,8 +324,8 @@ function SignInStep({
             Sign in
           </button>
           <p className="text-[11px] text-foreground/45">
-            Your server decides how you sign in. A single sign-on provider such as
-            Authentik if it has one configured, otherwise a username and password.
+            Your server decides how you sign in: a single sign-on provider if it has one,
+            otherwise a username and password.
           </p>
 
           <div className="mt-1 flex flex-col gap-1.5 border-t border-default-200/60 pt-3">
@@ -347,7 +341,7 @@ function SignInStep({
               onClick={reset}
               className="self-start text-xs text-foreground/45 underline-offset-2 transition-colors hover:text-foreground hover:underline"
             >
-              Sign-in window misbehaving? Clear its saved data and start over.
+              Login window misbehaving? Clear its saved data and start over.
             </button>
           </div>
         </>
@@ -406,7 +400,7 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
         </button>
       </div>
       <p className="text-[11px] text-foreground/45">
-        Downloads and installed games are kept here. You can change it later in Settings.
+        Downloads and installed games live here. Change it later in Settings.
       </p>
 
       {error && <Alert>{error}</Alert>}
@@ -423,5 +417,3 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
   );
 }
 
-
-/** Unwrap the tagged errors the Rust side sends across IPC. */

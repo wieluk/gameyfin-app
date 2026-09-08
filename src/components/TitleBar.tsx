@@ -1,13 +1,10 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { GamepadIndicator } from "./GamepadOverlay";
 import { Icon } from "./Icon";
 
 /**
- * Custom window chrome.
- *
- * Dragging is delegated to the compositor through `data-tauri-drag-region`. That
- * attribute is the mechanism Tauri looks for, the CSS `-webkit-app-region: drag`
- * property used by Electron has no effect here, and its absence is why the window could
- * not be moved.
+ * Custom window chrome. Tauri moves the window via `data-tauri-drag-region`; the CSS
+ * `-webkit-app-region` property used by Electron has no effect here.
  */
 export function TitleBar({ title }: { title?: string }) {
   return (
@@ -16,8 +13,7 @@ export function TitleBar({ title }: { title?: string }) {
       onDoubleClick={() => void windowAction("toggleMaximize")}
       className="flex h-9 shrink-0 select-none items-center justify-between border-b border-default-200/60 bg-content1 px-3"
     >
-      {/* Children of a drag region are not draggable, so the attribute is repeated on
-          the inert areas that should also move the window. */}
+      {/* Children of a drag region are not draggable, so repeat the attribute. */}
       <div data-tauri-drag-region className="pointer-events-none flex items-center gap-2">
         <Icon name="controller" className="h-4 w-4 text-primary" />
         <span className="text-xs font-medium tracking-wide text-foreground/70">
@@ -26,6 +22,7 @@ export function TitleBar({ title }: { title?: string }) {
       </div>
 
       <div className="flex items-center gap-1">
+        <GamepadIndicator />
         <WindowButton label="Minimise" onClick={() => void windowAction("minimize")}>
           <span className="block h-px w-2.5 bg-current" />
         </WindowButton>

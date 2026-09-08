@@ -31,6 +31,14 @@ pub enum CoreError {
     #[error("{path} is not an archive this app can unpack")]
     UnsupportedArchive { path: String },
 
+    /// Windows refused to start the program without administrator rights.
+    ///
+    /// Its own variant rather than a message because the caller has something to *do*
+    /// about it: ask the user, then start the program again through the shell, which is
+    /// what puts the consent dialog on screen. A flattened string cannot be acted on.
+    #[error("{program} will only run with administrator rights")]
+    ElevationRequired { program: String },
+
     #[error(transparent)]
     Api(#[from] gameyfin_api::ApiError),
 

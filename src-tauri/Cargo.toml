@@ -17,10 +17,26 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 gameyfin-api = { path = "../crates/gameyfin-api" }
 gameyfin-core = { path = "../crates/gameyfin-core" }
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-notification = "2"
+# The in-place updater applies only to AppImage, MSI and NSIS. It is depended on
+# unconditionally because those are all the platforms this app ships to; see `updater.rs`
+# for why deb, rpm and Flatpak take a different route.
+tauri-plugin-updater = "2"
+# A shortcut launched while the app is already running must reach the running copy, not
+# start a second one that fights it over the library file and download checkpoints.
+tauri-plugin-single-instance = "2"
+# Registering the app to start at login: a registry Run key on Windows, an autostart
+# desktop entry on Linux. Both are fiddly and neither is interesting.
+tauri-plugin-autostart = "2"
+semver = "1"
+
+# Gamepad input. Reads evdev on Linux and XInput on Windows, and maps every common pad
+# onto one layout, so no per-device button tables are needed.
+gilrs = "0.11"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

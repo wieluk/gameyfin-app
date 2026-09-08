@@ -60,7 +60,13 @@ export type GameState =
       stagingPresent?: boolean;
     }
   | { kind: "running"; since: string }
-  | { kind: "failed"; message: string; stage: Stage };
+  | {
+      kind: "failed";
+      message: string;
+      stage: Stage;
+      /** Windows refused to start the installer without administrator rights. */
+      elevationRequired?: boolean;
+    };
 
 export interface LibraryEntry {
   game: Game;
@@ -73,4 +79,6 @@ export interface LibraryEntry {
   coverUrl?: string | null;
   headerUrl?: string | null;
   screenshotUrls?: string[];
+  /** Gameplay videos, as the server recorded them. Usually YouTube links. */
+  videoUrls?: string[];
 }

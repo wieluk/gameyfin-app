@@ -207,6 +207,7 @@ fn host_has_wine() -> bool {
 /// A Flatpak or a user-local pip install puts `umu-run` somewhere the desktop session's
 /// `PATH` may not include, particularly when the app is launched from a desktop entry
 /// rather than a shell.
+#[cfg(not(windows))]
 fn extra_search_dirs() -> Vec<PathBuf> {
     let mut dirs = vec![
         PathBuf::from("/usr/bin"),
@@ -221,20 +222,90 @@ fn extra_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Find an executable by name, on `PATH` and in the usual extra places.
-pub fn find_program(name: &str) -> Option<PathBuf> {
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            let candidate = dir.join(name);
-            if is_executable_file(&candidate) {
-                return Some(candidate);
-            }
-        }
+/// The same, on Windows.
+///
+/// Neither 7-Zip nor WinRAR puts itself on `PATH`, so a machine with 7-Zip installed
+/// still found nothing by name alone and every RAR download failed with "install unar".
+/// Both install to a predictable folder, which is what makes "install 7-Zip and try
+/// again" advice the user can actually act on.
+#[cfg(windows)]
+fn extra_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    // `ProgramW6432` is the 64-bit folder even when this process is 32-bit; the other two
+    // are what a 64-bit process sees. Listing all three costs a few `stat` calls and
+    // covers every combination of installer and host bitness.
+    for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
+        let Some(base) = std::env::var_os(key).map(PathBuf::from) else {
+            continue;
+        };
+        dirs.push(base.join("7-Zip"));
+        dirs.push(base.join("WinRAR"));
+        dirs.push(base.join("NanaZip"));
     }
 
-    extra_search_dirs()
+    // 7-Zip and NanaZip can also be installed per-user, without administrator rights,
+    // which is the likelier case on a machine the user does not own.
+    if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        dirs.push(local.join("Programs").join("7-Zip"));
+        dirs.push(local.join("Programs").join("NanaZip"));
+    }
+
+    // `tar.exe`, which is libarchive, has shipped with Windows since 10 1803.
+    if let Some(root) = std::env::var_os("SystemRoot").map(PathBuf::from) {
+        dirs.push(root.join("System32"));
+    }
+
+    dirs
+}
+
+/// Extensions a program name may carry on Windows.
+///
+/// Deliberately not `PATHEXT`, which also lists `.VBS`, `.JS` and `.WSF`. Everything here
+/// is looked up so it can be *run*, and the difference between finding `7z.exe` and
+/// finding some `7z.vbs` that happens to sit on `PATH` is worth keeping.
+#[cfg(windows)]
+const WINDOWS_EXECUTABLE_EXTENSIONS: &[&str] = &[".exe", ".com", ".bat", ".cmd"];
+
+/// The filenames to try for a program named `name`.
+///
+/// On Windows a program is `7z.exe`, not `7z`: joining the bare name onto a directory
+/// matches nothing, which is why every external tool this app looks for was reported
+/// missing there however it had been installed.
+fn candidate_names(name: &str) -> Vec<String> {
+    #[cfg(not(windows))]
+    {
+        vec![name.to_string()]
+    }
+
+    #[cfg(windows)]
+    {
+        // A name that already carries an extension is taken as written.
+        if Path::new(name).extension().is_some() {
+            return vec![name.to_string()];
+        }
+
+        let mut names: Vec<String> = WINDOWS_EXECUTABLE_EXTENSIONS
+            .iter()
+            .map(|extension| format!("{name}{extension}"))
+            .collect();
+        // Last, in case the file genuinely has no extension.
+        names.push(name.to_string());
+        names
+    }
+}
+
+/// Find an executable by name, on `PATH` and in the usual extra places.
+pub fn find_program(name: &str) -> Option<PathBuf> {
+    let names = candidate_names(name);
+    let on_path: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).collect())
+        .unwrap_or_default();
+
+    on_path
         .into_iter()
-        .map(|dir| dir.join(name))
+        .chain(extra_search_dirs())
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
         .find(|candidate| is_executable_file(candidate))
 }
 
@@ -326,13 +397,12 @@ fn host_os_release() -> String {
     std::fs::read_to_string("/etc/os-release").unwrap_or_default()
 }
 
-/// What to do when no Windows runtime is present.
+/// How this distribution installs a package, as a command the user can paste.
 ///
-/// The managed download leads because it is the only fix that works everywhere, needs no
-/// root, and is unaffected by the Flatpak sandbox having no package manager. A
-/// distribution package and an existing Steam Proton are offered after it, for anyone who
-/// would rather not have a second Wine on disk.
-pub fn windows_runtime_hint() -> String {
+/// Shared by every "you need to install X" message, so a Fedora user is never told to
+/// run `apt`. Falls back to naming the package without a command rather than guessing,
+/// which is worse than saying nothing.
+pub fn install_command(package: &str) -> String {
     let distro = host_os_release();
     let id_line = distro
         .lines()
@@ -340,22 +410,32 @@ pub fn windows_runtime_hint() -> String {
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    let wine = if id_line.contains("fedora") || id_line.contains("nobara") {
-        "sudo dnf install wine"
+    if id_line.contains("fedora") || id_line.contains("nobara") {
+        format!("sudo dnf install {package}")
     } else if id_line.contains("arch") || id_line.contains("cachyos") || id_line.contains("manjaro")
     {
-        "sudo pacman -S wine"
+        format!("sudo pacman -S {package}")
     } else if id_line.contains("debian")
         || id_line.contains("ubuntu")
         || id_line.contains("mint")
         || id_line.contains("pop")
     {
-        "sudo apt install wine"
+        format!("sudo apt install {package}")
     } else if id_line.contains("opensuse") || id_line.contains("suse") {
-        "sudo zypper install wine"
+        format!("sudo zypper install {package}")
     } else {
-        "install wine from your distribution"
-    };
+        format!("install {package} from your distribution")
+    }
+}
+
+/// What to do when no Windows runtime is present.
+///
+/// The managed download leads because it is the only fix that works everywhere, needs no
+/// root, and is unaffected by the Flatpak sandbox having no package manager. A
+/// distribution package and an existing Steam Proton are offered after it, for anyone who
+/// would rather not have a second Wine on disk.
+pub fn windows_runtime_hint() -> String {
+    let wine = install_command("wine");
 
     // Under Flatpak the command has to be run on the host: the sandbox has no package
     // manager, and running it in a terminal inside the sandbox would silently do nothing.
@@ -391,6 +471,30 @@ mod tests {
     #[test]
     fn does_not_invent_a_missing_program() {
         assert_eq!(find_program("definitely-not-a-real-program-xyz"), None);
+    }
+
+    #[test]
+    fn a_bare_name_gains_windows_extensions() {
+        let names = candidate_names("7z");
+        #[cfg(windows)]
+        {
+            assert!(names.contains(&"7z.exe".to_string()), "got {names:?}");
+            // The bare name stays available for a file that really has no extension.
+            assert!(names.contains(&"7z".to_string()), "got {names:?}");
+        }
+        #[cfg(not(windows))]
+        assert_eq!(names, vec!["7z".to_string()]);
+    }
+
+    #[test]
+    fn a_name_with_an_extension_is_taken_as_written() {
+        assert_eq!(candidate_names("7z.exe"), vec!["7z.exe".to_string()]);
+    }
+
+    #[test]
+    fn the_install_command_names_the_package_it_was_asked_about() {
+        let command = install_command("unar");
+        assert!(command.contains("unar"), "got: {command}");
     }
 
     #[test]

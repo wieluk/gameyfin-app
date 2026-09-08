@@ -13,18 +13,35 @@ export type SortDirection = "asc" | "desc";
 /** Which games to show, by whether they are on this machine. */
 export type PresenceFilter = "all" | "installed" | "not-installed";
 
+/**
+ * A filter on one of the game's list-valued fields.
+ *
+ * Null means "any". These are separate from the library filter because a library is where
+ * a game lives, while these describe what it is.
+ */
+export interface FacetFilters {
+  genre: string | null;
+  developer: string | null;
+  publisher: string | null;
+}
+
+export type FacetKey = keyof FacetFilters;
+
 interface LibraryView {
   search: string;
   sort: SortKey;
   direction: SortDirection;
   libraryId: number | null;
   presence: PresenceFilter;
+  facets: FacetFilters;
   setSearch: (search: string) => void;
   setPresence: (presence: PresenceFilter) => void;
   setSort: (sort: SortKey) => void;
   setDirection: (direction: SortDirection) => void;
   toggleDirection: () => void;
   setLibraryId: (libraryId: number | null) => void;
+  setFacet: (facet: FacetKey, value: string | null) => void;
+  clearFacets: () => void;
 }
 
 const STORAGE_KEY = "gameyfin.library-view";
@@ -34,6 +51,7 @@ interface Persisted {
   direction: SortDirection;
   libraryId: number | null;
   presence: PresenceFilter;
+  facets: FacetFilters;
 }
 
 function load(): Persisted {
@@ -42,6 +60,7 @@ function load(): Persisted {
     direction: "asc",
     libraryId: null,
     presence: "all",
+    facets: { genre: null, developer: null, publisher: null },
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -52,6 +71,7 @@ function load(): Persisted {
       direction: parsed.direction ?? fallback.direction,
       libraryId: parsed.libraryId ?? fallback.libraryId,
       presence: parsed.presence ?? fallback.presence,
+      facets: { ...fallback.facets, ...(parsed.facets ?? {}) },
     };
   } catch {
     // Private windows and blocked site data both throw; the defaults are fine.
@@ -78,29 +98,35 @@ export const useLibraryView = create<LibraryView>((set, get) => ({
   libraryId: initial.libraryId,
   presence: initial.presence,
 
+  facets: initial.facets,
+
   setSearch: (search) => set({ search }),
-  setPresence: (presence) => {
-    set({ presence });
-    const { sort, direction, libraryId } = get();
-    save({ sort, direction, libraryId, presence });
-  },
-  setSort: (sort) => {
-    set({ sort });
-    const { direction, libraryId, presence } = get();
-    save({ sort, direction, libraryId, presence });
-  },
-  setDirection: (direction) => {
-    set({ direction });
-    const { sort, libraryId, presence } = get();
-    save({ sort, direction, libraryId, presence });
-  },
+  setPresence: (presence) => set(persisting({ presence }, get)),
+  setSort: (sort) => set(persisting({ sort }, get)),
+  setDirection: (direction) => set(persisting({ direction }, get)),
   toggleDirection: () => {
     const direction = get().direction === "asc" ? "desc" : "asc";
     get().setDirection(direction);
   },
-  setLibraryId: (libraryId) => {
-    set({ libraryId });
-    const { sort, direction, presence } = get();
-    save({ sort, direction, libraryId, presence });
-  },
+  setLibraryId: (libraryId) => set(persisting({ libraryId }, get)),
+  setFacet: (facet, value) =>
+    set(persisting({ facets: { ...get().facets, [facet]: value } }, get)),
+  clearFacets: () =>
+    set(persisting({ facets: { genre: null, developer: null, publisher: null } }, get)),
 }));
+
+/**
+ * Apply a change and write the whole view out.
+ *
+ * One place rather than a `save(...)` call in every setter: those each had to name every
+ * persisted field, so adding one meant editing all of them and any that was missed simply
+ * stopped saving, silently.
+ */
+function persisting(
+  change: Partial<Persisted>,
+  get: () => LibraryView,
+): Partial<LibraryView> {
+  const { sort, direction, libraryId, presence, facets } = { ...get(), ...change };
+  save({ sort, direction, libraryId, presence, facets });
+  return change;
+}

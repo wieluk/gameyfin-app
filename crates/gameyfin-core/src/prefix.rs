@@ -101,6 +101,19 @@ pub fn boot_command(runtime: &WindowsRuntime, prefix: &Path) -> crate::launch::R
     registry_command(runtime, prefix, &["wineboot", "-u"])
 }
 
+/// The command that opens a Wine tool against a prefix.
+///
+/// The same plumbing as [`boot_command`]: what makes a prefix usable is the environment,
+/// and a `winecfg` started without it configures the *default* prefix rather than the
+/// game's, which looks like the button doing nothing.
+pub fn tool_command(
+    runtime: &WindowsRuntime,
+    prefix: &Path,
+    tool: &str,
+) -> crate::launch::ResolvedCommand {
+    registry_command(runtime, prefix, &[tool])
+}
+
 /// The command that sets a prefix's DPI.
 ///
 /// Applied through the runtime rather than by editing `user.reg`, because Wine rewrites
