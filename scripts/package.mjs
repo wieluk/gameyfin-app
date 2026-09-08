@@ -42,7 +42,9 @@ const requested = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 const targets = requested.length > 0 ? requested : bundles;
 
 console.log(`Building ${targets.join(", ")} for ${platform}...`);
-const tauri = join(ROOT, "node_modules", ".bin", platform === "win32" ? "tauri.cmd" : "tauri");
+// The CLI's own JS entry, not the .bin shim. Node refuses to execFileSync a .cmd without a
+// shell, and running one through cmd.exe would mangle the quotes in the --config JSON below.
+const tauri = join(ROOT, "node_modules", "@tauri-apps", "cli", "tauri.js");
 
 // Marks this run, so leftovers in `target/` can be told apart from what it produced. A
 // failed build used to be reported as a success, listing stale installers as if fresh.
@@ -66,15 +68,18 @@ if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
 }
 
 try {
-  execFileSync(tauri, args, {
+  execFileSync(process.execPath, [tauri, ...args], {
     cwd: ROOT,
     stdio: "inherit",
     env: rustEnv(),
   });
-} catch {
+} catch (error) {
   // One bundle type can fail while others succeed; report what landed.
   buildFailed = true;
   console.warn("\nBundling reported an error; collecting whatever this run produced.");
+  // Tauri's own output already went to the terminal, but a failure to *start* it prints
+  // nothing at all, which is how a Windows build could fail in total silence.
+  if (error?.code) console.warn(`Could not run the Tauri CLI: ${error.code} ${error.message}`);
 }
 
 if (!existsSync(BUNDLE_DIR)) {
