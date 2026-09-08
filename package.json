@@ -45,5 +45,9 @@
     "typescript": "^5.9.2",
     "vite": "^7.1.5",
     "vitest": "^3.2.4"
+  },
+  "allowScripts": {
+    "@heroui/shared-utils@2.1.12": true,
+    "esbuild@0.28.2": true
   }
 }

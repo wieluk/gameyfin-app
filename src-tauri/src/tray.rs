@@ -80,6 +80,8 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
         &[&show, &library, &downloads, &settings, &separator, &quit],
     )?;
 
+    // Only the Linux branch below reassigns this.
+    #[allow(unused_mut)]
     let mut builder = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().ok_or_else(|| {
             tauri::Error::AssetNotFound("the bundled window icon is missing".into())

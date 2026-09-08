@@ -1043,11 +1043,17 @@ struct ToolProgress {
 /// The version bundled with this build, read from the sidecar rather than assumed.
 async fn bundled_version(app: &AppHandle) -> Option<String> {
     let binary = ludusavi_binary(app).ok()?;
-    let output = tokio::process::Command::new(&binary)
-        .arg("--version")
-        .output()
-        .await
-        .ok()?;
+    let mut command = tokio::process::Command::new(&binary);
+    command.arg("--version");
+
+    // Without this the settings screen flashes a console window every time it opens.
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = command.output().await.ok()?;
 
     // "ludusavi 0.31.0"; the releases are tagged with a leading v.
     let text = String::from_utf8_lossy(&output.stdout);
