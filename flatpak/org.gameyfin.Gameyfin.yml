@@ -71,6 +71,16 @@ modules:
       - tar -xf data.tar.gz
       - install -Dm755 usr/bin/gameyfin-app /app/bin/gameyfin-app
 
+      # The save backup helper, shipped as a Tauri sidecar. Guarded so a deb built before
+      # save sync still produces a working bundle, just without save support.
+      - |
+        set -e
+        if [ -f usr/bin/ludusavi ]; then
+          install -Dm755 usr/bin/ludusavi /app/bin/ludusavi
+          install -Dm644 usr/bin/LUDUSAVI-LICENSE.txt \
+            /app/share/licenses/org.gameyfin.Gameyfin/LUDUSAVI-LICENSE.txt 2>/dev/null || true
+        fi
+
       # Desktop file, icons and metainfo must be named after the app id.
       - install -Dm644 usr/share/applications/Gameyfin.desktop
         /app/share/applications/org.gameyfin.Gameyfin.desktop
