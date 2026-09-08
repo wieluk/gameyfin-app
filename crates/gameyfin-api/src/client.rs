@@ -136,6 +136,26 @@ impl GameyfinClient {
         Ok(providers)
     }
 
+    /// Read one of the server-side user preferences, such as `preferred-download-method`.
+    ///
+    /// Shared with the web UI, so a choice made in either place is the one the other sees.
+    pub async fn user_preference(&self, key: &str) -> ApiResult<Option<String>> {
+        self.call("UserPreferencesEndpoint", "get", json!({ "key": key }))
+            .await
+    }
+
+    /// Store one of the server-side user preferences. See [`Self::user_preference`].
+    pub async fn set_user_preference(&self, key: &str, value: &str) -> ApiResult<()> {
+        // Void Hilla methods answer with an empty body, which decodes as null.
+        self.call::<Option<serde_json::Value>>(
+            "UserPreferencesEndpoint",
+            "set",
+            json!({ "key": key, "value": value }),
+        )
+        .await?;
+        Ok(())
+    }
+
     /// The current user, or `None` when the server considers the caller anonymous.
     ///
     /// `getUserInfo` is `@AnonymousAllowed`, so an anonymous caller gets a null result

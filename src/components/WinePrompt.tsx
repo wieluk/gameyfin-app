@@ -6,6 +6,7 @@ import { formatBytes, formatSpeed } from "@/lib/format";
 import { messageOf } from "@/lib/errors";
 import { isWindows } from "@/lib/platform";
 import { useAppSettings } from "@/lib/queries";
+import { useDismissOnEscape } from "@/lib/useDismiss";
 
 /**
  * Offers the Wine download at startup, on Linux, when there is none. Without it every
@@ -19,6 +20,9 @@ export function WinePrompt() {
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<WineProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Back and Escape mean "not now", never a silent permanent dismissal.
+  useDismissOnEscape(() => !downloading && setDismissed(true));
 
   const asked = settings.data?.winePromptDismissed ?? true;
   // Only worth the release lookup on a platform that needs Wine, and only while unasked.

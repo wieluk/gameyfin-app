@@ -5,6 +5,7 @@ import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import type { LibraryEntry } from "@/types";
 import { Alert } from "@/components/Alert";
+import { useDismissOnEscape } from "@/lib/useDismiss";
 
 /**
  * Choosing how to install a download. Only applicable options are offered, since a
@@ -19,6 +20,8 @@ export function InstallDialog({
   entry: LibraryEntry;
   onClose: () => void;
 }) {
+  useDismissOnEscape(onClose);
+
   const gameId = entry.game.id;
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);

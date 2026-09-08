@@ -120,8 +120,14 @@ export function moveFocus(direction: Direction): boolean {
  * under the user even when the target was already comfortably on screen.
  */
 function focus(element: HTMLElement) {
+  document.documentElement.dataset.padFocus = "true";
   element.focus({ preventScroll: true });
   element.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+}
+
+/** Drop the controller focus ring once a pointer is in use again. See `styles.css`. */
+export function clearPadFocus() {
+  delete document.documentElement.dataset.padFocus;
 }
 
 /** Activate whatever is focused. */

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
+import { useDismissOnEscape } from "@/lib/useDismiss";
 
 /**
  * Confirmation for removing an installed game. A detected uninstaller runs first to clear
@@ -23,6 +24,8 @@ export function UninstallDialog({
   onConfirm: (options: { runUninstaller: boolean; uninstaller: string | null }) => void;
   onCancel: () => void;
 }) {
+  useDismissOnEscape(onCancel);
+
   const [detected, setDetected] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [looking, setLooking] = useState(true);

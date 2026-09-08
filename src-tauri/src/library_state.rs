@@ -154,6 +154,26 @@ pub enum Activity {
     },
 }
 
+impl Activity {
+    /// How far along this is, for the states that measure themselves. `None` for the ones
+    /// that have no length: preparing, running, failed.
+    fn percent(&self) -> Option<f64> {
+        match self {
+            Activity::Downloading {
+                received_bytes,
+                total_bytes,
+                ..
+            } => Some(if *total_bytes > 0 {
+                (*received_bytes as f64 / *total_bytes as f64) * 100.0
+            } else {
+                0.0
+            }),
+            Activity::Extracting { percent } | Activity::Installing { percent } => Some(*percent),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Stage {
@@ -292,6 +312,19 @@ impl LibraryState {
 
     pub async fn clear_activity(&self, game_id: i64) {
         self.activity.write().await.remove(&game_id);
+    }
+
+    /// Combined progress of everything in flight, 0 to 100, or `None` when nothing is.
+    ///
+    /// A plain mean over the active transfers: downloads measure bytes and installs
+    /// measure steps, so there is no common unit to weight them by.
+    pub async fn overall_progress(&self) -> Option<f64> {
+        let activity = self.activity.read().await;
+        let percents: Vec<f64> = activity.values().filter_map(Activity::percent).collect();
+        if percents.is_empty() {
+            return None;
+        }
+        Some(percents.iter().sum::<f64>() / percents.len() as f64)
     }
 
     /// True when something is already running for this game.
@@ -763,5 +796,58 @@ mod tests {
         assert_eq!(record.minutes_played, 42);
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn taskbar_progress_averages_everything_in_flight() {
+        let state = LibraryState::default();
+        assert_eq!(state.overall_progress().await, None);
+
+        state
+            .set_activity(
+                1,
+                Activity::Downloading {
+                    received_bytes: 25,
+                    total_bytes: 100,
+                    bytes_per_second: 0.0,
+                },
+            )
+            .await;
+        assert_eq!(state.overall_progress().await, Some(25.0));
+
+        state
+            .set_activity(2, Activity::Installing { percent: 75.0 })
+            .await;
+        assert_eq!(state.overall_progress().await, Some(50.0));
+
+        // Nothing with a length left, so the bar goes away rather than sticking at 50%.
+        state.clear_activity(1).await;
+        state.clear_activity(2).await;
+        state
+            .set_activity(
+                3,
+                Activity::Running {
+                    since: "now".into(),
+                },
+            )
+            .await;
+        assert_eq!(state.overall_progress().await, None);
+    }
+
+    #[tokio::test]
+    async fn a_download_of_unknown_size_reads_as_nothing_done() {
+        // A server that sends no length would otherwise divide by zero.
+        let state = LibraryState::default();
+        state
+            .set_activity(
+                1,
+                Activity::Downloading {
+                    received_bytes: 900,
+                    total_bytes: 0,
+                    bytes_per_second: 0.0,
+                },
+            )
+            .await;
+        assert_eq!(state.overall_progress().await, Some(0.0));
     }
 }

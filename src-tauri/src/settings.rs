@@ -50,6 +50,13 @@ pub struct Settings {
     /// links against, which a Flatpak sandbox does not have on its own.
     #[serde(default)]
     pub wine_variant: gameyfin_core::wine::WineVariant,
+    /// Which download provider to ask the server for, by plugin key.
+    ///
+    /// None means the server's highest-priority one. Mirrored to the server's
+    /// `preferred-download-method` so the web UI and this client agree.
+    #[serde(default)]
+    pub download_provider: Option<String>,
+
     /// The user turned down the offer to download Wine and asked not to be offered again.
     ///
     /// Separate from having Wine: a native-only library never needs it, and asking at every
@@ -219,6 +226,7 @@ impl Default for Settings {
             download_limit_kib: 0,
             installer_memory_limit_mb: default_installer_memory_limit(),
             wine_variant: gameyfin_core::wine::WineVariant::default(),
+            download_provider: None,
             wine_prompt_dismissed: false,
             notify_transfers: true,
             notify_failures: true,

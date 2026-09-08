@@ -17,6 +17,7 @@ mod library_state;
 mod notify;
 mod settings;
 mod state;
+mod taskbar;
 mod tray;
 mod updater;
 
@@ -261,6 +262,8 @@ pub fn run() {
             ipc::remove_wine,
             ipc::set_wine_variant,
             ipc::set_wine_prompt_dismissed,
+            ipc::download_providers,
+            ipc::set_download_provider,
             ipc::image_cache_size,
             ipc::clear_image_cache,
             ipc::set_download_limit,

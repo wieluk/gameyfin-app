@@ -188,6 +188,16 @@ export interface AppSettings {
   autostart: boolean;
 }
 
+/** A download provider the server offers, with the one this client uses marked. */
+export interface ProviderChoice {
+  key: string;
+  name: string;
+  description: string;
+  selected: boolean;
+  /** True when this provider serves a `.torrent` rather than the game itself. */
+  needsTorrentClient: boolean;
+}
+
 export interface WineProgress {
   receivedBytes: number;
   totalBytes: number;
@@ -237,6 +247,10 @@ export interface Backend {
   /** Stop offering Wine at startup. */
   setWinePromptDismissed(dismissed: boolean): Promise<void>;
   setDownloadLimit(kib: number): Promise<void>;
+  /** What the server can download from, and which one is in use. */
+  downloadProviders(): Promise<ProviderChoice[]>;
+  /** Null restores the server’s own preference order. */
+  setDownloadProvider(key: string | null): Promise<void>;
   /** Stop a running download. The partial file is kept, but Gameyfin 2.4 cannot resume. */
   cancelDownload(gameId: number): Promise<void>;
   configDirectory(): Promise<string>;
@@ -345,6 +359,8 @@ const tauriBackend: Backend = {
   signOut: () => invoke("sign_out"),
   getSettings: () => invoke("get_settings"),
   setDownloadLimit: (kib) => invoke("set_download_limit", { kib }),
+  downloadProviders: () => invoke<ProviderChoice[]>("download_providers"),
+  setDownloadProvider: (key) => invoke("set_download_provider", { key }),
   cancelDownload: (gameId) => invoke("cancel_download", { gameId }),
   configDirectory: () => invoke<string>("config_directory"),
   prefixInfo: () => invoke("prefix_info"),
@@ -516,6 +532,23 @@ const mockBackend: Backend = {
   setWinePromptDismissed: async (dismissed) =>
     console.info(`[mock] wine prompt dismissed ${dismissed}`),
   setDownloadLimit: async () => {},
+  downloadProviders: async () => [
+    {
+      key: "org.gameyfin.direct",
+      name: "Direct Download",
+      description: "Streamed straight from the server.",
+      selected: true,
+      needsTorrentClient: false,
+    },
+    {
+      key: "org.gameyfin.torrent",
+      name: "Torrent",
+      description: "Hands back a .torrent file.",
+      selected: false,
+      needsTorrentClient: true,
+    },
+  ],
+  setDownloadProvider: async (key) => console.info(`[mock] provider ${key}`),
   cancelDownload: async (gameId) => console.info(`[mock] cancel download ${gameId}`),
   configDirectory: async () => "/tmp/gameyfin",
   prefixInfo: async () => null,

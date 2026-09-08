@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { isMockBackend } from "@/lib/backend";
 import {
   activateFocused,
+  clearPadFocus,
   goBack,
   moveFocus,
   nextTab,
@@ -38,6 +39,13 @@ export function useGamepad() {
   // Read through a ref so listeners stay mounted; re-subscribing on nav would drop presses.
   const context = useRef({ pathname: location.pathname, couchAuto });
   context.current = { pathname: location.pathname, couchAuto };
+
+  // The controller ring is drawn from an explicit flag, so something has to take it back
+  // when the user reaches for the mouse.
+  useEffect(() => {
+    document.addEventListener("pointerdown", clearPadFocus);
+    return () => document.removeEventListener("pointerdown", clearPadFocus);
+  }, []);
 
   useEffect(() => {
     if (isMockBackend) return;

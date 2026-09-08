@@ -5,11 +5,21 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, existsSync, utimesSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { rustEnv } from "./rust-env.mjs";
+import { signingProblems } from "./check-signing.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "build");
@@ -45,6 +55,14 @@ const args = ["build", "--bundles", targets.join(",")];
 if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
   console.log("No TAURI_SIGNING_PRIVATE_KEY set; building without updater artifacts.");
   args.push("--config", JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
+} else {
+  // A key that is set but unusable would only surface after the whole build.
+  const config = JSON.parse(readFileSync(join(ROOT, "src-tauri", "tauri.conf.json"), "utf8"));
+  const problems = signingProblems({
+    privateKey: process.env.TAURI_SIGNING_PRIVATE_KEY,
+    config,
+  });
+  for (const problem of problems) console.warn(`Warning: ${problem}`);
 }
 
 try {

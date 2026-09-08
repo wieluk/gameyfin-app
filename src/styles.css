@@ -24,9 +24,15 @@
    is drawn explicitly.
 
    `:focus-visible` rather than `:focus` so a mouse click does not leave a ring behind,
-   which is the reason the default behaves that way. Controller and keyboard focus both
-   count as visible, which is exactly the set we want. */
-:focus-visible {
+   which is the reason the default behaves that way.
+
+   A controller cannot rely on it, though. It moves focus by calling `focus()`, and the
+   browser reads programmatic focus as visible only while the last real input looked like
+   a keyboard, so after one mouse click the ring stopped appearing, which is precisely
+   when someone has put the mouse down and picked up a pad. `data-pad-focus` says so
+   outright instead of inferring it. */
+:focus-visible,
+html[data-pad-focus="true"] :focus {
   /* Applied through Tailwind rather than written out, because HeroUI's colours are
      alpha-aware CSS variables that `theme()` cannot resolve to a plain value. */
   @apply outline outline-2 outline-offset-2 outline-primary;
@@ -42,7 +48,8 @@ html[data-couch="true"] {
   font-size: 20px;
 }
 
-html[data-couch="true"] :focus-visible {
+html[data-couch="true"] :focus-visible,
+html[data-couch="true"][data-pad-focus="true"] :focus {
   outline-width: 3px;
   outline-offset: 3px;
 }

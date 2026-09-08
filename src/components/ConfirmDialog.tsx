@@ -1,4 +1,5 @@
 import { Icon } from "./Icon";
+import { useDismissOnEscape } from "@/lib/useDismiss";
 
 /** Confirmation for actions that destroy files: neither should happen on one stray click. */
 export function ConfirmDialog({
@@ -14,6 +15,8 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  useDismissOnEscape(onCancel);
+
   return (
     <div
       data-nav-scope

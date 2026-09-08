@@ -101,6 +101,27 @@ pub(crate) fn detect_bytes(magic: &[u8]) -> ArchiveKind {
     ArchiveKind::None
 }
 
+/// Whether a downloaded file is BitTorrent metainfo rather than the game itself.
+///
+/// The torrent provider answers with a `.torrent` for a client to fetch the game with, so
+/// taking one at face value turns a 60 GB game into a 40 KB file that opens as nothing.
+pub fn is_torrent_metainfo(path: &Path) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 1024];
+    let Ok(read) = file.read(&mut head) else {
+        return false;
+    };
+    is_torrent_bytes(&head[..read])
+}
+
+pub(crate) fn is_torrent_bytes(head: &[u8]) -> bool {
+    // Bencode has no magic number, so this leans on the shape: a metainfo file is one
+    // dictionary, and every torrent has an `info` key whatever else it carries.
+    head.first() == Some(&b'd') && head.windows(6).any(|w| w == b"4:info" || w == b"8:announ")
+}
+
 /// How far extraction has got.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ExtractProgress {
@@ -821,6 +842,26 @@ mod tests {
     fn detects_zip_from_magic_bytes() {
         assert_eq!(detect_bytes(b"PK\x03\x04..."), ArchiveKind::Zip);
         assert_eq!(detect_bytes(b"PK\x05\x06"), ArchiveKind::Zip);
+    }
+
+    #[test]
+    fn a_torrent_file_is_recognised() {
+        // What the server's torrent provider actually answers with.
+        assert!(is_torrent_bytes(
+            b"d8:announce30:http://tracker.example/announce4:infod4:name7:Celestee"
+        ));
+        // Key order is only conventional, so `info` alone has to be enough.
+        assert!(is_torrent_bytes(
+            b"d10:created by7:Gameyfin4:infod6:lengthi9ee"
+        ));
+    }
+
+    #[test]
+    fn an_archive_is_not_mistaken_for_a_torrent() {
+        assert!(!is_torrent_bytes(b"PK\x03\x04rest of a zip"));
+        assert!(!is_torrent_bytes(&[]));
+        // Starts like bencode but carries neither key.
+        assert!(!is_torrent_bytes(b"deadbeef"));
     }
 
     #[test]

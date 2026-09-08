@@ -614,6 +614,84 @@ pub async fn set_wine_variant(state: State<'_, AppState>, variant: String) -> Co
     Ok(())
 }
 
+/// The download provider to use: the stored choice, else the highest-priority one.
+///
+/// A key that is no longer offered falls back rather than failing: plugins get disabled on
+/// the server, and a stale preference must not make every download impossible.
+fn choose_provider<'a>(
+    providers: &'a [gameyfin_api::DownloadProvider],
+    preferred: Option<&str>,
+) -> Option<&'a gameyfin_api::DownloadProvider> {
+    preferred
+        .and_then(|key| providers.iter().find(|p| p.key == key))
+        .or_else(|| providers.first())
+}
+
+/// A provider offered by the server, with the one this client will use marked.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderChoice {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub selected: bool,
+    /// True when this provider serves a `.torrent` rather than the game itself.
+    pub needs_torrent_client: bool,
+}
+
+/// What the server can download from, and which one is in use.
+#[tauri::command]
+pub async fn download_providers(state: State<'_, AppState>) -> CommandResult<Vec<ProviderChoice>> {
+    let client = state.client().await.ok_or(CommandError::NotConnected)?;
+    let providers = client.download_providers().await?;
+    let preferred = state.settings().await.download_provider;
+    let chosen = choose_provider(&providers, preferred.as_deref()).map(|p| p.key.clone());
+
+    Ok(providers
+        .into_iter()
+        .map(|p| ProviderChoice {
+            selected: Some(&p.key) == chosen.as_ref(),
+            needs_torrent_client: serves_torrent(&p),
+            description: p.short_description.unwrap_or(p.description),
+            key: p.key,
+            name: p.name,
+        })
+        .collect())
+}
+
+/// Whether a provider hands back a `.torrent` instead of the game.
+///
+/// Matched on the plugin key and name because the server describes providers in prose
+/// only. Wrong either way is survivable: this drives a warning, not the transfer.
+fn serves_torrent(provider: &gameyfin_api::DownloadProvider) -> bool {
+    let haystack = format!("{} {}", provider.key, provider.name).to_ascii_lowercase();
+    haystack.contains("torrent")
+}
+
+/// Choose the download provider. `None` restores the server's own preference order.
+#[tauri::command]
+pub async fn set_download_provider(
+    state: State<'_, AppState>,
+    key: Option<String>,
+) -> CommandResult<()> {
+    mutate_settings(&state, |s| s.download_provider = key.clone()).await?;
+    tracing::info!(provider = ?key, "download provider changed");
+
+    // Mirrored so the web UI shows the same choice. Best effort: the setting is stored
+    // locally either way, and a server that refuses this is not a reason to fail.
+    if let Some(key) = key {
+        if let Some(client) = state.client().await {
+            if let Err(e) = client
+                .set_user_preference("preferred-download-method", &key)
+                .await
+            {
+                tracing::debug!(error = %e, "could not mirror the provider choice to the server");
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Stop offering Wine at startup.
 #[tauri::command]
 pub async fn set_wine_prompt_dismissed(
@@ -954,9 +1032,11 @@ pub async fn start_download(
             CommandError::Api(e)
         }
     })?;
-    let provider = providers.into_iter().next().ok_or_else(|| {
-        CommandError::Message("The server has no download provider enabled.".into())
-    })?;
+    let provider = choose_provider(&providers, settings.download_provider.as_deref())
+        .ok_or_else(|| {
+            CommandError::Message("The server has no download provider enabled.".into())
+        })?
+        .clone();
 
     let url = client.download_url(&game, &provider.key);
     let filename = crate::downloads::provisional_filename(&game.title);
@@ -1055,12 +1135,34 @@ pub async fn start_download(
         let _ = pump.await;
 
         match result {
+            // The torrent provider answers with metainfo, not the game. Recording that as
+            // the archive would put an Install button over a 40 KB file.
+            Ok(outcome) if gameyfin_core::extract::is_torrent_metainfo(&outcome.path) => {
+                tracing::warn!(game_id, provider = %provider.name, "the provider returned a torrent");
+                let message = format!(
+                    "{} hands back a torrent, and Gameyfin cannot download from one \
+                     yet. Pick another provider under Downloads, or open the file with \
+                     a torrent client.",
+                    provider.name
+                );
+                library
+                    .set_activity(
+                        game_id,
+                        Activity::Failed {
+                            message: message.clone(),
+                            stage: Stage::Download,
+                        },
+                    )
+                    .await;
+                crate::notify::failed(&app, "Download", &game.title, &message).await;
+            }
             Ok(outcome) => {
                 tracing::info!(
                     "downloaded game {game_id} to {:?} ({} bytes)",
                     outcome.path,
                     outcome.bytes
                 );
+
                 library
                     .update_record(game_id, |r| {
                         r.archive_path = Some(outcome.path.clone());
@@ -2938,6 +3040,7 @@ fn screen_scale(app: &AppHandle) -> f64 {
 /// rather than progress.
 fn notify(app: &AppHandle) {
     let _ = app.emit("library-changed", ());
+    crate::taskbar::refresh_soon(app);
 }
 
 /// One game's state, pushed so the UI can update in place.
@@ -2953,6 +3056,7 @@ struct GameStateEvent {
 async fn notify_state(app: &AppHandle, library: &crate::library_state::LibraryState, game_id: i64) {
     let state = library.state_of(game_id).await;
     let _ = app.emit("game-state", GameStateEvent { game_id, state });
+    crate::taskbar::refresh(app).await;
 }
 
 /// Re-read the library folder and adopt whatever is there.
@@ -3266,4 +3370,66 @@ pub async fn set_autostart(
         .map_err(|e| CommandError::Message(format!("could not change the startup setting: {e}")))?;
 
     mutate_settings(&state, |s| s.autostart = enabled).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider(key: &str, name: &str, priority: i32) -> gameyfin_api::DownloadProvider {
+        gameyfin_api::DownloadProvider {
+            key: key.to_string(),
+            name: name.to_string(),
+            priority,
+            description: String::new(),
+            short_description: None,
+        }
+    }
+
+    fn two_providers() -> Vec<gameyfin_api::DownloadProvider> {
+        vec![
+            provider("org.gameyfin.direct", "Direct Download", 2),
+            provider("org.gameyfin.torrent", "Torrent", 1),
+        ]
+    }
+
+    #[test]
+    fn the_stored_choice_wins_over_the_servers_order() {
+        let providers = two_providers();
+        let chosen = choose_provider(&providers, Some("org.gameyfin.torrent")).unwrap();
+        assert_eq!(chosen.key, "org.gameyfin.torrent");
+    }
+
+    #[test]
+    fn no_choice_takes_the_servers_first() {
+        let providers = two_providers();
+        assert_eq!(
+            choose_provider(&providers, None).unwrap().key,
+            "org.gameyfin.direct"
+        );
+    }
+
+    #[test]
+    fn a_provider_the_server_no_longer_offers_falls_back() {
+        // Disabling a plugin server-side must not leave the client unable to download.
+        let providers = two_providers();
+        let chosen = choose_provider(&providers, Some("org.gameyfin.removed")).unwrap();
+        assert_eq!(chosen.key, "org.gameyfin.direct");
+    }
+
+    #[test]
+    fn nothing_is_chosen_when_the_server_offers_nothing() {
+        assert!(choose_provider(&[], Some("org.gameyfin.direct")).is_none());
+    }
+
+    #[test]
+    fn torrent_providers_are_recognised_by_key_or_name() {
+        assert!(serves_torrent(&provider("org.gameyfin.torrent", "Seed", 1)));
+        assert!(serves_torrent(&provider("plugin.x", "Torrent Download", 1)));
+        assert!(!serves_torrent(&provider(
+            "org.gameyfin.direct",
+            "Direct Download",
+            1
+        )));
+    }
 }

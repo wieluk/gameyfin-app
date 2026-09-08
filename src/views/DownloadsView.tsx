@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Icon } from "@/components/Icon";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { DownloadProvider } from "@/components/DownloadProvider";
 import { FolderActions } from "@/components/FolderActions";
 import { InstallDialog } from "@/components/InstallDialog";
 import { SpeedLimit } from "@/components/SpeedLimit";
@@ -47,6 +48,7 @@ export function DownloadsView() {
         Downloads
       </h2>
       <div className="flex items-center gap-3">
+        <DownloadProvider onError={setError} />
         <SpeedLimit />
         <FolderActions folder="downloads" onError={setError} />
       </div>

@@ -48,11 +48,19 @@ jobs:
         run: node scripts/set-version.mjs "${{ github.ref_name }}"
 
       - run: npm ci
+
+      # Tauri signs last, so a missing key wasted the whole build and then failed with a
+      # message that named neither the variable nor the fix.
+      - name: Check the updater signing setup
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/check-signing.mjs
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signs the updater artifacts. Absent, the build still succeeds with no updater
-          # bundles and those users just get told a release exists.
+          # Signs the updater artifacts, and `createUpdaterArtifacts` makes that mandatory:
+          # without a key the build fails at the end rather than skipping them.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
