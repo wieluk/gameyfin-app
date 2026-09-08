@@ -50,12 +50,26 @@ export function Trailers({ urls, title }: { urls: string[]; title: string }) {
                   else void backend.openPath(url);
                 }}
                 title={url}
-                className="group flex h-full w-full flex-col items-center justify-center gap-1.5 bg-content2 transition-colors hover:bg-default-100"
+                className="group relative flex h-full w-full flex-col items-center justify-center gap-1.5 bg-content2 transition-colors hover:bg-default-100"
               >
-                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
+                {id && (
+                  // YouTube's own poster. onError leaves the plain tile behind it, which is
+                  // what a video with no thumbnail, or no connection, falls back to.
+                  <img
+                    src={`https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
+                    alt=""
+                    aria-hidden
+                    loading="lazy"
+                    className="absolute inset-0 h-full w-full object-cover transition-opacity group-hover:opacity-75"
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+                )}
+                <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-primary backdrop-blur-sm transition-colors group-hover:bg-primary group-hover:text-white">
                   <Icon name="play" className="h-4 w-4" filled />
                 </span>
-                <span className="px-2 text-[11px] text-foreground/45">
+                <span className="relative px-2 text-[11px] text-foreground/45">
                   {id ? "Play trailer" : "Open in browser"}
                 </span>
               </button>
