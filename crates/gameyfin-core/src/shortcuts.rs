@@ -366,6 +366,17 @@ mod tests {
         }
     }
 
+    /// The same, with a launcher that exists on whatever host is running the test.
+    ///
+    /// Windows validates every path it is handed for a `.lnk`, so the Unix launcher above
+    /// is rejected there: only tests that stop at building the script can use it.
+    fn a_local_target() -> Target {
+        Target {
+            launcher: std::env::current_exe().expect("the test binary knows its own path"),
+            ..a_target()
+        }
+    }
+
     #[test]
     fn the_stem_carries_the_id_so_two_titles_cannot_collide() {
         assert_eq!(stem(12, "Celeste"), "gameyfin-12 Celeste");
@@ -509,7 +520,7 @@ mod tests {
         // machine's actual desktop; `parse_user_dir` covers that resolution instead.
         assert!(!installed_for(&home, 12).contains(&Location::Menu));
 
-        let path = create(&home, Location::Menu, &a_target()).unwrap();
+        let path = create(&home, Location::Menu, &a_local_target()).unwrap();
         assert!(path.exists());
         assert!(installed_for(&home, 12).contains(&Location::Menu));
         // A different game is not confused for this one.
@@ -582,7 +593,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
 
-        let mut target = a_target();
+        let mut target = a_local_target();
         create(&home, Location::Menu, &target).unwrap();
 
         target.title = "Celeste: Farewell Edition".to_string();
