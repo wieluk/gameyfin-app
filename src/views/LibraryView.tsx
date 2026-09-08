@@ -4,7 +4,7 @@ import { GameCard } from "@/components/GameCard";
 import { GameDetail } from "@/components/GameDetail";
 import { InstallDialog } from "@/components/InstallDialog";
 import { Icon } from "@/components/Icon";
-import { isInstalled, needsChooser, primaryAction } from "@/lib/actions";
+import { isInstalled, isLocal, needsChooser, primaryAction } from "@/lib/actions";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { RootChooser, useLibraryRoots } from "@/components/RootChooser";
@@ -16,7 +16,7 @@ import {
   type SortKey,
 } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
-import { useEntries } from "@/lib/queries";
+import { useEntries, useStatus } from "@/lib/queries";
 import { useRescanOnOpen } from "@/lib/rescan";
 
 
@@ -48,6 +48,7 @@ export function LibraryView() {
   useRescanOnOpen();
 
   const entries = useEntries();
+  const offline = Boolean(useStatus().data?.offline);
   const libraries = useQuery({ queryKey: ["libraries"], queryFn: () => backend.listLibraries() });
 
   async function handlePrimaryAction(entry: LibraryEntry) {
@@ -87,6 +88,9 @@ export function LibraryView() {
     const all = entries.data ?? [];
     const needle = search.trim().toLowerCase();
     const filtered = all.filter((e) => {
+      // The catalogue is served from the offline mirror while the server is unreachable,
+      // so without this the list offers games that cannot be downloaded right now.
+      if (offline && !isLocal(e)) return false;
       if (libraryId !== null && e.game.libraryId !== libraryId) return false;
       if (presence !== "all" && (presence === "installed") !== isInstalled(e)) return false;
       if (facets.genre && !e.game.genres.includes(facets.genre)) return false;
@@ -99,13 +103,14 @@ export function LibraryView() {
       );
     });
     return sortEntries(filtered, sort, direction);
-  }, [entries.data, search, sort, direction, libraryId, presence, facets]);
+  }, [entries.data, search, sort, direction, libraryId, presence, facets, offline]);
 
   // Built from the current library, and narrowed by the other filters, so no option ever matches nothing.
   const options = useMemo(() => {
     const all = entries.data ?? [];
     const inScope = all.filter(
       (e) =>
+        (!offline || isLocal(e)) &&
         (libraryId === null || e.game.libraryId === libraryId) &&
         (presence === "all" || (presence === "installed") === isInstalled(e)),
     );
@@ -127,7 +132,12 @@ export function LibraryView() {
       developer: collect((e) => e.game.developers, "developer"),
       publisher: collect((e) => e.game.publishers, "publisher"),
     };
-  }, [entries.data, libraryId, presence, facets]);
+  }, [entries.data, libraryId, presence, facets, offline]);
+
+  const hiddenOffline = useMemo(
+    () => (offline ? (entries.data ?? []).filter((e) => !isLocal(e)).length : 0),
+    [entries.data, offline],
+  );
 
   const activeFacets = Object.values(facets).filter(Boolean).length;
 
@@ -226,7 +236,7 @@ export function LibraryView() {
         {entries.isLoading ? (
           <SkeletonGrid />
         ) : visible.length === 0 ? (
-          <EmptyState search={search} />
+          <EmptyState search={search} hiddenOffline={hiddenOffline} />
         ) : (
           <div data-library-grid className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
             {visible.map((entry) => (
@@ -366,13 +376,25 @@ function SkeletonGrid() {
   );
 }
 
-function EmptyState({ search }: { search: string }) {
+function EmptyState({ search, hiddenOffline }: { search: string; hiddenOffline: number }) {
+  // An empty library while offline is not an empty library, and saying so stops it looking
+  // like the catalogue was lost.
+  const offlineNote =
+    hiddenOffline > 0
+      ? `${hiddenOffline} ${hiddenOffline === 1 ? "game is" : "games are"} on your server, which is unreachable right now.`
+      : null;
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-      <Icon name="library" className="h-10 w-10 text-foreground/25" />
+      <Icon name={hiddenOffline > 0 ? "offline" : "library"} className="h-10 w-10 text-foreground/25" />
       <p className="text-sm text-foreground/60">
-        {search ? `Nothing matches "${search}"` : "This library is empty"}
+        {search
+          ? `Nothing matches "${search}"`
+          : hiddenOffline > 0
+            ? "Nothing is installed on this PC yet"
+            : "This library is empty"}
       </p>
+      {offlineNote && !search && <p className="text-xs text-foreground/40">{offlineNote}</p>}
     </div>
   );
 }

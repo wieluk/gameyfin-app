@@ -66,6 +66,17 @@ export function isInstalled(entry: LibraryEntry): boolean {
   return entry.state.kind === "installed" || entry.state.kind === "running";
 }
 
+/**
+ * Whether anything of this game is on this machine.
+ *
+ * Deliberately narrower than `isInDownloads`: a download that failed before writing
+ * anything, or a prefix still being prepared, has nothing the user could actually play,
+ * so neither belongs in a list that claims to show what is available offline.
+ */
+export function isLocal(entry: LibraryEntry): boolean {
+  return ["installed", "running", "downloaded", "extracted"].includes(entry.state.kind);
+}
+
 /** In the Downloads list: anything not yet a finished install. */
 export function isInDownloads(entry: LibraryEntry): boolean {
   return [
