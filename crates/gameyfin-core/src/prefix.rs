@@ -65,11 +65,8 @@ pub fn boot_command(runtime: &WindowsRuntime, prefix: &Path) -> crate::launch::R
     registry_command(runtime, prefix, &["wineboot", "-u"])
 }
 
-/// The command that opens a Wine tool against a prefix.
-///
-/// The same plumbing as [`boot_command`]: what makes a prefix usable is the environment,
-/// and a `winecfg` started without it configures the *default* prefix rather than the
-/// game's, which looks like the button doing nothing.
+/// The command that opens a Wine tool against a prefix. Needs [`boot_command`]'s
+/// environment, or `winecfg` configures the default prefix instead of the game's.
 pub fn tool_command(
     runtime: &WindowsRuntime,
     prefix: &Path,
@@ -78,10 +75,8 @@ pub fn tool_command(
     registry_command(runtime, prefix, &[tool])
 }
 
-/// The command that sets a prefix's DPI.
-///
-/// Applied through the runtime rather than by editing `user.reg`, because Wine rewrites
-/// that file when it starts and an appended fragment can simply be lost.
+/// The command that sets a prefix's DPI, applied through the runtime since Wine rewrites
+/// `user.reg` on start and an appended fragment can be lost.
 pub fn dpi_command(
     runtime: &WindowsRuntime,
     prefix: &Path,
@@ -111,24 +106,15 @@ const AERO_THEME: &str = "drive_c/windows/resources/themes/aero/aero.msstyles";
 /// The same path as Wine sees it.
 const AERO_THEME_WINDOWS: &str = "C:\\windows\\resources\\themes\\aero\\aero.msstyles";
 
-/// Whether this prefix has the bundled theme for the registry to point at.
-///
-/// Checked rather than assumed: a stripped Wine build can omit `aero.msstyles`, and
-/// pointing the registry at a file that is not there leaves the prefix looking exactly as
-/// it did, with nothing to say why.
+/// Whether this prefix has the bundled theme, since a stripped Wine build can omit
+/// `aero.msstyles` and pointing the registry at a missing file does nothing.
 pub fn has_bundled_theme(prefix: &Path) -> bool {
     wine_root(prefix).join(AERO_THEME).is_file()
 }
 
-/// Commands that turn on the theme Wine ships.
-///
-/// Without it Wine draws the classic Windows 2000 caption and controls: a flat blue title
-/// bar and square grey buttons. Wine's own `wine.inf` sets these values when it creates a
-/// prefix, so this is a repair for prefixes where that did not take effect, and it is a
-/// no-op everywhere else.
-///
-/// `ColorName` really is "Blue" rather than the "NormalColor" most Windows themes use;
-/// that is the name inside Wine's own theme, and a wrong one is ignored silently.
+/// Commands that turn on the theme Wine ships (otherwise it draws the Windows 2000
+/// look). A repair for prefixes where `wine.inf` did not set it; a no-op elsewhere.
+/// `ColorName` is "Blue", the name inside Wine's own theme, not the usual "NormalColor".
 pub fn theme_commands(
     runtime: &WindowsRuntime,
     prefix: &Path,
@@ -222,11 +208,8 @@ fn registry_command(
 /// assumes are taken.
 pub const GAMES_DRIVE: char = 'G';
 
-/// Drive letter the installer's own folder is mapped to.
-///
-/// An installer is run through this rather than by its Linux path, so the path it sees
-/// contains none of the characters our folder naming uses. Repack installers in
-/// particular shell out to batch scripts, where an unquoted `(` is a syntax error.
+/// Drive letter the installer's source folder is mapped to, so it sees a clean Windows
+/// path rather than our `(id) Title` naming (an unquoted `(` breaks repack batch scripts).
 pub const SOURCE_DRIVE: char = 'S';
 
 /// Make a directory name safe for a Windows installer and the shells it invokes.
@@ -266,11 +249,8 @@ pub fn is_shell_metachar(c: char) -> bool {
     )
 }
 
-/// The Windows path a user should type to install a particular game.
-///
-/// A bare drive root is not accepted by every installer, Inno Setup in particular
-/// rejects `G:\` with "You must enter a full path with drive letter", so the drive is
-/// mapped to the installations *root* and the game's own folder named after it.
+/// The Windows path a user should type to install a game. The drive is mapped to the
+/// installations root with a per-game subfolder, since Inno Setup rejects a bare `G:\`.
 pub fn games_drive_path(folder: &str) -> String {
     format!("{GAMES_DRIVE}:\\{folder}")
 }
@@ -280,13 +260,8 @@ pub fn map_drive(prefix: &Path, target: &Path) -> CoreResult<PathBuf> {
     map_drive_letter(prefix, GAMES_DRIVE, target, true)
 }
 
-/// Point any drive letter at a directory.
-///
-/// Wine reads `dosdevices` to map drive letters, and a symlink there is all it takes, no
-/// registry edit and no `winecfg` round trip.
-///
-/// `create` controls whether a missing target is created, appropriate for a destination,
-/// wrong for a source that should already exist.
+/// Point any drive letter at a directory via a `dosdevices` symlink. `create` makes a
+/// missing target (right for a destination, wrong for a source that should exist).
 #[cfg(unix)]
 pub fn map_drive_letter(
     prefix: &Path,

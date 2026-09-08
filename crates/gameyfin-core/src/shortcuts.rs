@@ -103,11 +103,7 @@ fn launch_arguments(target: &Target) -> String {
     parts.join(" ")
 }
 
-/// Escape a value for the right-hand side of a desktop-entry key.
-///
-/// The spec gives backslash, newline, tab and carriage return meaning inside values, so a
-/// Windows-style path or a title containing a newline has to be escaped or the entry is
-/// silently mis-parsed.
+/// Escape a value for a desktop-entry key: backslash, newline, tab and CR carry meaning.
 fn desktop_value(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -143,15 +139,9 @@ fn exec_argument(text: &str) -> String {
     out
 }
 
-/// The PowerShell that creates a Windows `.lnk`.
-///
-/// A `.lnk` rather than a `.url`, because an internet shortcut cannot carry arguments and
-/// the whole design depends on passing `--launch <id>`. Real `.lnk` files are a COM
-/// structure, so rather than marshalling `IShellLink` by hand this drives the shell's own
-/// `WScript.Shell`, which is present on every supported Windows and produces exactly the
-/// file Explorer would.
-///
-/// Returned as a script rather than run here so its quoting can be tested.
+/// The PowerShell that creates a Windows `.lnk` (a `.url` cannot carry the `--launch <id>`
+/// argument). Drives `WScript.Shell` rather than marshalling `IShellLink` by hand.
+/// Returned as a script, not run here, so its quoting can be tested.
 pub fn windows_shortcut_script(target: &Target, destination: &Path) -> String {
     let icon = target
         .icon
@@ -181,11 +171,8 @@ pub fn windows_shortcut_script(target: &Target, destination: &Path) -> String {
     )
 }
 
-/// Quote a value as a PowerShell single-quoted string.
-///
-/// Single quotes rather than double, because PowerShell does no expansion inside them: a
-/// game called `$(Get-Process)` is then a title rather than a command. The only character
-/// with meaning is the quote itself, escaped by doubling.
+/// Quote a value as a PowerShell single-quoted string (no expansion inside; a literal `'`
+/// is doubled), so a title like `$(Get-Process)` stays a title.
 fn powershell_string(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
@@ -229,12 +216,8 @@ pub fn directory_for(home: &Path, location: Location) -> Option<PathBuf> {
     }
 }
 
-/// The user's desktop directory.
-///
-/// Not simply `~/Desktop`: the folder is localised, so on a German or Norwegian system it
-/// is `Schreibtisch` or `Skrivebord`, and writing to the English name creates a second
-/// folder the desktop does not display. `XDG_DESKTOP_DIR` in the environment wins, then
-/// the value recorded in `user-dirs.dirs`, then the English default.
+/// The user's desktop directory, which is localised: `XDG_DESKTOP_DIR`, then
+/// `user-dirs.dirs`, then the English default.
 #[cfg(not(windows))]
 fn desktop_dir(home: &Path) -> PathBuf {
     if let Some(from_env) = std::env::var_os("XDG_DESKTOP_DIR") {

@@ -126,11 +126,8 @@ impl ExtractProgress {
     }
 }
 
-/// Join an archive entry path onto a destination, refusing anything that escapes.
-///
-/// Rejects absolute paths, drive prefixes and `..` traversal. Returns `None` for an entry
-/// that should be skipped rather than failing the whole extraction, because one hostile or
-/// malformed name should not cost the user a completed download.
+/// Join an archive entry path onto a destination, returning `None` (skip the entry, don't
+/// fail the extraction) for absolute paths, drive prefixes or `..` traversal.
 pub fn safe_join(destination: &Path, entry: &str) -> Option<PathBuf> {
     // Archives use forward slashes, but a Windows-built one may contain backslashes.
     let normalised = entry.replace('\\', "/");
@@ -158,11 +155,8 @@ where
     extract_with(archive, destination, None, on_progress)
 }
 
-/// Unpack an archive that may be encrypted.
-///
-/// The password is optional and applies to every format that has one. It is passed even
-/// for an archive that turns out not to need it, which costs nothing: an unencrypted entry
-/// ignores it.
+/// Unpack an archive that may be encrypted. The optional password applies to every format
+/// that has one and is harmless for an archive that turns out not to need it.
 pub fn extract_with<F>(
     archive: &Path,
     destination: &Path,
@@ -400,13 +394,8 @@ impl<R: Read> Read for Counting<R> {
     }
 }
 
-/// Unpack a tar, decompressing on the way if it is wrapped in something.
-///
-/// Progress is measured on the input side, bytes consumed from the archive file, rather
-/// than bytes written to disk. A tar carries no index, so the uncompressed total is not
-/// knowable without decompressing the whole thing first; the compressed length is known
-/// before anything starts, and counting against it gives a bar that moves smoothly and
-/// finishes at 100% instead of one that sits at zero or overshoots.
+/// Unpack a tar, decompressing on the way. Progress is measured by bytes consumed from the
+/// archive, since a tar has no index to give an uncompressed total.
 fn extract_tar<F>(
     archive: &Path,
     destination: &Path,
@@ -515,18 +504,14 @@ where
     Ok(written)
 }
 
-/// Recreate a symlink from a tar entry, if it stays inside the destination.
-///
-/// Linux game builds ship these for shared libraries, so dropping them silently leaves a
-/// game that will not start. A link is also another way out of the destination, hence the
-/// same containment rule the entry paths get.
+/// Recreate a symlink from a tar entry (Linux builds ship these for shared libraries), if
+/// it stays inside the destination.
 fn symlink_entry<R: Read>(destination: &Path, target: &Path, entry: &tar::Entry<'_, R>) {
     let Ok(Some(link)) = entry.link_name() else {
         return;
     };
 
-    // Resolved against the *link's own directory*, which is what a relative link is
-    // relative to, not against the destination root.
+    // A relative link resolves against the link's own directory, not the destination root.
     let base = target.parent().unwrap_or(destination);
     let Some(resolved) = resolve_link(destination, base, &link) else {
         tracing::warn!(
@@ -541,13 +526,9 @@ fn symlink_entry<R: Read>(destination: &Path, target: &Path, entry: &tar::Entry<
     place_link(&link, &resolved, target);
 }
 
-/// Resolve a link target without touching the disk, refusing anything that escapes.
-///
-/// Unlike [`safe_join`] this allows `..`, because `../lib/libfoo.so.1` is what an
-/// ordinary shared-library link looks like and refusing it would break the game the link
-/// exists for. What it does not allow is the result landing outside `destination`, which
-/// is the part that actually matters, or an absolute target, which points at the host's
-/// own files rather than at anything the archive brought.
+/// Resolve a link target without touching the disk. Unlike [`safe_join`] this allows `..`
+/// (ordinary shared-library links use it), but not a result outside `destination` or an
+/// absolute target.
 fn resolve_link(destination: &Path, base: &Path, link: &Path) -> Option<PathBuf> {
     let normalised = link.to_string_lossy().replace('\\', "/");
 
@@ -572,19 +553,13 @@ fn resolve_link(destination: &Path, base: &Path, link: &Path) -> Option<PathBuf>
 /// Put the link in place, however this platform can.
 #[cfg(unix)]
 fn place_link(link: &Path, _resolved: &Path, target: &Path) {
-    // Recreated as written, relative target and all, so the game sees the layout its
-    // archive described rather than a rewritten one.
+    // Recreated as written so the game sees the layout its archive described.
     if let Err(e) = std::os::unix::fs::symlink(link, target) {
         tracing::warn!("could not create link {}: {e}", target.display());
     }
 }
 
-/// The same, where symlinks are not freely available.
-///
-/// Windows needs Developer Mode or administrator rights to create one, neither of which
-/// this app is going to demand for an extraction. Games ship these as duplicate library
-/// names, which a copy satisfies at the cost of some disk space. A link whose target has
-/// not been unpacked yet simply fails here, and is reported.
+/// On Windows, where creating a symlink needs elevated rights, copy the target instead.
 #[cfg(not(unix))]
 fn place_link(_link: &Path, resolved: &Path, target: &Path) {
     if let Err(e) = std::fs::copy(resolved, target) {
@@ -597,9 +572,6 @@ fn place_link(_link: &Path, resolved: &Path, target: &Path) {
 }
 
 /// External programs that can unpack a RAR, in order of preference.
-///
-/// `unar` and `7z` handle RAR 5 correctly and are packaged by every major distribution;
-/// `unrar` is the reference implementation where it happens to be installed.
 #[cfg(not(windows))]
 const RAR_TOOLS: &[(&str, &[&str])] = &[
     ("unar", &["-force-overwrite", "-quiet", "-output-directory"]),
@@ -610,14 +582,8 @@ const RAR_TOOLS: &[(&str, &[&str])] = &[
     ("bsdtar", &["-xf"]),
 ];
 
-/// The same, on Windows.
-///
-/// Ordered by what people actually have. None of these is on `PATH` after a normal
-/// install, so they are found by looking in the folders they install to; see
-/// [`crate::runtime::find_program`]. `UnRAR.exe` ships beside `WinRAR.exe`, so a WinRAR
-/// install is usable without driving its GUI program. `tar.exe` comes with Windows
-/// itself and is listed last for the same reason `bsdtar` is on Linux: it is libarchive,
-/// whose RAR support is partial.
+/// The same, on Windows. None are on `PATH`, so they are found in their install folders
+/// (see [`crate::runtime::find_program`]); `tar.exe` is last because its RAR support is partial.
 #[cfg(windows)]
 const RAR_TOOLS: &[(&str, &[&str])] = &[
     ("7z", &["x", "-y", "-o"]),
@@ -640,18 +606,13 @@ pub fn rar_tool() -> Option<&'static str> {
         .find(|name| crate::runtime::find_program(name).is_some())
 }
 
-/// What to install when no RAR tool is present.
-///
-/// RAR cannot be unpacked in-process: the only complete implementations carry licence
-/// terms that forbid shipping them inside another application, so the message has to name
-/// something the user installs themselves, on the system they are actually running.
+/// What to install when no RAR tool is present. RAR cannot be unpacked in-process (the
+/// complete implementations forbid bundling), so this names a tool the user installs.
 pub fn rar_tool_hint() -> String {
     if cfg!(windows) {
-        // Named rather than described: "install a RAR tool" sends people to a search
-        // engine, and the first result for that is not 7-Zip.
         return "RAR archives need 7-Zip or WinRAR. Install 7-Zip from https://7-zip.org \
-                (or WinRAR from https://rarlab.com), then try again \u{2014} Gameyfin finds it \
-                automatically, and nothing needs to be added to PATH."
+                (or WinRAR from https://rarlab.com), then try again. Gameyfin finds it \
+                automatically, with nothing added to PATH."
             .to_string();
     }
 

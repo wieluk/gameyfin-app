@@ -6,9 +6,7 @@ for downloads, launching, process supervision and save sync, and a React/HeroUI 
 ## Status
 
 Library browsing, downloading, extraction, installation, launching and playtime tracking
-work against a live server. Save syncing is designed but not yet wired up. See
-[docs/01-desktop-app-plan.md](docs/01-desktop-app-plan.md) and
-[docs/02-save-sync-plan.md](docs/02-save-sync-plan.md).
+work against a live server. Save syncing is designed but not yet wired up.
 
 ## Development
 

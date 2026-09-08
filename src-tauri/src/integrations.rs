@@ -26,12 +26,8 @@ fn home() -> CommandResult<PathBuf> {
         .ok_or_else(|| CommandError::Message("could not find your home directory".into()))
 }
 
-/// How to invoke Gameyfin from outside it: the program, and any arguments it needs first.
-///
-/// Inside a Flatpak the binary's own path is meaningless on the host, which is where a
-/// desktop entry or Steam will run it from, so the invocation has to go through
-/// `flatpak run <app-id>`. Both shortcut kinds share this, because getting them out of
-/// step would mean one of them silently launching nothing.
+/// How to invoke Gameyfin from outside it. Inside a Flatpak the binary path is meaningless
+/// on the host, so this goes through `flatpak run <app-id>`.
 fn launcher_invocation() -> CommandResult<(PathBuf, Vec<String>)> {
     if let Ok(app_id) = std::env::var("FLATPAK_ID") {
         return Ok((
@@ -174,11 +170,8 @@ fn steam_entry_for(home: &std::path::Path, game_id: i64, title: &str) -> Option<
         .then_some(wanted)
 }
 
-/// Add or remove a game in the user's Steam library.
-///
-/// Written to every signed-in account on the machine, because there is no way to tell from
-/// here which one belongs to the person at the keyboard, and adding it to one at random
-/// would look like the button had failed.
+/// Add or remove a game in the user's Steam library, written to every signed-in account
+/// since which one is at the keyboard is unknowable from here.
 #[tauri::command]
 pub async fn set_steam_shortcut(
     state: State<'_, AppState>,
@@ -247,11 +240,8 @@ pub struct PrefixEntry {
     pub bytes: u64,
 }
 
-/// Every prefix on disk, largest first.
-///
-/// Listed from the folder rather than from the library records, so a prefix left behind by
-/// a game that has since been removed from the server still shows up. Those are exactly
-/// the ones worth reclaiming.
+/// Every prefix on disk, largest first. Listed from the folder, not library records, so a
+/// prefix left behind by a removed game still shows up.
 #[tauri::command]
 pub async fn list_prefixes(state: State<'_, AppState>) -> CommandResult<Vec<PrefixEntry>> {
     if cfg!(windows) {
@@ -301,11 +291,8 @@ pub async fn list_prefixes(state: State<'_, AppState>) -> CommandResult<Vec<Pref
     Ok(entries)
 }
 
-/// Delete one game's prefix.
-///
-/// Safe in the sense that it is rebuilt on the next launch, but not free: anything the
-/// game wrote inside the prefix, including saves that do not live in the install folder,
-/// goes with it. The UI says so before calling this.
+/// Delete one game's prefix. Rebuilt on the next launch, but anything the game wrote
+/// inside it (including some saves) goes too; the UI warns first.
 #[tauri::command]
 pub async fn delete_prefix(state: State<'_, AppState>, game_id: i64) -> CommandResult<()> {
     let root = state
@@ -347,11 +334,8 @@ impl PrefixTool {
     }
 }
 
-/// Open a Wine tool against one game's prefix.
-///
-/// This is what makes a broken prefix fixable rather than only deletable: most of the
-/// advice that exists for a misbehaving Windows game is a change in `winecfg` or a key in
-/// the registry.
+/// Open a Wine tool against one game's prefix, so a broken prefix is fixable (most advice
+/// for a misbehaving Windows game is a `winecfg` or registry change) rather than only deletable.
 #[tauri::command]
 pub async fn open_prefix_tool(
     app: AppHandle,

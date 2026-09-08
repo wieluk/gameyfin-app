@@ -127,11 +127,7 @@ pub struct Settings {
     pub autostart: bool,
 }
 
-/// The names that are almost never the game.
-///
-/// Shipped as a default rather than hard-coded so it stays editable: the list is a
-/// heuristic, and someone will eventually have a game whose launcher is genuinely called
-/// something on it.
+/// Executable names that are almost never the game. A default, not hard-coded, so it stays editable.
 fn default_ignored_executables() -> Vec<String> {
     [
         "unitycrashhandler",
@@ -203,11 +199,8 @@ fn default_installer_memory_limit() -> u32 {
     3072
 }
 
-/// Written by hand rather than derived.
-///
-/// A derived `Default` would zero `installer_memory_limit_mb`, and `#[serde(default =
-/// "...")]` only applies when deserializing, so a freshly constructed `Settings` would
-/// silently disable the installer memory cap while a loaded one enabled it.
+/// Hand-written, not derived: a derived `Default` would zero `installer_memory_limit_mb`
+/// (the `#[serde(default)]` fns only run on deserialize), disabling the cap.
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -392,14 +385,8 @@ impl Settings {
     }
 }
 
-/// Narrow the file's DACL so only its owner can read it.
-///
-/// The Unix path uses a 0600 chmod. Windows has no equivalent in std, and while the
-/// config directory under %APPDATA% already carries per-user ACLs, the file inherits
-/// whatever the profile grants rather than stating its own intent.
-///
-/// Best effort: a failure is logged, not fatal, so an unusual security policy cannot
-/// stop the user signing in.
+/// Narrow the file's DACL to its owner (the Unix path uses a 0600 chmod). Best effort: a
+/// failure is logged, not fatal.
 #[cfg(windows)]
 fn restrict_to_owner(path: &Path) {
     use std::os::windows::ffi::OsStrExt;

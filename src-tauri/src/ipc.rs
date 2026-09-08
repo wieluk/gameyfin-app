@@ -163,11 +163,8 @@ pub struct LoginPoll {
     pub detail: Option<String>,
 }
 
-/// Check whether the sign-in window has produced a usable session.
-///
-/// Reports success only once the harvested cookies actually authenticate against the
-/// server, not merely once cookies exist, since an identity provider sets plenty of its
-/// own along the way, and a forward-auth proxy sets more still.
+/// Check whether the sign-in window has produced a usable session. Reports success only
+/// once the harvested cookies actually authenticate, not merely once cookies exist.
 #[tauri::command]
 pub async fn poll_login(app: AppHandle, state: State<'_, AppState>) -> CommandResult<LoginPoll> {
     let window_open = auth_flow::login_window_open(&app);
@@ -376,11 +373,8 @@ pub async fn set_download_limit(state: State<'_, AppState>, kib: u32) -> Command
     Ok(())
 }
 
-/// Stop a download that is in progress.
-///
-/// The partial file and its checkpoint are kept. Against a server that supports `Range`
-/// the next attempt resumes from there; Gameyfin 2.4 does not, so today it restarts, and
-/// cancelling a nearly-finished download means downloading it again.
+/// Stop a download in progress. The partial file and checkpoint are kept for a resume,
+/// though Gameyfin 2.4's lack of `Range` support means today it restarts.
 #[tauri::command]
 pub async fn cancel_download(
     app: AppHandle,
@@ -496,11 +490,8 @@ pub struct WineProgressEvent {
     pub bytes_per_second: f64,
 }
 
-/// What Wine is installed, and what is available.
-///
-/// The two halves are independent on purpose: the release lookup needs the network and
-/// the installed build does not, so a machine that is offline still reports its own Wine
-/// correctly instead of failing the whole call.
+/// What Wine is installed, and what is available. The installed half works offline even
+/// when the release lookup cannot.
 #[tauri::command]
 pub async fn wine_status(
     state: State<'_, AppState>,
@@ -603,11 +594,7 @@ pub async fn install_wine(
     }
 }
 
-/// Delete the downloaded Wine.
-///
-/// Game prefixes are left alone: they are built by Wine but owned by the games, and
-/// throwing them away because the runtime was reinstalled would lose save data living
-/// inside them.
+/// Delete the downloaded Wine. Game prefixes are left alone, since some hold save data.
 #[tauri::command]
 pub async fn remove_wine(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
     gameyfin_core::wine::remove(&state.config_dir().await)
@@ -1367,11 +1354,8 @@ async fn library_root(state: &State<'_, AppState>) -> CommandResult<String> {
     })
 }
 
-/// Which games folder a particular game lives in.
-///
-/// A game is not tied to the default root: it went wherever it was sent when it was
-/// downloaded. That is recovered from the paths already recorded for it, so an install or
-/// an archive on a second drive keeps working after the default changes.
+/// Which games folder a game lives in, recovered from its recorded paths so it keeps
+/// working after the default root changes.
 async fn root_for_game(state: &State<'_, AppState>, game_id: i64) -> CommandResult<String> {
     let record = state.library().record(game_id).await;
     let settings = state.settings().await;
@@ -1448,11 +1432,8 @@ async fn downloads_dir_for(state: &State<'_, AppState>, game_id: i64) -> Command
     Ok(gameyfin_core::InstallLayout::new(&root).downloads_dir(game_id, &title))
 }
 
-/// Unpack a download, staging the files beside the archive.
-///
-/// Extraction is not installation. The unpacked files stay in the Downloads folder until
-/// the user decides what should happen to them, run a setup program, or move them into
-/// the games folder, because an archive may contain either.
+/// Unpack a download beside the archive. Extraction is not installation: the files stay in
+/// Downloads until the user chooses what happens to them.
 #[tauri::command]
 pub async fn extract_download(
     app: AppHandle,
@@ -1803,11 +1784,8 @@ pub async fn find_game_uninstaller(
     Ok(found.map(|p| p.to_string_lossy().into_owned()))
 }
 
-/// Remove an installed game's files, keeping the downloaded archive.
-///
-/// `uninstaller` is a program the user picked themselves, for the case where detection
-/// found nothing. It has to live inside the game's own folder: this runs whatever it is
-/// given, and "uninstall this game" is not consent to run an arbitrary program.
+/// Remove an installed game's files, keeping the downloaded archive. A user-picked
+/// `uninstaller` must live inside the game's own folder, since this runs whatever it is given.
 #[tauri::command]
 pub async fn uninstall_game(
     app: AppHandle,
@@ -2153,11 +2131,8 @@ pub enum LibraryFolder {
     Installations,
 }
 
-/// Reveal the Downloads or Installations folder in the desktop file manager.
-///
-/// Created if it is not there yet. Both folders are ours to make, and opening a path that
-/// does not exist is a silent no-op through the desktop portal, which reads as the button
-/// being broken.
+/// Reveal the Downloads or Installations folder, creating it first (opening a missing path
+/// is a silent no-op through the portal).
 #[tauri::command]
 pub async fn open_library_folder(
     app: AppHandle,
@@ -2811,11 +2786,8 @@ async fn ready_windows_prefix(
     Ok((runtime, prefix))
 }
 
-/// Initialise a compatibility prefix and set its DPI, once.
-///
-/// Wine's first run in a new prefix updates it and, without the overrides applied here,
-/// asks whether to install Mono and Gecko. Those dialogs open behind the update window,
-/// so an unattended prefix appears to hang indefinitely.
+/// Initialise a compatibility prefix and set its DPI, once. The overrides here suppress
+/// the Mono/Gecko dialogs that otherwise open behind the update window and hang it.
 async fn prepare_prefix(
     runtime: &gameyfin_core::WindowsRuntime,
     prefix: &Path,
@@ -2938,11 +2910,8 @@ struct GameStateEvent {
     state: GameState,
 }
 
-/// Push a single game's state to the UI.
-///
-/// Progress must not trigger a full refresh: `list_entries` reads the whole catalogue, so
-/// refreshing several times a second left the interface lagging far behind the work it was
-/// reporting on, which is why a running extraction appeared stuck at 0%.
+/// Push a single game's state to the UI, without the full `list_entries` refresh, which
+/// several times a second left progress bars stuck.
 async fn notify_state(app: &AppHandle, library: &crate::library_state::LibraryState, game_id: i64) {
     let state = library.state_of(game_id).await;
     let _ = app.emit("game-state", GameStateEvent { game_id, state });

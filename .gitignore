@@ -24,4 +24,5 @@ build/
 .idea/
 
 # Development notes, not part of the published project.
-PROGRESS.md
+dev-docs/
+CLAUDE.md

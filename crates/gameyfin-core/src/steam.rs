@@ -224,11 +224,8 @@ pub struct Shortcut {
     pub tags: Vec<String>,
 }
 
-/// The tag written on every shortcut this app creates.
-///
-/// Ownership has to be recorded in the file itself: without it there is no way to tell an
-/// entry we added from one the user made by hand, and "remove our shortcuts" would be
-/// guesswork against a title that may well have been renamed.
+/// The tag written on every shortcut this app creates, so ours can be told from the user's
+/// hand-made entries.
 pub const OWNER_TAG: &str = "Gameyfin";
 
 impl Shortcut {
@@ -294,11 +291,8 @@ impl Shortcut {
     }
 }
 
-/// Insert or replace a key, matched case-insensitively.
-///
-/// Steam is inconsistent about capitalisation between versions (`appid` and `Appid` have
-/// both been seen), and a case-sensitive insert would leave the old key in place beside
-/// the new one, giving one entry two ids.
+/// Insert or replace a key, matched case-insensitively, since Steam varies the
+/// capitalisation between versions (`appid` vs `Appid`).
 fn set(entries: &mut Vec<(String, Value)>, key: &str, value: Value) {
     match entries
         .iter_mut()
@@ -396,11 +390,8 @@ const STEAM_ROOTS: [&str; 4] = [
     ".var/app/com.valvesoftware.Steam/data/Steam",
 ];
 
-/// Every `shortcuts.vdf` found under `home`, one per signed-in Steam account.
-///
-/// All of them are returned rather than the first: a shared machine has an account each,
-/// and writing to whichever happened to sort first would add the game to a sibling's
-/// library and not the user's own.
+/// Every `shortcuts.vdf` under `home`, one per Steam account, since a shared machine has
+/// one each and the game should reach all of them.
 pub fn shortcut_files(home: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for root in STEAM_ROOTS {
@@ -431,11 +422,8 @@ pub fn is_installed(home: &Path) -> bool {
         .any(|root| home.join(root).join("userdata").is_dir())
 }
 
-/// Read a `shortcuts.vdf`, treating a missing or unreadable file as an empty document.
-///
-/// Unreadable is deliberately not an error. The file is Steam's, it can be locked while
-/// Steam is running or half-written after a crash, and refusing to add a shortcut is a
-/// better outcome than refusing to install a game.
+/// Read a `shortcuts.vdf`, treating a missing or unreadable file as an empty document
+/// (it can be locked while Steam runs; failing here should not fail an install).
 pub fn read_document(path: &Path) -> Value {
     match std::fs::read(path) {
         Ok(bytes) => parse(&bytes).unwrap_or_else(|e| {

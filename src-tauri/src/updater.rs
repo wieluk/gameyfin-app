@@ -46,11 +46,8 @@ impl Channel {
     }
 }
 
-/// Work out how this copy was installed.
-///
-/// Environment first, because the same Linux executable ships inside four packages.
-/// `APPIMAGE` is set by the AppImage runtime and `FLATPAK_ID` by the Flatpak one, both
-/// before any of our code runs, so their presence is conclusive.
+/// Work out how this copy was installed, from the environment (`APPIMAGE`, `FLATPAK_ID`),
+/// since one Linux executable ships inside four packages.
 pub fn detect_channel() -> Channel {
     // A debug build is a build tree by definition, whatever the surroundings look like.
     if cfg!(debug_assertions) {
@@ -103,12 +100,8 @@ struct Release {
     draft: bool,
 }
 
-/// Compare a release tag against the running version.
-///
-/// Tags are `v1.2.3`; the leading `v` is conventional and not part of the version. A tag
-/// that is not valid semver is treated as "not newer" rather than guessed at, because the
-/// failure mode of guessing is nagging every user forever about a release that does not
-/// exist.
+/// Compare a release tag (`v1.2.3`) against the running version. Non-semver is treated as
+/// "not newer" rather than guessed, to avoid nagging forever about a nonexistent release.
 pub fn is_newer(tag: &str, current: &str) -> bool {
     let parse = |text: &str| semver::Version::parse(text.trim().trim_start_matches(['v', 'V']));
     match (parse(tag), parse(current)) {
@@ -208,11 +201,8 @@ pub async fn check(state: &AppState) -> UpdateStatus {
     status
 }
 
-/// Ask the Flatpak system to update us, from inside the sandbox.
-///
-/// `flatpak update` cannot run in here, so it is handed to the host through the sandbox
-/// helper, the same escape hatch the app already uses to reach the host's Wine. No
-/// elevation is involved: a `--user` installation is the user's own.
+/// Ask the Flatpak system to update us: `flatpak update` cannot run in the sandbox, so it
+/// is handed to the host through `flatpak-spawn`. No elevation (`--user` is the user's own).
 async fn flatpak_update() -> CommandResult<String> {
     let app_id = std::env::var("FLATPAK_ID").unwrap_or_else(|_| "org.gameyfin.Gameyfin".into());
 
@@ -247,11 +237,8 @@ pub async fn update_status(state: tauri::State<'_, AppState>) -> CommandResult<U
     Ok(check(&state).await)
 }
 
-/// Install a waiting update, where the package format allows it.
-///
-/// Returns a sentence to show the user, because what happens next differs: a Flatpak
-/// update lands on disk and takes effect on the next start, while a self-install replaces
-/// the running bundle and needs a restart to be worth anything either.
+/// Install a waiting update where the format allows it. Returns a sentence for the user,
+/// since what happens next differs by format.
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> CommandResult<String> {
     match detect_channel() {
@@ -269,11 +256,8 @@ pub async fn install_update(app: tauri::AppHandle) -> CommandResult<String> {
     }
 }
 
-/// Download and apply a signed update to an AppImage or a Windows install.
-///
-/// Requires the signing key to have been configured at build time. Without it the plugin
-/// has no public key to verify against and refuses everything, which is reported as such
-/// rather than as a mysterious failure.
+/// Download and apply a signed update to an AppImage or Windows install. Needs the signing
+/// key configured at build time; without it the plugin refuses everything, reported as such.
 async fn self_install(app: &tauri::AppHandle) -> CommandResult<String> {
     use tauri_plugin_updater::UpdaterExt;
 

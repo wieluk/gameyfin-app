@@ -14,12 +14,8 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{CoreError, CoreResult};
 
-/// Where the builds come from.
-///
-/// Kron4ek's builds are the ones Lutris and Bottles have pointed at for years: plain
-/// upstream Wine and Wine-Staging, built self-contained, published per release with
-/// checksums. Building Wine ourselves would mean owning a multi-hour compile and a
-/// security response process for no benefit.
+/// Where the builds come from: Kron4ek's self-contained Wine-Staging builds, as used by
+/// Lutris and Bottles, published per release with checksums.
 const RELEASES_API: &str = "https://api.github.com/repos/Kron4ek/Wine-Builds/releases/latest";
 
 /// Marker recording what is installed, so the version can be shown without unpacking.
@@ -241,11 +237,8 @@ pub fn sha_for(sums: &str, filename: &str) -> Option<String> {
     })
 }
 
-/// Download, verify and unpack a build, replacing whatever is installed.
-///
-/// Extraction goes to a scratch directory and is swapped into place only once it has
-/// succeeded, so an interrupted update leaves the previous Wine working rather than a
-/// half-unpacked tree that fails on next launch.
+/// Download, verify and unpack a build. Extraction is swapped into place only on success,
+/// so an interrupted update leaves the previous Wine working.
 pub async fn install<F>(
     config_dir: &Path,
     release: &WineRelease,
@@ -316,11 +309,8 @@ where
     Ok(record)
 }
 
-/// Extract a `.tar.xz` into a directory, returning the build's own root inside it.
-///
-/// These tarballs contain a single top-level directory named after the build. Returning
-/// it rather than the scratch directory is what lets the caller rename the build itself
-/// into place, instead of nesting it one level deeper on every update.
+/// Extract a `.tar.xz`, returning the build's own single top-level directory inside it so
+/// the caller can rename it into place rather than nesting it a level deeper.
 fn unpack(archive: &Path, into: &Path) -> CoreResult<PathBuf> {
     let file = std::fs::File::open(archive)?;
     let decompressed = liblzma::read::XzDecoder::new(std::io::BufReader::new(file));

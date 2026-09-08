@@ -13,11 +13,8 @@ use tokio::sync::RwLock;
 /// Where the last known-good catalogue is written.
 pub const CATALOG_FILE: &str = "catalog.json";
 
-/// The catalogue as the server last described it.
-///
-/// Persisted so the library still renders when the server cannot be reached: the games
-/// installed on this machine are on this machine whether or not there is a network, and
-/// an app that shows an empty screen because a router is down is broken.
+/// The catalogue as the server last described it, persisted so the library still renders
+/// when the server is unreachable.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CachedCatalog {
