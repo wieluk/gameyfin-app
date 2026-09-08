@@ -72,7 +72,7 @@
       "endpoints": [
         "https://github.com/gameyfin/gameyfin-app/releases/latest/download/latest.json"
       ],
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZDMzE5MEQ4N0M2NjYyRTkKUldUcFltWjgySkF4L0NGc1Q5OEVnbDdwUEtQYW90QlhxREl",
       "windows": {
         "installMode": "passive"
       }
