@@ -45,6 +45,7 @@ pub struct Ludusavi {
     binary: PathBuf,
     config_dir: PathBuf,
     runner: Box<dyn CommandRunner>,
+    auto_update_manifest: bool,
 }
 
 impl Ludusavi {
@@ -53,6 +54,7 @@ impl Ludusavi {
             binary: binary.into(),
             config_dir: config_dir.into(),
             runner: Box::new(ProcessRunner::default()),
+            auto_update_manifest: true,
         }
     }
 
@@ -65,19 +67,42 @@ impl Ludusavi {
             binary: binary.into(),
             config_dir: config_dir.into(),
             runner,
+            auto_update_manifest: true,
         }
+    }
+
+    /// Whether Ludusavi may refresh the game database on its own.
+    ///
+    /// It checks once a day whenever it runs, which is a network call in the middle of a
+    /// backup. Left on, failures are made non-fatal rather than breaking the backup.
+    pub fn auto_update_manifest(mut self, auto: bool) -> Self {
+        self.auto_update_manifest = auto;
+        self
     }
 
     pub fn config_dir(&self) -> &Path {
         &self.config_dir
     }
 
-    /// Global flags that precede every subcommand.
-    fn base_args(&self) -> Vec<String> {
+    /// Just the config directory, for `manifest update`, which is the explicit request and
+    /// must not be talked out of it by the automatic-update policy.
+    fn config_args(&self) -> Vec<String> {
         vec![
             "--config".into(),
             self.config_dir.to_string_lossy().into_owned(),
         ]
+    }
+
+    /// Global flags that precede every subcommand that scans.
+    fn base_args(&self) -> Vec<String> {
+        let mut args = self.config_args();
+        args.push(if self.auto_update_manifest {
+            // A database check that fails must not take the backup down with it.
+            "--try-manifest-update".into()
+        } else {
+            "--no-manifest-update".into()
+        });
+        args
     }
 
     async fn run_api<T: DeserializeOwned>(
@@ -238,7 +263,7 @@ impl Ludusavi {
     /// a user pressing the button means: a game added to the database today should be
     /// picked up now, not tomorrow.
     pub async fn update_manifest(&self, force: bool) -> SaveResult<()> {
-        let mut args = self.base_args();
+        let mut args = self.config_args();
         args.extend(["manifest".into(), "update".into()]);
         if force {
             args.push("--force".into());
@@ -325,8 +350,40 @@ mod tests {
         let args = runner.call(0);
         assert_eq!(
             args,
-            vec!["--config", "/cfg", "find", "--api", "--steam-id", "504230"]
+            vec![
+                "--config",
+                "/cfg",
+                // Left to refresh the database on its own, but never fatally: a failed
+                // check must not take a backup down with it.
+                "--try-manifest-update",
+                "find",
+                "--api",
+                "--steam-id",
+                "504230"
+            ]
         );
+    }
+
+    #[tokio::test]
+    async fn turning_off_automatic_updates_says_so_on_every_run() {
+        let runner = Arc::new(FakeRunner::new(vec![FakeRunner::ok(
+            r#"{"games":{"Celeste":{}}}"#,
+        )]));
+        let lud = ludusavi(runner.clone()).auto_update_manifest(false);
+        lud.find(&GameQuery::SteamId(504230)).await.unwrap();
+
+        assert!(runner.call(0).contains(&"--no-manifest-update".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_explicit_update_is_never_talked_out_of_it() {
+        let runner = Arc::new(FakeRunner::new(vec![FakeRunner::ok("")]));
+        let lud = ludusavi(runner.clone()).auto_update_manifest(false);
+        lud.update_manifest(true).await.unwrap();
+
+        let args = runner.call(0);
+        assert!(!args.contains(&"--no-manifest-update".to_string()));
+        assert!(args.contains(&"--force".to_string()));
     }
 
     #[tokio::test]

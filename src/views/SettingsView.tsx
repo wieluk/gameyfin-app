@@ -1354,6 +1354,7 @@ function MigrationSection() {
 /** Ludusavi, which finds and packs the save files. One ships with the app. */
 function SaveToolSection() {
   const queryClient = useQueryClient();
+  const settings = useAppSettings();
   const [updating, setUpdating] = useState(false);
   const [manifestError, setManifestError] = useState<string | null>(null);
 
@@ -1429,6 +1430,24 @@ function SaveToolSection() {
             {updating ? "Updating…" : "Update game database"}
           </button>
         </div>
+        <label className="flex cursor-pointer items-start gap-2 pt-2">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={settings.data?.saveManifestAutoUpdate ?? true}
+            onChange={async (e) => {
+              await backend.setManifestAutoUpdate(e.target.checked);
+              await settings.refetch();
+            }}
+          />
+          <span>
+            <span className="text-xs">Keep it up to date automatically</span>
+            <span className="block text-[11px] text-foreground/50">
+              Ludusavi checks once a day while backing up. Turning this off keeps the
+              database you have and leaves updating to the button.
+            </span>
+          </span>
+        </label>
         {manifestError && (
           <p className="pt-1 text-[11px] leading-relaxed text-danger">{manifestError}</p>
         )}
@@ -1774,6 +1793,10 @@ function SavesSection() {
         </div>
       )}
 
+      <div className="mt-3">
+        <DeviceNameField />
+      </div>
+
       <div className="mt-3 flex items-center gap-3">
         <button
           type="button"
@@ -1789,6 +1812,34 @@ function SavesSection() {
           </span>
         )}
       </div>
+    </>
+  );
+}
+
+/** What this machine is called beside its saves. */
+function DeviceNameField() {
+  const settings = useAppSettings();
+  const detected = useQuery({
+    queryKey: ["detected-device-name"],
+    queryFn: () => backend.detectedDeviceName(),
+    staleTime: Infinity,
+  });
+
+  return (
+    <>
+      <Field
+        label="This device's name"
+        value={settings.data?.deviceName ?? ""}
+        placeholder={detected.data ?? "This PC"}
+        onCommit={async (value) => {
+          await backend.setDeviceName(value);
+          await settings.refetch();
+        }}
+      />
+      <p className="pt-1 text-[11px] leading-relaxed text-foreground/45">
+        Shown beside every save this machine uploads, so you can tell which one a save came
+        from. Leave it empty to use the name the system reports.
+      </p>
     </>
   );
 }

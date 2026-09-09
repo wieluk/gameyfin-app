@@ -224,6 +224,14 @@ pub fn run() {
                     });
                 }
 
+                // The database is what tells a backup where a game keeps its saves, and
+                // the first fetch is 17 MB. Doing it here means the first backup is not
+                // the thing that waits for it.
+                if settings.save_sync_enabled {
+                    let manifest = handle.clone();
+                    tauri::async_runtime::spawn(saves::ensure_manifest(manifest));
+                }
+
                 // Starting hidden only makes sense with somewhere to be hidden *to*,
                 // which the tray provides. `--hidden` is what the autostart entry passes,
                 // so a login launch is quiet even when the setting is off.
@@ -327,7 +335,10 @@ pub fn run() {
             saves::resolve_save_conflict,
             saves::search_save_titles,
             saves::set_save_title,
+            saves::detected_device_name,
             saves::save_paths,
+            saves::set_device_name,
+            saves::set_manifest_auto_update,
             saves::set_save_cross_os,
             saves::set_save_mapping,
             saves::delete_save_version,

@@ -203,6 +203,9 @@ export interface AppSettings {
   webdavUsername: string | null;
   webdavPassword: string | null;
   saveMaxVersions: number;
+  /** What this machine calls itself in the save history. Empty means the host name. */
+  deviceName: string | null;
+  saveManifestAutoUpdate: boolean;
 }
 
 /** Where synced saves are kept. Chosen explicitly, never inferred. */
@@ -411,6 +414,12 @@ export interface Backend {
   saveToolStatus(): Promise<SaveToolStatus>;
   /** Refresh the game database. Changes far more often than the helper itself. */
   updateSaveManifest(): Promise<ManifestInfo>;
+  /** Let Ludusavi refresh the game database on its own, once a day when it runs. */
+  setManifestAutoUpdate(enabled: boolean): Promise<void>;
+  /** Name this machine in the save history. Blank falls back to the host name. */
+  setDeviceName(name: string): Promise<void>;
+  /** The host name, for the placeholder when no name has been chosen. */
+  detectedDeviceName(): Promise<string | null>;
   /** Install a version of the backup helper, or the newest when none is named. */
   installSaveTool(version?: string): Promise<InstalledSaveTool>;
   removeSaveTool(): Promise<void>;
@@ -572,6 +581,9 @@ const tauriBackend: Backend = {
     invoke<MigrationSummary>("migrate_saves", { from, to, allVersions }),
   saveToolStatus: () => invoke<SaveToolStatus>("save_tool_status"),
   updateSaveManifest: () => invoke<ManifestInfo>("update_save_manifest"),
+  setManifestAutoUpdate: (enabled) => invoke("set_manifest_auto_update", { enabled }),
+  setDeviceName: (name) => invoke("set_device_name", { name }),
+  detectedDeviceName: () => invoke<string | null>("detected_device_name"),
   installSaveTool: (version) => invoke<InstalledSaveTool>("install_save_tool", { version }),
   removeSaveTool: () => invoke<void>("remove_save_tool"),
   testSaveStore: () => invoke<string>("test_save_store"),
@@ -693,6 +705,8 @@ const mockBackend: Backend = {
     webdavUsername: null,
     webdavPassword: null,
     saveMaxVersions: 10,
+    deviceName: null,
+    saveManifestAutoUpdate: true,
   }),
   reportCrash: async (details) => console.error("[mock] crash", details),
   wineStatus: async () => ({
@@ -843,6 +857,9 @@ const mockBackend: Backend = {
     updatedAt: new Date().toISOString(),
     bytes: 17_563_347,
   }),
+  setManifestAutoUpdate: async (enabled) => console.info(`[mock] manifest auto ${enabled}`),
+  setDeviceName: async (name) => console.info(`[mock] device name ${name}`),
+  detectedDeviceName: async () => "fedora-linux",
   setSaveLocked: async (gameId, saveId, locked) =>
     console.info(`[mock] lock ${saveId} of ${gameId}: ${locked}`),
 

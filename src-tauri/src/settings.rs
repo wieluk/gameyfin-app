@@ -143,6 +143,13 @@ pub struct Settings {
     /// a version came from. Generated once, on first use.
     #[serde(default)]
     pub installation_id: Option<String>,
+    /// Let Ludusavi refresh its game database on its own, once a day when it runs.
+    #[serde(default = "on")]
+    pub save_manifest_auto_update: bool,
+    /// What this machine calls itself in the save history. Empty falls back to the host
+    /// name, which is rarely what anyone would choose to see beside their saves.
+    #[serde(default)]
+    pub device_name: Option<String>,
     #[serde(default)]
     pub save_sync_enabled: bool,
     /// Restore a newer save before the game starts.
@@ -287,6 +294,8 @@ impl Default for Settings {
             couch_mode_auto: true,
             check_for_updates: true,
             installation_id: None,
+            device_name: None,
+            save_manifest_auto_update: true,
             save_sync_enabled: false,
             sync_saves_on_launch: true,
             sync_saves_on_exit: true,

@@ -27,7 +27,7 @@ export function WelcomeView({ onComplete }: { onComplete: () => void }) {
           <p className="mt-1 text-sm text-foreground/55">
             {step === "server" && "Connect to your Gameyfin server."}
             {step === "signin" && "Sign in to your account."}
-            {step === "library" && "Choose where games are stored."}
+            {step === "library" && "Choose where games are stored, and name this PC."}
           </p>
         </header>
 
@@ -352,6 +352,7 @@ function SignInStep({
 
 function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => void }) {
   const [path, setPath] = useState("");
+  const [device, setDevice] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -359,11 +360,18 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
       .suggestLibraryRoot()
       .then(setPath)
       .catch((e) => setError(messageOf(e)));
+    // Prefilled with what the system calls itself, so the name is there to be changed
+    // rather than being a box whose purpose is not obvious.
+    backend
+      .detectedDeviceName()
+      .then((name) => setDevice(name ?? ""))
+      .catch(() => undefined);
   }, []);
 
   async function finish() {
     try {
       await backend.setLibraryRoot(path);
+      await backend.setDeviceName(device);
       onDone();
     } catch (e) {
       setError(messageOf(e));
@@ -401,6 +409,19 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
       </div>
       <p className="text-[11px] text-foreground/45">
         Downloads and installed games live here. Change it later in Settings.
+      </p>
+
+      <label className="pt-1 text-xs font-medium text-foreground/60" htmlFor="device-name">
+        This device's name
+      </label>
+      <input
+        id="device-name"
+        value={device}
+        onChange={(e) => setDevice(e.target.value)}
+        className="rounded-lg border border-default-200 bg-content2 px-3 py-2.5 text-xs outline-none transition-colors focus:border-primary"
+      />
+      <p className="text-[11px] text-foreground/45">
+        Shown beside saves synced from this PC, so you can tell your machines apart.
       </p>
 
       {error && <Alert>{error}</Alert>}

@@ -227,6 +227,7 @@ async fn ludusavi_for(
     let app_config = state.config_dir().await;
     let binary = ludusavi_binary_for(app, &app_config)?;
     let config_dir = ludusavi_config_dir(&app_config);
+    let auto_update = state.settings().await.save_manifest_auto_update;
 
     let mut builder = ConfigBuilder::new(&context.staging)
         .strategy(context.strategy)
@@ -266,7 +267,7 @@ async fn ludusavi_for(
 
     Ok(LudusaviSession {
         _guard: guard,
-        tool: Ludusavi::new(binary, config_dir),
+        tool: Ludusavi::new(binary, config_dir).auto_update_manifest(auto_update),
     })
 }
 
@@ -415,7 +416,7 @@ async fn sync_for(
     // itself. Passing the deeper path made it pack `Saves/<id>/<id>`, which never exists,
     // so every upload was an empty 22 byte archive.
     Ok(SaveSync::new(store, context.saves_root.clone())
-        .identified_as(settings.installation_id.clone(), hostname()))
+        .identified_as(settings.installation_id.clone(), device_name(settings)))
 }
 
 /// A human-readable name for this machine, shown in the save history.
@@ -423,6 +424,84 @@ async fn sync_for(
 /// `HOSTNAME` is a shell variable on Linux, not something an application launched from a
 /// desktop entry inherits, so `/etc/hostname` is the reliable source there. Without this
 /// every Linux save was attributed to "another PC" in the conflict dialog.
+/// Let Ludusavi refresh its game database on its own.
+#[tauri::command]
+pub async fn set_manifest_auto_update(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> CommandResult<()> {
+    crate::ipc::mutate_settings(&state, move |current| {
+        current.save_manifest_auto_update = enabled
+    })
+    .await
+}
+
+/// Fetch the game database if there is not one yet.
+///
+/// Run at startup so the first backup is not the thing that waits on a 17 MB download,
+/// inside the lock every other save operation queues behind.
+pub async fn ensure_manifest(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let app_config = state.config_dir().await;
+    let config_dir = ludusavi_config_dir(&app_config);
+    if gameyfin_core::save_tool::manifest_info(&config_dir).is_some() {
+        return;
+    }
+
+    let Ok(binary) = ludusavi_binary_for(&app, &app_config) else {
+        return;
+    };
+    if tokio::fs::create_dir_all(&config_dir).await.is_err() {
+        return;
+    }
+
+    let _guard = state.ludusavi_lock().lock_owned().await;
+    tracing::info!("downloading the save database for the first time");
+    // Unforced: this is the first copy, so there is nothing to be too recent to replace.
+    match Ludusavi::new(binary, &config_dir)
+        .update_manifest(false)
+        .await
+    {
+        Ok(()) => {
+            tracing::info!("save database downloaded");
+            let _ = app.emit("save-tool-changed", ());
+        }
+        // Not fatal: Ludusavi fetches it on first use anyway, just less conveniently.
+        Err(e) => tracing::warn!(error = %e, "could not download the save database"),
+    }
+}
+
+/// Name this machine in the save history.
+///
+/// Blank clears it, falling back to the host name.
+#[tauri::command]
+pub async fn set_device_name(state: State<'_, AppState>, name: String) -> CommandResult<()> {
+    let name = name.trim().to_string();
+    let stored = (!name.is_empty()).then_some(name);
+    crate::ipc::mutate_settings(&state, move |current| current.device_name = stored).await
+}
+
+/// The name this machine would use if the user has not chosen one, for the field's
+/// placeholder: a box that looks empty while saves are labelled `fedora-linux` is a puzzle.
+#[tauri::command]
+pub async fn detected_device_name() -> CommandResult<Option<String>> {
+    Ok(hostname())
+}
+
+/// What to call this machine in the save history.
+///
+/// The user's own name when they set one: a host name like `fedora-linux` says nothing
+/// about which of their machines a save came from.
+fn device_name(settings: &crate::settings::Settings) -> Option<String> {
+    settings
+        .device_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or_else(hostname)
+}
+
 fn hostname() -> Option<String> {
     if let Some(name) = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
