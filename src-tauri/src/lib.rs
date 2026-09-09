@@ -134,20 +134,11 @@ pub fn run() {
     let _log_guard = init_logging();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         // A second copy would fight the first over the library file and the download
         // checkpoints. Launching from a desktop shortcut while the app is already open is
         // the common case, so the second process hands its arguments over and exits.
-        // `--hidden` matches what the autostart entry passes, so a login launch goes
-        // straight to the tray rather than opening a window on top of the desktop.
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--hidden"]),
-        ))
+        // Registered first: plugins set up in the order they are added, and this one only
+        // stops the duplicate during its own setup, so anything before it runs twice.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
@@ -159,6 +150,17 @@ pub fn run() {
                 }
             });
         }))
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // `--hidden` matches what the autostart entry passes, so a login launch goes
+        // straight to the tray rather than opening a window on top of the desktop.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .register_asynchronous_uri_scheme_protocol(images::SCHEME, images::handle)
         .manage(AppState::default())
         .setup(|app| {
