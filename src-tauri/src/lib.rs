@@ -260,6 +260,7 @@ pub fn run() {
             ipc::set_log_level,
             ipc::set_installer_memory_limit,
             ipc::cancel_download,
+            ipc::report_crash,
             ipc::wine_status,
             ipc::install_wine,
             ipc::remove_wine,

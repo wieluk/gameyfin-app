@@ -928,15 +928,21 @@ interface VersionInfo {
 interface VersionTool {
   /** Section heading, and the noun the buttons use. */
   title: string;
-  /** Query key for the status, also used to namespace the form controls. */
-  statusKey: string;
+  /** Namespaces this section's form controls.  */
+  id: string;
   /** Tauri event carrying download progress. */
   progressEvent: string;
-  load(): Promise<VersionInfo>;
+  /**
+   * What to show. Owned by the caller rather than fetched here: two sections sharing one
+   * query key with different fetchers handed this one the other's shape, and rendering
+   * `latest` as an object crashed the whole interface to a blank page.
+   */
+  info?: VersionInfo;
+  loading: boolean;
   install(version?: string): Promise<void>;
   remove(): Promise<void>;
-  /** Refresh whatever else depended on the tool being present. */
-  after?(): Promise<void>;
+  /** Re-read the status, plus whatever else depended on the tool being present. */
+  after(): Promise<void>;
 }
 
 /** Install, update, remove and pin a helper the app downloads for itself. */
@@ -946,13 +952,7 @@ function VersionSection({ tool, children }: { tool: VersionTool; children?: Reac
   const [error, setError] = useState<string | null>(null);
   const [chosen, setChosen] = useState("");
 
-  const status = useQuery({
-    queryKey: [tool.statusKey],
-    queryFn: tool.load,
-    // The release lookup hits the network; don't refetch on every window focus.
-    staleTime: 5 * 60 * 1000,
-  });
-  const info = status.data;
+  const info = tool.info;
 
   useEffect(() => {
     // Subscribed only while a download is running.
@@ -983,8 +983,7 @@ function VersionSection({ tool, children }: { tool: VersionTool; children?: Reac
     try {
       if (action === "install") await tool.install(chosen || undefined);
       else await tool.remove();
-      await status.refetch();
-      await tool.after?.();
+      await tool.after();
     } catch (e) {
       setError(messageOf(e));
     } finally {
@@ -1012,7 +1011,7 @@ function VersionSection({ tool, children }: { tool: VersionTool; children?: Reac
       <Row
         label="Latest available"
         value={
-          status.isLoading
+          tool.loading
             ? "Checking…"
             : (info?.latest ?? "Could not check, no connection")
         }
@@ -1072,11 +1071,11 @@ function VersionSection({ tool, children }: { tool: VersionTool; children?: Reac
 
       {(info?.available.length ?? 0) > 0 && (
         <>
-          <label className="pt-2 text-xs text-foreground/55" htmlFor={`${tool.statusKey}-version`}>
+          <label className="pt-2 text-xs text-foreground/55" htmlFor={`${tool.id}-version`}>
             Version
           </label>
           <select
-            id={`${tool.statusKey}-version`}
+            id={`${tool.id}-version`}
             value={chosen}
             onChange={(e) => setChosen(e.target.value)}
             className="rounded-lg border border-default-200 bg-content2 px-3 py-2 text-sm outline-none focus:border-primary"
@@ -1105,48 +1104,51 @@ function WineSection() {
   const queryClient = useQueryClient();
   const settings = useAppSettings();
   const variant: WineVariant = settings.data?.wineVariant ?? "staging-wow64";
-  // The same query the section runs, shared from cache, to word the note below.
-  const installed = useQuery({
+
+  const status = useQuery({
     queryKey: ["wine-status"],
     queryFn: () => backend.wineStatus(),
+    // The release lookup hits the network; don't refetch on every window focus.
     staleTime: 5 * 60 * 1000,
-  }).data?.installed;
+  });
+  const wine = status.data;
 
   const tool: VersionTool = {
     title: "Wine",
-    statusKey: "wine-status",
+    id: "wine",
     progressEvent: "wine-progress",
-    load: async () => {
-      const status = await backend.wineStatus();
-      return {
-        version: status.installed?.version ?? null,
-        label: status.installed
-          ? `${status.installed.version} (${labelFor(status.installed.variant)})`
-          : undefined,
-        builtIn: false,
-        latest: status.latest?.version ?? null,
-        downloadBytes: status.latest?.sizeBytes ?? null,
-        available: status.available,
-        // A variant change counts: switching build is an install to perform, not a
-        // version comparison.
-        updatable: Boolean(
-          status.installed &&
-            status.latest &&
-            (status.installed.version !== status.latest.version ||
-              status.installed.variant !== status.latest.variant),
-        ),
-      };
+    loading: status.isLoading,
+    info: wine && {
+      version: wine.installed?.version ?? null,
+      label: wine.installed
+        ? `${wine.installed.version} (${labelFor(wine.installed.variant)})`
+        : undefined,
+      builtIn: false,
+      latest: wine.latest?.version ?? null,
+      downloadBytes: wine.latest?.sizeBytes ?? null,
+      available: wine.available,
+      // A variant change counts: switching build is an install to perform, not a
+      // version comparison.
+      updatable: Boolean(
+        wine.installed &&
+          wine.latest &&
+          (wine.installed.version !== wine.latest.version ||
+            wine.installed.variant !== wine.latest.variant),
+      ),
     },
     install: async (version) => void (await backend.installWine(version)),
     remove: () => backend.removeWine(),
-    // The install options screen greys out without a runtime; tell it one exists now.
-    after: () => queryClient.invalidateQueries({ queryKey: ["install-options"] }),
+    after: async () => {
+      await status.refetch();
+      // The install options screen greys out without a runtime; tell it one exists now.
+      await queryClient.invalidateQueries({ queryKey: ["install-options"] });
+    },
   };
 
   async function changeVariant(next: WineVariant) {
     await backend.setWineVariant(next);
     await settings.refetch();
-    await queryClient.invalidateQueries({ queryKey: ["wine-status"] });
+    await status.refetch();
   }
 
   return (
@@ -1170,7 +1172,7 @@ function WineSection() {
         Switch to the other only if an installer misbehaves: it needs your distribution's
         32-bit libraries, or the i386 runtime inside a Flatpak.
       </p>
-      {installed && (
+      {wine?.installed && (
         <p className="text-[11px] leading-relaxed text-foreground/45">
           Removing Wine leaves your game prefixes and saves untouched.
         </p>
@@ -1354,18 +1356,20 @@ function SaveToolSection() {
   const queryClient = useQueryClient();
   const [updating, setUpdating] = useState(false);
   const [manifestError, setManifestError] = useState<string | null>(null);
-  const manifest = useQuery({
+
+  const status = useQuery({
     queryKey: ["save-tool-status"],
     queryFn: () => backend.saveToolStatus(),
     staleTime: 5 * 60 * 1000,
-  }).data?.manifest;
+  });
+  const helper = status.data;
 
   async function updateManifest() {
     setUpdating(true);
     setManifestError(null);
     try {
       await backend.updateSaveManifest();
-      await queryClient.invalidateQueries({ queryKey: ["save-tool-status"] });
+      await status.refetch();
       // A game that was unrecognised may be in the new database, so the verdicts are stale.
       await queryClient.invalidateQueries({ queryKey: ["save-states"] });
     } catch (e) {
@@ -1377,24 +1381,25 @@ function SaveToolSection() {
 
   const tool: VersionTool = {
     title: "Ludusavi",
-    statusKey: "save-tool-status",
+    id: "save-tool",
     progressEvent: "save-tool-progress",
-    load: async () => {
-      const status = await backend.saveToolStatus();
-      return {
-        version: status.installed?.version ?? status.bundled,
-        builtIn: !status.installed && status.bundled !== null,
-        latest: status.latest?.version ?? null,
-        downloadBytes: status.latest?.sizeBytes ?? null,
-        available: status.available,
-        updatable: Boolean(
-          status.latest &&
-            (status.installed?.version ?? status.bundled) !== status.latest.version,
-        ),
-      };
+    loading: status.isLoading,
+    info: helper && {
+      version: helper.installed?.version ?? helper.bundled,
+      builtIn: !helper.installed && helper.bundled !== null,
+      latest: helper.latest?.version ?? null,
+      downloadBytes: helper.latest?.sizeBytes ?? null,
+      available: helper.available,
+      updatable: Boolean(
+        helper.latest &&
+          (helper.installed?.version ?? helper.bundled) !== helper.latest.version,
+      ),
     },
     install: async (version) => void (await backend.installSaveTool(version)),
     remove: () => backend.removeSaveTool(),
+    after: async () => {
+      await status.refetch();
+    },
   };
 
   return (
@@ -1409,8 +1414,8 @@ function SaveToolSection() {
         <Row
           label="Game database"
           value={
-            manifest
-              ? `${formatRelative(manifest.updatedAt)}, ${formatBytes(manifest.bytes)}`
+            helper?.manifest
+              ? `${formatRelative(helper.manifest.updatedAt)}, ${formatBytes(helper.manifest.bytes)}`
               : "Not downloaded yet"
           }
         />

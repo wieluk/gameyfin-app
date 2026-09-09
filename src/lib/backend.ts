@@ -325,6 +325,8 @@ export interface Backend {
   resetLogin(): Promise<void>;
   signOut(): Promise<void>;
   getSettings(): Promise<AppSettings>;
+  /** Put an interface crash in the log file, which is all a packaged build leaves. */
+  reportCrash(details: string): Promise<void>;
   wineStatus(): Promise<WineStatus>;
   /** Download and install Wine, replacing any existing build. Also used to update. */
   installWine(version?: string): Promise<InstalledWine>;
@@ -490,6 +492,7 @@ const tauriBackend: Backend = {
   clearPrefixes: () => invoke("clear_prefixes"),
   setInstallerMemoryLimit: (megabytes) =>
     invoke("set_installer_memory_limit", { megabytes }),
+  reportCrash: (details) => invoke("report_crash", { details }),
   wineStatus: () => invoke("wine_status"),
   installWine: (version) => invoke("install_wine", { version }),
   removeWine: () => invoke("remove_wine"),
@@ -691,6 +694,7 @@ const mockBackend: Backend = {
     webdavPassword: null,
     saveMaxVersions: 10,
   }),
+  reportCrash: async (details) => console.error("[mock] crash", details),
   wineStatus: async () => ({
     installed: { version: "11.17", variant: "staging-wow64" as WineVariant, binary: "/tmp/wine" },
     latest: null,

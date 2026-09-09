@@ -496,6 +496,19 @@ pub struct WineProgressEvent {
 /// How many past releases to offer when picking a version by hand.
 pub(crate) const RELEASE_CHOICES: usize = 10;
 
+/// Record an interface crash in the log file.
+///
+/// A packaged build has no console, so a render error left nothing behind at all: the
+/// window went blank and the log said nothing had happened.
+#[tauri::command]
+pub async fn report_crash(details: String) -> CommandResult<()> {
+    // Truncated: a component stack can run to thousands of lines, and the first frames are
+    // the ones that name the component.
+    let details: String = details.chars().take(4000).collect();
+    tracing::error!(details = details.trim(), "the interface crashed");
+    Ok(())
+}
+
 /// What Wine is installed, and what is available. The installed half works offline even
 /// when the release lookup cannot.
 #[tauri::command]
