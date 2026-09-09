@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use tokio::sync::{Mutex, MutexGuard};
 
 use gameyfin_saves::ludusavi::GameQuery;
+use gameyfin_saves::runner::ProcessRunner;
 use gameyfin_saves::{resolve, GameIdentity, Ludusavi, TitleMatch};
 
 /// Steam AppID for Celeste, a stable, long-standing manifest entry.
@@ -73,6 +74,10 @@ fn shared_config_dir() -> Option<&'static PathBuf> {
 /// 0.31, where a lone `find` returns in under a second and two together hang. The test
 /// harness runs tests on parallel threads, so they must take turns.
 ///
+/// Only within this process: two copies of this binary at once still deadlock, so do not
+/// run two `cargo test` invocations over this crate side by side. The runner's timeout is
+/// what stops that looking like a hang.
+///
 /// An async mutex rather than a blocking one: the guard is held across `await` points
 /// while Ludusavi runs, which is precisely what `std::sync::Mutex` must not do.
 fn ludusavi_lock() -> &'static Mutex<()> {
@@ -85,7 +90,16 @@ async fn exclusive() -> MutexGuard<'static, ()> {
 }
 
 fn harness() -> Option<Ludusavi> {
-    Some(Ludusavi::new(binary()?, shared_config_dir()?))
+    // A much shorter leash than the app's ten minutes. Ludusavi has been seen to wedge on
+    // a shared config directory, and a test suite that waits out the production timeout
+    // looks hung rather than failed.
+    Some(Ludusavi::with_runner(
+        binary()?,
+        shared_config_dir()?,
+        Box::new(ProcessRunner::with_timeout(std::time::Duration::from_secs(
+            60,
+        ))),
+    ))
 }
 
 /// A scratch directory for backup staging, cleaned up on drop.
