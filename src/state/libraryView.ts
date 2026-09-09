@@ -21,9 +21,6 @@ export interface FacetFilters {
 
 export type FacetKey = keyof FacetFilters;
 
-/** The three that stay on the main bar; the rest live behind Advanced search. */
-export const PRIMARY_FACETS: FacetKey[] = ["genre", "developer", "publisher"];
-
 export const NO_FACETS: FacetFilters = {
   genre: null,
   developer: null,

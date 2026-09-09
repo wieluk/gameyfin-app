@@ -1,4 +1,4 @@
-import { PRIMARY_FACETS, type FacetFilters, type FacetKey } from "@/state/libraryView";
+import { type FacetFilters, type FacetKey } from "@/state/libraryView";
 import type { Game, LibraryEntry } from "@/types";
 
 /** Where each filter reads its values from. One place, so nothing is filtered on but not offered. */
@@ -24,10 +24,8 @@ export const FACET_LABELS: Record<FacetKey, string> = {
   platform: "All platforms",
 };
 
+/** Every filter, in the order the Advanced search row shows them. */
 export const FACET_KEYS = Object.keys(FACET_VALUES) as FacetKey[];
-
-/** The ones behind the Advanced search row, in the order they are shown. */
-export const ADVANCED_FACETS = FACET_KEYS.filter((key) => !PRIMARY_FACETS.includes(key));
 
 /** Whether a game passes every facet, optionally ignoring one so its own list stays full. */
 export function matchesFacets(

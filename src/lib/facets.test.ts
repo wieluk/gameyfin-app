@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { ADVANCED_FACETS, FACET_KEYS, FACET_LABELS, matchesFacets, ratingOf } from "./facets";
-import { NO_FACETS, PRIMARY_FACETS } from "@/state/libraryView";
+import { FACET_KEYS, FACET_LABELS, FACET_VALUES, matchesFacets, ratingOf } from "./facets";
+import { NO_FACETS } from "@/state/libraryView";
 import type { Game, LibraryEntry } from "@/types";
 
 function game(overrides: Partial<Game>): LibraryEntry {
@@ -74,7 +74,9 @@ describe("the facet tables", () => {
   it("label and read every key, so none can be filtered on but not offered", () => {
     for (const key of FACET_KEYS) {
       expect(FACET_LABELS[key], key).toBeTruthy();
+      expect(typeof FACET_VALUES[key], key).toBe("function");
     }
-    expect([...PRIMARY_FACETS, ...ADVANCED_FACETS].sort()).toEqual([...FACET_KEYS].sort());
+    // Every filter the state knows about reaches the Advanced row.
+    expect(FACET_KEYS.sort()).toEqual(Object.keys(NO_FACETS).sort());
   });
 });

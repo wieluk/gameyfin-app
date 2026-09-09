@@ -6,7 +6,6 @@ import { InstallDialog } from "@/components/InstallDialog";
 import { Icon } from "@/components/Icon";
 import { isInstalled, isLocal, needsChooser, primaryAction } from "@/lib/actions";
 import {
-  ADVANCED_FACETS,
   FACET_KEYS,
   FACET_LABELS,
   FACET_VALUES,
@@ -18,7 +17,6 @@ import { messageOf } from "@/lib/errors";
 import { RootChooser, useLibraryRoots } from "@/components/RootChooser";
 import {
   useLibraryView,
-  PRIMARY_FACETS,
   type FacetKey,
   type PresenceFilter,
   type SortDirection,
@@ -145,11 +143,10 @@ export function LibraryView() {
     [entries.data, offline],
   );
 
+  // Every filter lives in the Advanced row now, so one count serves both the button, where
+  // it stops a closed row narrowing the list unannounced, and the Clear button.
   const activeFacets =
     Object.values(facets).filter(Boolean).length + (minRating === null ? 0 : 1);
-  // Shown on the button, so a filter set in the hidden row is not silently narrowing the list.
-  const advancedCount =
-    ADVANCED_FACETS.filter((key) => facets[key]).length + (minRating === null ? 0 : 1);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -185,29 +182,19 @@ export function LibraryView() {
           <option value="not-installed">Not installed</option>
         </select>
 
-        {PRIMARY_FACETS.map((key) => (
-          <Facet
-            key={key}
-            label={FACET_LABELS[key]}
-            value={facets[key]}
-            options={options[key]}
-            onChange={(value) => setFacet(key, value)}
-          />
-        ))}
-
         <button
           type="button"
           onClick={toggleAdvanced}
           aria-expanded={advanced}
           title="More ways to narrow the list"
           className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-2 text-xs transition-colors ${
-            advanced || advancedCount > 0
+            advanced || activeFacets > 0
               ? "border-primary/50 bg-primary/10 text-primary"
               : "border-default-200 bg-content2 text-foreground/70 hover:bg-default-100"
           }`}
         >
           Advanced
-          {advancedCount > 0 && <span className="tabular-nums">({advancedCount})</span>}
+          {activeFacets > 0 && <span className="tabular-nums">({activeFacets})</span>}
         </button>
 
         {activeFacets > 0 && (
@@ -250,7 +237,7 @@ export function LibraryView() {
 
       {advanced && (
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-default-200/60 bg-content1/40 px-6 py-3">
-          {ADVANCED_FACETS.map((key) => (
+          {FACET_KEYS.map((key) => (
             <Facet
               key={key}
               label={FACET_LABELS[key]}
