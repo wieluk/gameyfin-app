@@ -24,6 +24,10 @@ pub struct LocalSaveState {
     /// Near misses from that search, kept so the user can be offered them without
     /// searching again.
     pub match_candidates: Vec<String>,
+    /// Save folders the user named by hand, for a game the database does not cover or
+    /// covers incompletely. Registered with Ludusavi as a custom game.
+    #[serde(default)]
+    pub custom_paths: Vec<String>,
     /// The version this machine last restored from or uploaded, as the store names it.
     #[serde(deserialize_with = "gameyfin_api::saves::lenient_optional_id")]
     pub last_synced_save_id: Option<String>,
@@ -414,6 +418,7 @@ mod tests {
     fn synced_to(id: i64) -> LocalSaveState {
         LocalSaveState {
             ludusavi_title: Some("Celeste".into()),
+            custom_paths: Vec::new(),
             match_attempted: true,
             match_candidates: Vec::new(),
             last_synced_save_id: Some(id.to_string()),

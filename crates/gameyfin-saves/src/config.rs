@@ -248,18 +248,53 @@ impl ConfigBuilder {
         self
     }
 
+    /// Add to the custom entry for a game, creating it if there is not one yet.
+    ///
+    /// One entry per name: Ludusavi does not promise to merge two custom games that share
+    /// one, and both the preferred prefix and hand-written paths want the same entry.
+    fn amend_custom_game(mut self, name: String, edit: impl FnOnce(&mut CustomGame)) -> Self {
+        let index = match self.custom_games.iter().position(|g| g.name == name) {
+            Some(index) => index,
+            None => {
+                self.custom_games.push(CustomGame {
+                    name,
+                    files: Vec::new(),
+                    registry: Vec::new(),
+                    wine_prefix: Vec::new(),
+                    // Never `override`: a game the database already covers must keep
+                    // everything it knew and simply gain what is added here.
+                    integration: CustomGameIntegration::Extend,
+                });
+                self.custom_games.len() - 1
+            }
+        };
+        edit(&mut self.custom_games[index]);
+        self
+    }
+
+    /// Save folders the user named by hand.
+    ///
+    /// The escape hatch for a game the database does not list at all, which is otherwise
+    /// unbackupable: naming a folder both makes the game findable and says what to copy.
+    pub fn custom_save_paths(
+        self,
+        game_name: impl Into<String>,
+        paths: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let paths: Vec<String> = paths.into_iter().filter(|p| !p.trim().is_empty()).collect();
+        if paths.is_empty() {
+            return self;
+        }
+        self.amend_custom_game(game_name.into(), |game| game.files.extend(paths))
+    }
+
     /// Name the prefix Ludusavi should translate against.
     ///
     /// [`RestoreStrategy::CrossOs`] does nothing without one: the translation needs a
     /// single preferred prefix, and Ludusavi takes it from a custom game entry.
     pub fn preferred_wine_prefix(self, game_name: impl Into<String>, prefix: &Path) -> Self {
-        self.custom_game(CustomGame {
-            name: game_name.into(),
-            files: Vec::new(),
-            registry: Vec::new(),
-            wine_prefix: vec![prefix.to_string_lossy().into_owned()],
-            integration: CustomGameIntegration::Extend,
-        })
+        let prefix = prefix.to_string_lossy().into_owned();
+        self.amend_custom_game(game_name.into(), |game| game.wine_prefix.push(prefix))
     }
 
     /// The redirects that actually reach the config file, in priority order.
@@ -320,6 +355,52 @@ mod tests {
 
     fn parse(yaml: &str) -> serde_yaml_ng::Value {
         serde_yaml_ng::from_str(yaml).expect("valid yaml")
+    }
+
+    #[test]
+    fn hand_set_folders_become_a_custom_game() {
+        let yaml = parse(
+            &ConfigBuilder::new("/staging")
+                .custom_save_paths("Example Game", ["/saves/one".to_string(), "  ".to_string()])
+                .to_yaml()
+                .unwrap(),
+        );
+
+        let games = yaml["customGames"].as_sequence().expect("custom games");
+        assert_eq!(1, games.len());
+        assert_eq!("Example Game", games[0]["name"].as_str().unwrap());
+        // Blank rows are a half-finished edit, not an instruction to scan the whole disk.
+        assert_eq!(1, games[0]["files"].as_sequence().unwrap().len());
+        // Never `override`: a game the database covers must keep what it already knew.
+        assert_eq!("extend", games[0]["integration"].as_str().unwrap());
+    }
+
+    #[test]
+    fn a_prefix_and_hand_set_folders_share_one_entry() {
+        // Two custom games with the same name is not something Ludusavi promises to merge.
+        let yaml = parse(
+            &ConfigBuilder::new("/staging")
+                .custom_save_paths("Example Game", ["/saves/one".to_string()])
+                .preferred_wine_prefix("Example Game", std::path::Path::new("/prefixes/1"))
+                .to_yaml()
+                .unwrap(),
+        );
+
+        let games = yaml["customGames"].as_sequence().expect("custom games");
+        assert_eq!(1, games.len());
+        assert_eq!(1, games[0]["files"].as_sequence().unwrap().len());
+        assert_eq!(1, games[0]["winePrefix"].as_sequence().unwrap().len());
+    }
+
+    #[test]
+    fn no_folders_means_no_custom_game() {
+        let yaml = parse(
+            &ConfigBuilder::new("/staging")
+                .custom_save_paths("Example Game", Vec::<String>::new())
+                .to_yaml()
+                .unwrap(),
+        );
+        assert!(yaml.get("customGames").is_none());
     }
 
     #[test]

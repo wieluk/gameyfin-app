@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { useDismissOnEscape } from "@/lib/useDismiss";
@@ -19,28 +19,45 @@ interface Mapping {
 export function SavePathDialog({
   gameId,
   gameTitle,
-  crossOs,
-  existing,
   onClose,
   onSaved,
 }: {
   gameId: number;
   gameTitle: string;
-  crossOs: boolean;
-  existing: Array<[string, string]>;
   onClose: () => void;
   onSaved: () => void;
 }) {
   useDismissOnEscape(onClose);
 
-  const [mappings, setMappings] = useState<Mapping[]>(
-    existing.length > 0
-      ? existing.map(([source, target]) => ({ source, target }))
-      : [{ source: "", target: "" }],
-  );
-  const [translate, setTranslate] = useState(crossOs);
+  const [folders, setFolders] = useState<string[]>([""]);
+  const [mappings, setMappings] = useState<Mapping[]>([{ source: "", target: "" }]);
+  const [translate, setTranslate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Read rather than passed in: the caller had no way to know what was already set, so the
+  // dialog always opened empty and saving it wiped whatever was there.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const current = await backend.savePaths(gameId);
+        if (cancelled) return;
+        setFolders(current.customPaths.length > 0 ? current.customPaths : [""]);
+        setMappings(
+          current.redirects.length > 0
+            ? current.redirects.map(([source, target]) => ({ source, target }))
+            : [{ source: "", target: "" }],
+        );
+        setTranslate(current.crossOs);
+      } catch (e) {
+        if (!cancelled) setError(messageOf(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [gameId]);
 
   function update(index: number, field: keyof Mapping, value: string) {
     setMappings((current) =>
@@ -56,7 +73,7 @@ export function SavePathDialog({
       const complete = mappings
         .map(({ source, target }) => [source.trim(), target.trim()] as [string, string])
         .filter(([source, target]) => source && target);
-      await backend.setSaveMapping(gameId, translate, complete);
+      await backend.setSaveMapping(gameId, translate, complete, folders);
       onSaved();
       onClose();
     } catch (e) {
@@ -82,13 +99,53 @@ export function SavePathDialog({
         <div className="px-5 py-4">
           <h2 className="mb-1 text-sm font-semibold">Save locations for {gameTitle}</h2>
           <p className="text-xs leading-relaxed text-foreground/60">
-            Use this when saves are not where the helper expects. The first box is the folder
-            on this PC; the second is the name it is stored under, which has to match on
-            every machine you sync with.
+            Use this when the helper does not know this game, or looks in the wrong place.
           </p>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5">
+          <p className="mb-1 text-xs font-medium">Save folders</p>
+          <p className="mb-2 text-[11px] leading-relaxed text-foreground/50">
+            Where this game keeps its saves on this PC. Naming one is what makes a game the
+            database has never heard of backupable at all. A game it does know keeps
+            everything it already found, and gains these as well.
+          </p>
+          {folders.map((folder, index) => (
+            <div key={index} className="mb-2 flex items-center gap-2">
+              <input
+                className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-3 py-1.5 text-xs"
+                placeholder="/home/you/.local/share/ExampleGame"
+                value={folder}
+                onChange={(e) =>
+                  setFolders((c) => c.map((v, i) => (i === index ? e.target.value : v)))
+                }
+              />
+              <button
+                type="button"
+                aria-label="Remove this folder"
+                onClick={() => setFolders((c) => c.filter((_, i) => i !== index))}
+                className="shrink-0 rounded-lg px-2 py-1 text-xs text-foreground/50 hover:bg-default-100"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setFolders((c) => [...c, ""])}
+            className="mb-4 rounded-lg bg-default-100 px-3 py-1.5 text-xs hover:bg-default-200"
+          >
+            Add a folder
+          </button>
+
+          <p className="mb-1 border-t border-default-200 pt-3 text-xs font-medium">
+            Path corrections
+          </p>
+          <p className="mb-2 text-[11px] leading-relaxed text-foreground/50">
+            Only needed when a save has to travel between machines that keep it in different
+            places. The first box is the folder here, the second the name it is stored
+            under, which has to match on every machine you sync with.
+          </p>
           {mappings.map((row, index) => (
             <div key={index} className="mb-2 flex items-center gap-2">
               <input

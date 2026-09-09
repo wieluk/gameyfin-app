@@ -232,7 +232,13 @@ async fn ludusavi_for(
         .strategy(context.strategy)
         .wine_prefix(&context.prefix_dir)
         .manual_redirects(context.redirects.clone())
-        .portable_install_dir(&context.install_dir);
+        .portable_install_dir(&context.install_dir)
+        // Registered under the game's own title, which is also what a hand-set path makes
+        // the game findable as.
+        .custom_save_paths(
+            context.title.clone(),
+            context.record_saves.custom_paths.clone(),
+        );
 
     // The home a save is recorded against decides whether it travels. For a Windows game
     // running under Proton that is the profile inside the prefix, not this machine's:
@@ -287,6 +293,11 @@ async fn resolve_saves(
 ) -> CommandResult<Resolution> {
     if let Some(title) = &context.record_saves.ludusavi_title {
         return Ok(Resolution::Title(title.clone()));
+    }
+    // Paths set by hand are registered as a custom game under this exact title, so there
+    // is nothing left to identify: the user has already said what and where.
+    if !context.record_saves.custom_paths.is_empty() {
+        return Ok(Resolution::Title(context.title.clone()));
     }
     if context.record_saves.match_attempted {
         let cached = context.record_saves.match_candidates.clone();
@@ -851,6 +862,56 @@ pub async fn set_save_mapping(
     game_id: i64,
     cross_os: bool,
     redirects: Vec<(String, String)>,
+    custom_paths: Vec<String>,
+) -> CommandResult<SaveSyncState> {
+    use crate::library_state::SaveRestoreStrategy;
+
+    let paths: Vec<String> = custom_paths
+        .into_iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    let named = !paths.is_empty();
+
+    state
+        .library()
+        .update_record(game_id, move |record| {
+            record.save_restore_strategy = if cross_os {
+                SaveRestoreStrategy::CrossOs
+            } else {
+                SaveRestoreStrategy::Portable
+            };
+            record.save_redirects = redirects;
+            record.saves.custom_paths = paths;
+        })
+        .await;
+
+    // Naming a folder answers the identification question, so a game that was written off
+    // as unrecognised gets another go rather than staying stuck on the cached verdict.
+    if named {
+        state
+            .library()
+            .update_record(game_id, |record| {
+                record.saves.match_attempted = false;
+                record.saves.match_candidates.clear();
+            })
+            .await;
+    }
+
+    state_of(&app, &state, game_id).await
+}
+
+/// Turn Ludusavi's Windows/Linux translation on or off for one game.
+///
+/// Its own command because the toggle used to go through `set_save_mapping`, which writes
+/// the whole set: turning translation on with the empty lists that call passed erased any
+/// paths the user had entered.
+#[tauri::command]
+pub async fn set_save_cross_os(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_id: i64,
+    cross_os: bool,
 ) -> CommandResult<SaveSyncState> {
     use crate::library_state::SaveRestoreStrategy;
 
@@ -862,11 +923,34 @@ pub async fn set_save_mapping(
             } else {
                 SaveRestoreStrategy::Portable
             };
-            record.save_redirects = redirects;
         })
         .await;
 
     state_of(&app, &state, game_id).await
+}
+
+/// This game's hand-set paths, so the dialog opens on what is actually configured.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavePathSettings {
+    custom_paths: Vec<String>,
+    redirects: Vec<(String, String)>,
+    cross_os: bool,
+}
+
+#[tauri::command]
+pub async fn save_paths(
+    state: State<'_, AppState>,
+    game_id: i64,
+) -> CommandResult<SavePathSettings> {
+    use crate::library_state::SaveRestoreStrategy;
+
+    let record = state.library().record(game_id).await;
+    Ok(SavePathSettings {
+        custom_paths: record.saves.custom_paths.clone(),
+        redirects: record.save_redirects.clone(),
+        cross_os: record.save_restore_strategy == SaveRestoreStrategy::CrossOs,
+    })
 }
 
 /// Everything the Saves settings screen owns, sent as one payload because the screen is

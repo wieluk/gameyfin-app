@@ -115,7 +115,7 @@ export function SavesView() {
             onRestore={() => run(entry.game.id, () => backend.restoreSaves(entry.game.id))}
             onResolve={() => setConflictGameId(entry.game.id)}
             onEnableCrossOs={() =>
-              run(entry.game.id, () => backend.setSaveMapping(entry.game.id, true, []))
+              run(entry.game.id, () => backend.setSaveCrossOs(entry.game.id, true))
             }
             onIdentify={() => setIdentifyGameId(entry.game.id)}
             onEditPaths={() => setPathsGameId(entry.game.id)}
@@ -152,8 +152,6 @@ export function SavesView() {
         <SavePathDialog
           gameId={pathsEntry.game.id}
           gameTitle={pathsEntry.game.title}
-          crossOs={false}
-          existing={[]}
           onClose={() => setPathsGameId(null)}
           onSaved={refresh}
         />
@@ -209,7 +207,11 @@ function SaveRow({
         {state?.kind === "in-sync" && <Action label="Back up" onClick={onBackup} busy={busy} />}
         {/* The two states the user could previously do nothing about. */}
         {state?.kind === "unmatched" && (
-          <Action label="Choose game" onClick={onIdentify} busy={busy} primary />
+          <>
+            <Action label="Choose game" onClick={onIdentify} busy={busy} primary />
+            {/* For a game in no version of the database, naming the folder is the only way. */}
+            <Action label="Set folders" onClick={onEditPaths} busy={busy} />
+          </>
         )}
         {state?.kind === "nothing-to-back-up" && (
           <>

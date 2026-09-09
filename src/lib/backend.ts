@@ -245,6 +245,15 @@ export interface InstalledSaveTool {
   binary: string;
 }
 
+/** A game's hand-set save locations, as the dialog reads and writes them. */
+export interface SavePathSettings {
+  /** Folders the user named, for a game the database does not cover. */
+  customPaths: string[];
+  /** Rewrites applied when a save moves between machines. */
+  redirects: Array<[string, string]>;
+  crossOs: boolean;
+}
+
 /** The downloaded game database that says where each game keeps its saves. */
 export interface ManifestInfo {
   /** When it was last written, or null if that could not be read. */
@@ -383,10 +392,15 @@ export interface Backend {
   /** Name the title Ludusavi should use, for a game it could not identify. */
   setSaveTitle(gameId: number, title: string | null): Promise<SaveSyncState>;
   /** Choose how saves map onto this machine, plus any hand-written path pairs. */
+  /** Where a game's saves are, when the automatic answer is wrong or absent. */
+  savePaths(gameId: number): Promise<SavePathSettings>;
+  /** Turn Windows/Linux path translation on for one game, leaving its paths alone. */
+  setSaveCrossOs(gameId: number, crossOs: boolean): Promise<SaveSyncState>;
   setSaveMapping(
     gameId: number,
     crossOs: boolean,
     redirects: Array<[string, string]>,
+    customPaths: string[],
   ): Promise<SaveSyncState>;
   deleteSaveVersion(gameId: number, saveId: string): Promise<void>;
   setSaveSyncSettings(settings: SaveSyncSettings): Promise<void>;
@@ -543,8 +557,11 @@ const tauriBackend: Backend = {
   searchSaveTitles: (gameId, query) =>
     invoke<string[]>("search_save_titles", { gameId, query }),
   setSaveTitle: (gameId, title) => invoke<SaveSyncState>("set_save_title", { gameId, title }),
-  setSaveMapping: (gameId, crossOs, redirects) =>
-    invoke<SaveSyncState>("set_save_mapping", { gameId, crossOs, redirects }),
+  savePaths: (gameId) => invoke<SavePathSettings>("save_paths", { gameId }),
+  setSaveCrossOs: (gameId, crossOs) =>
+    invoke<SaveSyncState>("set_save_cross_os", { gameId, crossOs }),
+  setSaveMapping: (gameId, crossOs, redirects, customPaths) =>
+    invoke<SaveSyncState>("set_save_mapping", { gameId, crossOs, redirects, customPaths }),
   deleteSaveVersion: (gameId, saveId) =>
     invoke<void>("delete_save_version", { gameId, saveId }),
   setSaveSyncSettings: (settings) => invoke<void>("set_save_sync_settings", { settings }),
@@ -788,6 +805,8 @@ const mockBackend: Backend = {
       t.toLowerCase().includes(query.toLowerCase()),
     ),
   setSaveTitle: async () => ({ kind: "never-synced" }),
+  savePaths: async () => ({ customPaths: [], redirects: [], crossOs: false }),
+  setSaveCrossOs: async () => ({ kind: "never-synced" }),
   setSaveMapping: async () => ({ kind: "never-synced" }),
   deleteSaveVersion: async (gameId, saveId) =>
     console.info(`[mock] delete save ${saveId} of ${gameId}`),
