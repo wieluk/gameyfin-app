@@ -320,11 +320,25 @@ impl SaveSync {
         force: bool,
     ) -> Result<UploadOutcome, ApiError> {
         let archive = archive_path(&self.saves_root, game_id);
-        pack(&self.staging_for(game_id), &archive).map_err(|e| ApiError::Other(e.to_string()))?;
+        let staging = self.staging_for(game_id);
+        let bytes = pack(&staging, &archive).map_err(|e| {
+            tracing::error!(game_id, staging = %staging.display(), error = %e, "packing the backup failed");
+            ApiError::Other(e.to_string())
+        })?;
 
         let hash = gameyfin_api::hash_file(&archive)
             .await
             .map_err(|e| ApiError::Other(e.to_string()))?;
+
+        // The upload is the half of a backup that was invisible in the log, so a save that
+        // scanned fine and never arrived looked identical to one that was never attempted.
+        tracing::info!(
+            game_id,
+            bytes,
+            store = self.store.describe(),
+            forced = force,
+            "uploading a packed save"
+        );
 
         let metadata = UploadMetadata {
             content_hash: hash,
@@ -336,7 +350,20 @@ impl SaveSync {
             force,
         };
 
-        self.store.upload(game_id, &archive, &metadata).await
+        let outcome = self.store.upload(game_id, &archive, &metadata).await;
+        match &outcome {
+            Ok(UploadOutcome::Stored(version)) => {
+                tracing::info!(game_id, version = %version.id, "save uploaded")
+            }
+            Ok(UploadOutcome::Unchanged) => {
+                tracing::info!(game_id, "the store already holds these exact bytes")
+            }
+            Ok(UploadOutcome::Conflict { remote, .. }) => {
+                tracing::warn!(game_id, remote = %remote.id, "the store rejected the upload as a conflict")
+            }
+            Err(e) => tracing::error!(game_id, error = %e, "the save could not be uploaded"),
+        }
+        outcome
     }
 
     /// Fetches a version and unpacks it, ready for Ludusavi to restore from.

@@ -227,6 +227,45 @@ impl Ludusavi {
         Ok(out)
     }
 
+    /// Where the downloaded game database lives.
+    pub fn manifest_path(&self) -> PathBuf {
+        self.config_dir.join("manifest.yaml")
+    }
+
+    /// Refresh the game database, which is what knows where each game keeps its saves.
+    ///
+    /// Ludusavi skips a check made in the last 24 hours unless forced, so `force` is what
+    /// a user pressing the button means: a game added to the database today should be
+    /// picked up now, not tomorrow.
+    pub async fn update_manifest(&self, force: bool) -> SaveResult<()> {
+        let mut args = self.base_args();
+        args.extend(["manifest".into(), "update".into()]);
+        if force {
+            args.push("--force".into());
+        }
+
+        // No `--api` on this one: it prints nothing on success and a message on failure.
+        let output = self
+            .runner
+            .run(&self.binary.to_string_lossy(), &args)
+            .await?;
+        tracing::debug!(
+            status = output.status,
+            stdout = output.stdout.trim(),
+            stderr = output.stderr.trim(),
+            "ludusavi manifest update"
+        );
+
+        if !output.success() {
+            return Err(SaveError::CommandFailed {
+                command: "manifest update".into(),
+                status: output.status,
+                stderr: output.stderr.trim().to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// List the backups present in a directory.
     pub async fn backups(&self, path: &Path) -> SaveResult<ApiOutput<BackupsGame>> {
         let mut args = self.base_args();

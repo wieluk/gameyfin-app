@@ -204,6 +204,20 @@ impl std::ops::Deref for LudusaviSession {
     }
 }
 
+/// Where the helper keeps its settings and the downloaded game database.
+fn ludusavi_config_dir(app_config: &std::path::Path) -> PathBuf {
+    app_config.join("ludusavi")
+}
+
+/// The helper to run, preferring a version the user installed over the bundled one, which
+/// is read-only in a Flatpak and on a system install and so can never be updated in place.
+fn ludusavi_binary_for(app: &AppHandle, app_config: &std::path::Path) -> CommandResult<PathBuf> {
+    match gameyfin_core::save_tool::installed(app_config) {
+        Some(installed) => Ok(installed.binary),
+        None => ludusavi_binary(app),
+    }
+}
+
 async fn ludusavi_for(
     app: &AppHandle,
     state: &State<'_, AppState>,
@@ -211,13 +225,8 @@ async fn ludusavi_for(
 ) -> CommandResult<LudusaviSession> {
     let guard = state.ludusavi_lock().lock_owned().await;
     let app_config = state.config_dir().await;
-    // A version the user installed wins over the one bundled with the app, which is
-    // read-only in a Flatpak and on a system install and so can never be updated in place.
-    let binary = match gameyfin_core::save_tool::installed(&app_config) {
-        Some(installed) => installed.binary,
-        None => ludusavi_binary(app)?,
-    };
-    let config_dir = app_config.join("ludusavi");
+    let binary = ludusavi_binary_for(app, &app_config)?;
+    let config_dir = ludusavi_config_dir(&app_config);
 
     let mut builder = ConfigBuilder::new(&context.staging)
         .strategy(context.strategy)
@@ -599,7 +608,9 @@ pub async fn backup_saves(
     game_id: i64,
     force: bool,
 ) -> CommandResult<SaveSyncState> {
-    do_backup(&app, &state, game_id, force).await
+    do_backup(&app, &state, game_id, force)
+        .await
+        .inspect_err(|e| tracing::error!(game_id, error = %e, "backing up saves failed"))
 }
 
 async fn do_backup(
@@ -692,7 +703,9 @@ pub async fn restore_saves(
     game_id: i64,
     save_id: Option<String>,
 ) -> CommandResult<SaveSyncState> {
-    do_restore(&app, &state, game_id, save_id).await
+    do_restore(&app, &state, game_id, save_id)
+        .await
+        .inspect_err(|e| tracing::error!(game_id, error = %e, "restoring saves failed"))
 }
 
 async fn do_restore(
@@ -1088,11 +1101,47 @@ pub async fn save_tool_status(
         };
 
     Ok(gameyfin_core::save_tool::SaveToolStatus {
+        manifest: gameyfin_core::save_tool::manifest_info(&ludusavi_config_dir(&config_dir)),
         installed,
         bundled,
         available: releases.iter().map(|r| r.version.clone()).collect(),
         latest: releases.into_iter().next(),
     })
+}
+
+/// Refresh the game database that says where each game keeps its saves.
+///
+/// Worth its own button: the database changes far more often than the helper, and a game
+/// the helper does not recognise is usually waiting for exactly this rather than for a new
+/// release.
+#[tauri::command]
+pub async fn update_save_manifest(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<gameyfin_core::save_tool::ManifestInfo> {
+    let app_config = state.config_dir().await;
+    let config_dir = ludusavi_config_dir(&app_config);
+    tokio::fs::create_dir_all(&config_dir)
+        .await
+        .map_err(|e| CommandError::Message(format!("could not prepare the helper: {e}")))?;
+
+    // Serialised with every other run: two helpers on one config directory deadlock.
+    let _guard = state.ludusavi_lock().lock_owned().await;
+    let ludusavi = Ludusavi::new(ludusavi_binary_for(&app, &app_config)?, &config_dir);
+
+    // Forced, because a user pressing the button is asking about right now, and Ludusavi
+    // otherwise skips any check made in the last 24 hours.
+    ludusavi.update_manifest(true).await.map_err(|e| {
+        tracing::error!(error = %e, "could not update the save database");
+        CommandError::Message(format!("Could not update the game database: {e}"))
+    })?;
+
+    let info = gameyfin_core::save_tool::manifest_info(&config_dir).ok_or_else(|| {
+        CommandError::Message("The game database is still missing after the update.".into())
+    })?;
+    tracing::info!(bytes = info.bytes, "save database updated");
+    let _ = app.emit("save-tool-changed", ());
+    Ok(info)
 }
 
 /// Installs a version of the backup helper, or the newest when none is named.

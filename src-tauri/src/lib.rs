@@ -332,6 +332,7 @@ pub fn run() {
             saves::set_save_sync_settings,
             saves::migrate_saves,
             saves::save_tool_status,
+            saves::update_save_manifest,
             saves::install_save_tool,
             saves::remove_save_tool,
             saves::test_save_store,

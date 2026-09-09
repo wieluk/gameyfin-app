@@ -40,6 +40,8 @@ pub struct InstalledSaveTool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveToolStatus {
+    /// None until the helper has run once and downloaded it.
+    pub manifest: Option<ManifestInfo>,
     /// A user-installed copy, if there is one. Absent means the bundled build is in use.
     pub installed: Option<InstalledSaveTool>,
     /// The version shipped with the app, which is the fallback.
@@ -84,6 +86,32 @@ fn binary_name() -> &'static str {
     } else {
         "ludusavi"
     }
+}
+
+/// The downloaded game database, which is what knows where each game keeps its saves.
+///
+/// Separate from the helper's own version: a new database arrives far more often than a
+/// new release, and it is what a game missing from the list is usually waiting for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestInfo {
+    /// When it was last written, RFC 3339.
+    pub updated_at: Option<String>,
+    pub bytes: u64,
+}
+
+/// What the helper knows, read from the file rather than from a record of the last check:
+/// a failed update must not look like a fresh one.
+pub fn manifest_info(ludusavi_config_dir: &Path) -> Option<ManifestInfo> {
+    let metadata = std::fs::metadata(ludusavi_config_dir.join("manifest.yaml")).ok()?;
+    Some(ManifestInfo {
+        updated_at: metadata.modified().ok().and_then(|time| {
+            time::OffsetDateTime::from(time)
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        }),
+        bytes: metadata.len(),
+    })
 }
 
 /// The user-installed helper, or None when only the bundled one is present.
@@ -334,6 +362,7 @@ mod tests {
         latest: Option<&str>,
     ) -> SaveToolStatus {
         SaveToolStatus {
+            manifest: None,
             installed: installed.map(|v| InstalledSaveTool {
                 version: v.into(),
                 binary: PathBuf::from("/tmp/ludusavi"),

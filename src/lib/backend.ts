@@ -245,7 +245,16 @@ export interface InstalledSaveTool {
   binary: string;
 }
 
+/** The downloaded game database that says where each game keeps its saves. */
+export interface ManifestInfo {
+  /** When it was last written, or null if that could not be read. */
+  updatedAt: string | null;
+  bytes: number;
+}
+
 export interface SaveToolStatus {
+  /** Null until the helper has run once and downloaded it. */
+  manifest: ManifestInfo | null;
   /** A copy the user installed, which takes precedence over the bundled one. */
   installed: InstalledSaveTool | null;
   /** What ships with the app, used when nothing was installed. */
@@ -384,6 +393,8 @@ export interface Backend {
   /** Copy saves between two locations. The source is left alone. */
   migrateSaves(from: SaveBackend, to: SaveBackend, allVersions: boolean): Promise<MigrationSummary>;
   saveToolStatus(): Promise<SaveToolStatus>;
+  /** Refresh the game database. Changes far more often than the helper itself. */
+  updateSaveManifest(): Promise<ManifestInfo>;
   /** Install a version of the backup helper, or the newest when none is named. */
   installSaveTool(version?: string): Promise<InstalledSaveTool>;
   removeSaveTool(): Promise<void>;
@@ -540,6 +551,7 @@ const tauriBackend: Backend = {
   migrateSaves: (from, to, allVersions) =>
     invoke<MigrationSummary>("migrate_saves", { from, to, allVersions }),
   saveToolStatus: () => invoke<SaveToolStatus>("save_tool_status"),
+  updateSaveManifest: () => invoke<ManifestInfo>("update_save_manifest"),
   installSaveTool: (version) => invoke<InstalledSaveTool>("install_save_tool", { version }),
   removeSaveTool: () => invoke<void>("remove_save_tool"),
   testSaveStore: () => invoke<string>("test_save_store"),
@@ -787,6 +799,7 @@ const mockBackend: Backend = {
     return { games: 3, copied: 3, skipped: 1, failed: 0, bytes: 4_194_304, problems: [] };
   },
   saveToolStatus: async () => ({
+    manifest: { updatedAt: new Date(Date.now() - 86_400_000).toISOString(), bytes: 17_563_347 },
     installed: null,
     bundled: "v0.31.0",
     latest: {
@@ -803,6 +816,10 @@ const mockBackend: Backend = {
     binary: "/tmp/ludusavi",
   }),
   removeSaveTool: async () => console.info("[mock] remove save tool"),
+  updateSaveManifest: async () => ({
+    updatedAt: new Date().toISOString(),
+    bytes: 17_563_347,
+  }),
   setSaveLocked: async (gameId, saveId, locked) =>
     console.info(`[mock] lock ${saveId} of ${gameId}: ${locked}`),
 

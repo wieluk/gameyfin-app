@@ -15,7 +15,7 @@ import {
   type WineProgress,
   type WineVariant,
 } from "@/lib/backend";
-import { formatBytes, formatSpeed } from "@/lib/format";
+import { formatBytes, formatRelative, formatSpeed } from "@/lib/format";
 import { messageOf } from "@/lib/errors";
 import { isWindows } from "@/lib/platform";
 import { useAppSettings, useStatus } from "@/lib/queries";
@@ -1351,6 +1351,30 @@ function MigrationSection() {
 
 /** Ludusavi, which finds and packs the save files. One ships with the app. */
 function SaveToolSection() {
+  const queryClient = useQueryClient();
+  const [updating, setUpdating] = useState(false);
+  const [manifestError, setManifestError] = useState<string | null>(null);
+  const manifest = useQuery({
+    queryKey: ["save-tool-status"],
+    queryFn: () => backend.saveToolStatus(),
+    staleTime: 5 * 60 * 1000,
+  }).data?.manifest;
+
+  async function updateManifest() {
+    setUpdating(true);
+    setManifestError(null);
+    try {
+      await backend.updateSaveManifest();
+      await queryClient.invalidateQueries({ queryKey: ["save-tool-status"] });
+      // A game that was unrecognised may be in the new database, so the verdicts are stale.
+      await queryClient.invalidateQueries({ queryKey: ["save-states"] });
+    } catch (e) {
+      setManifestError(messageOf(e));
+    } finally {
+      setUpdating(false);
+    }
+  }
+
   const tool: VersionTool = {
     title: "Ludusavi",
     statusKey: "save-tool-status",
@@ -1377,13 +1401,39 @@ function SaveToolSection() {
     <VersionSection tool={tool}>
       <p className="text-[11px] leading-relaxed text-foreground/45">
         Gameyfin uses Ludusavi to find where each game keeps its saves. A copy ships with
-        the app; download a newer one when a game you own has only just been added to its
-        list of known save locations.
-      </p>
-      <p className="text-[11px] leading-relaxed text-foreground/45">
-        Removing a downloaded copy falls back to the bundled one. Your backups are not
+        the app, and removing a downloaded one falls back to it. Your backups are not
         touched either way.
       </p>
+
+      <div className="mt-2 border-t border-default-200 pt-3">
+        <Row
+          label="Game database"
+          value={
+            manifest
+              ? `${formatRelative(manifest.updatedAt)}, ${formatBytes(manifest.bytes)}`
+              : "Not downloaded yet"
+          }
+        />
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          <button
+            type="button"
+            disabled={updating}
+            onClick={() => void updateManifest()}
+            className="rounded-lg border border-default-200 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+          >
+            {updating ? "Updating…" : "Update game database"}
+          </button>
+        </div>
+        {manifestError && (
+          <p className="pt-1 text-[11px] leading-relaxed text-danger">{manifestError}</p>
+        )}
+        <p className="pt-2 text-[11px] leading-relaxed text-foreground/45">
+          This is the list of where games keep their saves, and it is updated far more
+          often than Ludusavi itself. Update it when a game of yours is not recognised. A
+          game that is in no version of the list needs its save folder set by hand, on the
+          game's row in Saves.
+        </p>
+      </div>
     </VersionSection>
   );
 }
