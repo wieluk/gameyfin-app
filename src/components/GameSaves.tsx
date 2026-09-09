@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { backend, isMockBackend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatBytes, formatRelative } from "@/lib/format";
-import { describe } from "@/lib/saveState";
+import { describe, outcomeOf } from "@/lib/saveState";
 import type { LibraryEntry, SaveSyncState, SaveVersion } from "@/types";
 
 /**
@@ -17,6 +17,7 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
   const [versions, setVersions] = useState<SaveVersion[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -52,8 +53,14 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
   async function act(action: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
+    setOutcome(null);
     try {
-      await action();
+      const next = await action();
+      // Say what the press achieved: the row's own state does not distinguish "backed up"
+      // from "looked and found nothing".
+      if (typeof next === "object" && next !== null && "kind" in next) {
+        setOutcome(outcomeOf(next as SaveSyncState));
+      }
       await load();
     } catch (e) {
       setError(messageOf(e));
@@ -89,6 +96,16 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
         </div>
 
         {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+        {outcome && !error && (
+          <p
+            role="status"
+            className={`mt-2 text-xs leading-relaxed ${
+              outcome.ok ? "text-success-600" : "text-warning-600"
+            }`}
+          >
+            {outcome.text}
+          </p>
+        )}
 
         {versions.length > 0 && (
           <ul className="mt-3 flex flex-col gap-1 border-t border-default-200/60 pt-3">

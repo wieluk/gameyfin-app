@@ -57,7 +57,13 @@ pub enum SaveSyncState {
     /// The backup helper ran and captured nothing. Distinct from never having tried: it
     /// means the game was recognised but no save files were found where it expected them,
     /// which is a different problem with a different remedy.
-    NothingToBackUp,
+    NothingToBackUp {
+        /// The title it searched under, which is what the user needs to judge whether the
+        /// game was matched to the wrong entry or simply has nothing saved yet.
+        title: String,
+        /// Whether the helper's database had anything to say about that title at all.
+        known: bool,
+    },
     InSync {
         last_synced_at: Option<String>,
     },

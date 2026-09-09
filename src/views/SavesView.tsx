@@ -7,9 +7,14 @@ import { SaveMatchDialog } from "@/components/SaveMatchDialog";
 import { SavePathDialog } from "@/components/SavePathDialog";
 import { backend, isMockBackend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
-import { describe } from "@/lib/saveState";
+import { describe, outcomeOf } from "@/lib/saveState";
 import { useEntries } from "@/lib/queries";
 import type { ConflictChoice, LibraryEntry, SaveSyncState } from "@/types";
+
+/** Narrows the value a save command returned; the others answer with nothing useful. */
+function isSaveState(value: unknown): value is SaveSyncState {
+  return typeof value === "object" && value !== null && "kind" in value;
+}
 
 /** Saves only exist for a game that is actually installed here. */
 function hasLocalInstall(entry: LibraryEntry): boolean {
@@ -63,11 +68,27 @@ export function SavesView() {
     return () => unlisten?.();
   }, [refresh]);
 
-  async function run(gameId: number, action: () => Promise<unknown>) {
+  // What the last button press did, per game. Pressing Back up used to report nothing at
+  // all: a success looked the same as a failure, and a thrown error was swallowed here.
+  const [outcome, setOutcome] = useState<Record<number, { text: string; ok: boolean }>>({});
+
+  async function run(gameId: number, action: () => Promise<SaveSyncState | unknown>) {
     setBusyGameId(gameId);
+    setOutcome((current) => {
+      const { [gameId]: _gone, ...rest } = current;
+      return rest;
+    });
     try {
-      await action();
+      const next = await action();
+      if (isSaveState(next)) {
+        setOutcome((current) => ({ ...current, [gameId]: outcomeOf(next) }));
+      }
       refresh();
+    } catch (error) {
+      setOutcome((current) => ({
+        ...current,
+        [gameId]: { text: messageOf(error), ok: false },
+      }));
     } finally {
       setBusyGameId(null);
     }
@@ -111,6 +132,7 @@ export function SavesView() {
             entry={entry}
             state={states.data?.[entry.game.id]}
             busy={busyGameId === entry.game.id}
+            outcome={outcome[entry.game.id]}
             onBackup={() => run(entry.game.id, () => backend.backupSaves(entry.game.id, false))}
             onRestore={() => run(entry.game.id, () => backend.restoreSaves(entry.game.id))}
             onResolve={() => setConflictGameId(entry.game.id)}
@@ -170,10 +192,13 @@ function SaveRow({
   onEnableCrossOs,
   onIdentify,
   onEditPaths,
+  outcome,
 }: {
   entry: LibraryEntry;
   state?: SaveSyncState;
   busy: boolean;
+  /** The result of the last button press, which the row state alone does not explain. */
+  outcome?: { text: string; ok: boolean };
   onBackup: () => void;
   onRestore: () => void;
   onResolve: () => void;
@@ -189,6 +214,16 @@ function SaveRow({
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{entry.game.title}</p>
         <p className={`truncate text-xs ${summary.tone}`}>{summary.text}</p>
+        {outcome && (
+          <p
+            role="status"
+            className={`mt-0.5 text-[11px] leading-relaxed ${
+              outcome.ok ? "text-success-600" : "text-warning-600"
+            }`}
+          >
+            {outcome.text}
+          </p>
+        )}
       </div>
 
       <div className="flex shrink-0 gap-2">

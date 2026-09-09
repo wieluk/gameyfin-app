@@ -24,7 +24,9 @@ export function describe(state?: SaveSyncState): { text: string; tone: string } 
       return { text: "Not backed up yet", tone: muted };
     case "nothing-to-back-up":
       return {
-        text: "No save files found for this game on this PC",
+        text: state.known
+          ? `Nothing saved yet, or the saves are not where "${state.title}" keeps them`
+          : `"${state.title}" is not in the save location database`,
         tone: "text-warning-600",
       };
     case "in-sync":
@@ -50,5 +52,39 @@ export function describe(state?: SaveSyncState): { text: string; tone: string } 
       };
     case "failed":
       return { text: state.message, tone: "text-danger" };
+  }
+}
+
+/** What to tell the user right after they pressed a button, as opposed to the row's state. */
+export function outcomeOf(state: SaveSyncState): { text: string; ok: boolean } {
+  switch (state.kind) {
+    case "in-sync":
+      return { text: "Backed up.", ok: true };
+    case "local-newer":
+      return { text: "Backed up. It has not reached the other end yet.", ok: true };
+    case "nothing-to-back-up":
+      return {
+        text: state.known
+          ? `Ludusavi looked where "${state.title}" keeps its saves and found no files. ` +
+            "If you have played it, use Set folders to say where the saves are."
+          : `Ludusavi has no entry for "${state.title}". Update the game database in ` +
+            "Settings, or use Set folders to say where the saves are.",
+        ok: false,
+      };
+    case "unmatched":
+      return {
+        text: "Could not tell which game this is. Use Choose game, or Set folders.",
+        ok: false,
+      };
+    case "conflict":
+      return { text: "Another device has a save this one did not start from.", ok: false };
+    case "unsupported":
+      return { text: "This server cannot store saves.", ok: false };
+    case "disabled":
+      return { text: "Save sync is turned off on the server.", ok: false };
+    case "failed":
+      return { text: state.message, ok: false };
+    default:
+      return { text: describe(state).text, ok: true };
   }
 }

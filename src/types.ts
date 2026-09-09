@@ -112,7 +112,7 @@ export type SaveSyncState =
   | { kind: "unmatched"; candidates: string[] }
   | { kind: "never-synced" }
   /** The helper ran and found no save files, as opposed to never having been tried. */
-  | { kind: "nothing-to-back-up" }
+  | { kind: "nothing-to-back-up"; title: string; known: boolean }
   | { kind: "in-sync"; lastSyncedAt?: string | null }
   | { kind: "local-newer"; localAt?: string | null }
   | { kind: "remote-newer"; remoteAt?: string | null; device?: string | null }

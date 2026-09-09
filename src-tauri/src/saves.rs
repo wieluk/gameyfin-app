@@ -736,7 +736,10 @@ async fn do_backup(
             matched = scan.matched,
             "no save files were captured; nothing to upload"
         );
-        let next = SaveSyncState::NothingToBackUp;
+        let next = SaveSyncState::NothingToBackUp {
+            title: title.clone(),
+            known: scan.matched,
+        };
         emit_state(app, game_id, &next);
         return Ok(next);
     }
