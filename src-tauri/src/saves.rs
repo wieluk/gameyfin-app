@@ -972,17 +972,18 @@ pub async fn migrate_saves(
     app: AppHandle,
     state: State<'_, AppState>,
     from: SaveBackend,
+    to: SaveBackend,
     all_versions: bool,
 ) -> CommandResult<gameyfin_core::save_migration::MigrationSummary> {
     let settings = state.settings().await;
-    if from == settings.save_backend {
+    if from == to {
         return Err(CommandError::Message(
-            "Saves are already kept there. Pick the place you are moving away from.".into(),
+            "Pick two different places, one to copy from and one to copy to.".into(),
         ));
     }
 
     let source = store_of(&state, &settings, from).await?;
-    let destination = store_for(&state, &settings).await?;
+    let destination = store_of(&state, &settings, to).await?;
     let scratch = state.config_dir().await.join("migration");
 
     tracing::info!(

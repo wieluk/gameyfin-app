@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Icon } from "@/components/Icon";
@@ -1186,26 +1186,29 @@ const BACKEND_LABELS: Record<SaveBackend, string> = {
   webdav: "WebDAV",
 };
 
+const BACKENDS = Object.keys(BACKEND_LABELS) as SaveBackend[];
+
 /** Copying saves across after changing where they are kept. */
 function MigrationSection() {
   const settings = useAppSettings();
   const active: SaveBackend = settings.data?.saveBackend ?? "server";
-  const sources = useMemo(
-    () => (Object.keys(BACKEND_LABELS) as SaveBackend[]).filter((b) => b !== active),
-    [active],
-  );
 
-  const [from, setFrom] = useState<SaveBackend>(sources[0]);
+  // Defaults to copying into the place saves are kept now, the usual reason to be here.
+  // Both ends are still selectable, so a folder can be the target while the server is in
+  // use, which is the case for anyone setting a folder up before switching to it.
+  const [to, setTo] = useState<SaveBackend>(active);
+  const [from, setFrom] = useState<SaveBackend>(active === "server" ? "folder" : "server");
   const [allVersions, setAllVersions] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [summary, setSummary] = useState<MigrationSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // The active backend can change while this is on screen, and it must not stay selectable.
+  // Switching backend while this is on screen should move the target with it.
   useEffect(() => {
-    if (from === active) setFrom(sources[0]);
-  }, [active, from, sources]);
+    setTo(active);
+    setFrom((current) => (current === active ? BACKENDS.find((b) => b !== active)! : current));
+  }, [active]);
 
   useEffect(() => {
     // Subscribed only while a migration is running.
@@ -1237,7 +1240,7 @@ function MigrationSection() {
     setSummary(null);
     setProgress(null);
     try {
-      setSummary(await backend.migrateSaves(from, allVersions));
+      setSummary(await backend.migrateSaves(from, to, allVersions));
     } catch (e) {
       setError(messageOf(e));
     } finally {
@@ -1247,30 +1250,44 @@ function MigrationSection() {
   }
 
   return (
-    <Section title="Move saves here">
+    <Section title="Move saves">
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        Copies saves from somewhere else into {BACKEND_LABELS[active]}, where they are kept
-        now. Nothing is removed from the old place, so you can run this again, and a second
-        run only copies what is missing.
+        Nothing is removed from the place you copy from, so you can run this again, and a
+        second run only copies what is missing.
       </p>
 
-      <label className="pt-2 text-xs text-foreground/55" htmlFor="migrate-from">
-        Copy from
-      </label>
-      <select
-        id="migrate-from"
-        value={from}
-        onChange={(e) => setFrom(e.target.value as SaveBackend)}
-        className="rounded-lg border border-default-200 bg-content2 px-3 py-2 text-sm outline-none focus:border-primary"
-      >
-        {sources.map((backendId) => (
-          <option key={backendId} value={backendId}>
-            {BACKEND_LABELS[backendId]}
-          </option>
-        ))}
-      </select>
+      <div className="grid grid-cols-2 gap-2 pt-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-foreground/55">Copy from</span>
+          <select
+            value={from}
+            onChange={(e) => setFrom(e.target.value as SaveBackend)}
+            className="rounded-lg border border-default-200 bg-content2 px-3 py-2 text-sm outline-none focus:border-primary"
+          >
+            {BACKENDS.map((backendId) => (
+              <option key={backendId} value={backendId}>
+                {BACKEND_LABELS[backendId]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-foreground/55">Copy to</span>
+          <select
+            value={to}
+            onChange={(e) => setTo(e.target.value as SaveBackend)}
+            className="rounded-lg border border-default-200 bg-content2 px-3 py-2 text-sm outline-none focus:border-primary"
+          >
+            {BACKENDS.map((backendId) => (
+              <option key={backendId} value={backendId}>
+                {BACKEND_LABELS[backendId]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <p className="text-[11px] leading-relaxed text-foreground/45">
-        Its settings are still saved, so this works even after switching.
+        Each location keeps its own settings, so both ends work whichever one is in use now.
       </p>
 
       <label className="flex cursor-pointer items-start gap-2 pt-2">
@@ -1291,7 +1308,7 @@ function MigrationSection() {
       <div className="flex flex-wrap items-center gap-3 pt-1">
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || from === to}
           onClick={() => void run()}
           className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
         >
@@ -1303,6 +1320,12 @@ function MigrationSection() {
           </span>
         )}
       </div>
+
+      {from === to && (
+        <p className="text-[11px] leading-relaxed text-foreground/45">
+          Pick two different places to copy between.
+        </p>
+      )}
 
       {error && <p className="text-[11px] leading-relaxed text-danger">{error}</p>}
 
@@ -1541,6 +1564,7 @@ function PathRow({
 
 /** Save sync, off until the user opts in: it copies their files somewhere else. */
 function SavesSection() {
+  const queryClient = useQueryClient();
   const settings = useAppSettings();
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -1564,6 +1588,10 @@ function SavesSection() {
       ...next,
     });
     await settings.refetch();
+    // Every save state on the other screens was read from the old location, and they are
+    // not mounted to hear an event, so switching would leave the Saves tab still saying
+    // the server has no save support.
+    await queryClient.invalidateQueries({ queryKey: ["save-states"] });
   }
 
   async function test() {
