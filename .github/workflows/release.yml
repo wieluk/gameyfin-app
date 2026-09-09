@@ -49,6 +49,9 @@ jobs:
 
       - run: npm ci
 
+      # Declared as a sidecar, so the bundle cannot be built without it on disk.
+      - run: npm run fetch-ludusavi
+
       # Tauri signs last, so a missing key wasted the whole build and then failed with a
       # message that named neither the variable nor the fix.
       - name: Check the updater signing setup
@@ -103,6 +106,7 @@ jobs:
         run: node scripts/set-version.mjs "${{ github.ref_name }}"
 
       - run: npm ci
+      - run: npm run fetch-ludusavi
 
       # The Flatpak is assembled from the deb, so that has to exist first.
       - run: npm run package deb

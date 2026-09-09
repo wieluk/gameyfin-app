@@ -41,6 +41,14 @@ if (!bundles) {
 const requested = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 const targets = requested.length > 0 ? requested : bundles;
 
+// Declared as a sidecar in tauri.conf.json, so the build fails before it starts without
+// it. Cheap when it is already there: the script checks the version and returns.
+console.log("Checking the bundled save helper...");
+execFileSync(process.execPath, [join(ROOT, "scripts", "fetch-ludusavi.mjs")], {
+  cwd: ROOT,
+  stdio: "inherit",
+});
+
 console.log(`Building ${targets.join(", ")} for ${platform}...`);
 // The CLI's own JS entry, not the .bin shim. Node refuses to execFileSync a .cmd without a
 // shell, and running one through cmd.exe would mangle the quotes in the --config JSON below.
