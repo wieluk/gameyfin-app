@@ -12,12 +12,35 @@ export interface FacetFilters {
   genre: string | null;
   developer: string | null;
   publisher: string | null;
+  theme: string | null;
+  feature: string | null;
+  perspective: string | null;
+  keyword: string | null;
+  platform: string | null;
 }
 
 export type FacetKey = keyof FacetFilters;
 
+/** The three that stay on the main bar; the rest live behind Advanced search. */
+export const PRIMARY_FACETS: FacetKey[] = ["genre", "developer", "publisher"];
+
+export const NO_FACETS: FacetFilters = {
+  genre: null,
+  developer: null,
+  publisher: null,
+  theme: null,
+  feature: null,
+  perspective: null,
+  keyword: null,
+  platform: null,
+};
+
 interface LibraryView {
   search: string;
+  /** Whether the second row of filters is open. */
+  advanced: boolean;
+  /** Lowest score to show, out of 100. Null means any, including unrated. */
+  minRating: number | null;
   sort: SortKey;
   direction: SortDirection;
   libraryId: number | null;
@@ -31,6 +54,8 @@ interface LibraryView {
   setLibraryId: (libraryId: number | null) => void;
   setFacet: (facet: FacetKey, value: string | null) => void;
   clearFacets: () => void;
+  toggleAdvanced: () => void;
+  setMinRating: (rating: number | null) => void;
 }
 
 const STORAGE_KEY = "gameyfin.library-view";
@@ -41,6 +66,8 @@ interface Persisted {
   libraryId: number | null;
   presence: PresenceFilter;
   facets: FacetFilters;
+  advanced: boolean;
+  minRating: number | null;
 }
 
 function load(): Persisted {
@@ -49,7 +76,9 @@ function load(): Persisted {
     direction: "asc",
     libraryId: null,
     presence: "all",
-    facets: { genre: null, developer: null, publisher: null },
+    facets: NO_FACETS,
+    advanced: false,
+    minRating: null,
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -61,6 +90,8 @@ function load(): Persisted {
       libraryId: parsed.libraryId ?? fallback.libraryId,
       presence: parsed.presence ?? fallback.presence,
       facets: { ...fallback.facets, ...(parsed.facets ?? {}) },
+      advanced: parsed.advanced ?? fallback.advanced,
+      minRating: parsed.minRating ?? fallback.minRating,
     };
   } catch {
     // Private windows and blocked site data both throw; the defaults are fine.
@@ -86,6 +117,8 @@ export const useLibraryView = create<LibraryView>((set, get) => ({
   direction: initial.direction,
   libraryId: initial.libraryId,
   presence: initial.presence,
+  advanced: initial.advanced,
+  minRating: initial.minRating,
 
   facets: initial.facets,
 
@@ -100,8 +133,9 @@ export const useLibraryView = create<LibraryView>((set, get) => ({
   setLibraryId: (libraryId) => set(persisting({ libraryId }, get)),
   setFacet: (facet, value) =>
     set(persisting({ facets: { ...get().facets, [facet]: value } }, get)),
-  clearFacets: () =>
-    set(persisting({ facets: { genre: null, developer: null, publisher: null } }, get)),
+  clearFacets: () => set(persisting({ facets: NO_FACETS, minRating: null }, get)),
+  setMinRating: (minRating) => set(persisting({ minRating }, get)),
+  toggleAdvanced: () => set(persisting({ advanced: !get().advanced }, get)),
 }));
 
 /** Apply a change and persist the whole view, so a new field cannot be left unsaved. */
@@ -109,7 +143,10 @@ function persisting(
   change: Partial<Persisted>,
   get: () => LibraryView,
 ): Partial<LibraryView> {
-  const { sort, direction, libraryId, presence, facets } = { ...get(), ...change };
-  save({ sort, direction, libraryId, presence, facets });
+  const { sort, direction, libraryId, presence, facets, advanced, minRating } = {
+    ...get(),
+    ...change,
+  };
+  save({ sort, direction, libraryId, presence, facets, advanced, minRating });
   return change;
 }

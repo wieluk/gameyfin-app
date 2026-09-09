@@ -109,6 +109,8 @@ pub struct Game {
     pub features: Vec<String>,
     #[serde(default, deserialize_with = "string_list")]
     pub keywords: Vec<String>,
+    #[serde(default, deserialize_with = "string_list")]
+    pub perspectives: Vec<String>,
     #[serde(default)]
     pub collection_ids: Vec<i64>,
     #[serde(default)]

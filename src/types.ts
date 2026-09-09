@@ -24,6 +24,10 @@ export interface Game {
   genres: string[];
   developers: string[];
   publishers: string[];
+  themes: string[];
+  features: string[];
+  keywords: string[];
+  perspectives: string[];
   cover?: Image | null;
   header?: Image | null;
   metadata: GameMetadata;

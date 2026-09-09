@@ -5,11 +5,20 @@ import { GameDetail } from "@/components/GameDetail";
 import { InstallDialog } from "@/components/InstallDialog";
 import { Icon } from "@/components/Icon";
 import { isInstalled, isLocal, needsChooser, primaryAction } from "@/lib/actions";
+import {
+  ADVANCED_FACETS,
+  FACET_KEYS,
+  FACET_LABELS,
+  FACET_VALUES,
+  matchesFacets,
+  ratingOf,
+} from "@/lib/facets";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { RootChooser, useLibraryRoots } from "@/components/RootChooser";
 import {
   useLibraryView,
+  PRIMARY_FACETS,
   type FacetKey,
   type PresenceFilter,
   type SortDirection,
@@ -33,6 +42,10 @@ export function LibraryView() {
     toggleDirection,
     setLibraryId,
     setPresence,
+    advanced,
+    toggleAdvanced,
+    minRating,
+    setMinRating,
     facets,
     setFacet,
     clearFacets,
@@ -93,9 +106,8 @@ export function LibraryView() {
       if (offline && !isLocal(e)) return false;
       if (libraryId !== null && e.game.libraryId !== libraryId) return false;
       if (presence !== "all" && (presence === "installed") !== isInstalled(e)) return false;
-      if (facets.genre && !e.game.genres.includes(facets.genre)) return false;
-      if (facets.developer && !e.game.developers.includes(facets.developer)) return false;
-      if (facets.publisher && !e.game.publishers.includes(facets.publisher)) return false;
+      if (!matchesFacets(e, facets)) return false;
+      if (minRating !== null && (ratingOf(e.game) ?? -1) < minRating) return false;
       if (!needle) return true;
       return (
         e.game.title.toLowerCase().includes(needle) ||
@@ -103,7 +115,7 @@ export function LibraryView() {
       );
     });
     return sortEntries(filtered, sort, direction);
-  }, [entries.data, search, sort, direction, libraryId, presence, facets, offline]);
+  }, [entries.data, search, sort, direction, libraryId, presence, facets, minRating, offline]);
 
   // Built from the current library, and narrowed by the other filters, so no option ever matches nothing.
   const options = useMemo(() => {
@@ -114,24 +126,18 @@ export function LibraryView() {
         (libraryId === null || e.game.libraryId === libraryId) &&
         (presence === "all" || (presence === "installed") === isInstalled(e)),
     );
-    const collect = (pick: (e: LibraryEntry) => string[], ignore: FacetKey) => {
-      const matching = inScope.filter(
-        (e) =>
-          (ignore === "genre" || !facets.genre || e.game.genres.includes(facets.genre)) &&
-          (ignore === "developer" ||
-            !facets.developer ||
-            e.game.developers.includes(facets.developer)) &&
-          (ignore === "publisher" ||
-            !facets.publisher ||
-            e.game.publishers.includes(facets.publisher)),
+    // Each list ignores its own filter, so choosing a value never empties the box it
+    // came from, and respects the others, so no option is offered that matches nothing.
+    const collect = (key: FacetKey) => {
+      const matching = inScope.filter((e) => matchesFacets(e, facets, key));
+      return [...new Set(matching.flatMap((e) => FACET_VALUES[key](e.game)))].sort((a, b) =>
+        a.localeCompare(b),
       );
-      return [...new Set(matching.flatMap(pick))].sort((a, b) => a.localeCompare(b));
     };
-    return {
-      genre: collect((e) => e.game.genres, "genre"),
-      developer: collect((e) => e.game.developers, "developer"),
-      publisher: collect((e) => e.game.publishers, "publisher"),
-    };
+    return Object.fromEntries(FACET_KEYS.map((key) => [key, collect(key)])) as Record<
+      FacetKey,
+      string[]
+    >;
   }, [entries.data, libraryId, presence, facets, offline]);
 
   const hiddenOffline = useMemo(
@@ -139,7 +145,11 @@ export function LibraryView() {
     [entries.data, offline],
   );
 
-  const activeFacets = Object.values(facets).filter(Boolean).length;
+  const activeFacets =
+    Object.values(facets).filter(Boolean).length + (minRating === null ? 0 : 1);
+  // Shown on the button, so a filter set in the hidden row is not silently narrowing the list.
+  const advancedCount =
+    ADVANCED_FACETS.filter((key) => facets[key]).length + (minRating === null ? 0 : 1);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -175,30 +185,36 @@ export function LibraryView() {
           <option value="not-installed">Not installed</option>
         </select>
 
-        <Facet
-          label="All genres"
-          value={facets.genre}
-          options={options.genre}
-          onChange={(value) => setFacet("genre", value)}
-        />
-        <Facet
-          label="All developers"
-          value={facets.developer}
-          options={options.developer}
-          onChange={(value) => setFacet("developer", value)}
-        />
-        <Facet
-          label="All publishers"
-          value={facets.publisher}
-          options={options.publisher}
-          onChange={(value) => setFacet("publisher", value)}
-        />
+        {PRIMARY_FACETS.map((key) => (
+          <Facet
+            key={key}
+            label={FACET_LABELS[key]}
+            value={facets[key]}
+            options={options[key]}
+            onChange={(value) => setFacet(key, value)}
+          />
+        ))}
+
+        <button
+          type="button"
+          onClick={toggleAdvanced}
+          aria-expanded={advanced}
+          title="More ways to narrow the list"
+          className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-2 text-xs transition-colors ${
+            advanced || advancedCount > 0
+              ? "border-primary/50 bg-primary/10 text-primary"
+              : "border-default-200 bg-content2 text-foreground/70 hover:bg-default-100"
+          }`}
+        >
+          Advanced
+          {advancedCount > 0 && <span className="tabular-nums">({advancedCount})</span>}
+        </button>
 
         {activeFacets > 0 && (
           <button
             type="button"
             onClick={clearFacets}
-            title="Clear the genre, developer and publisher filters"
+            title="Clear every filter"
             className="shrink-0 rounded-lg border border-default-200 bg-content2 px-2.5 py-2 text-xs text-foreground/70 transition-colors hover:bg-default-100"
           >
             Clear
@@ -231,6 +247,33 @@ export function LibraryView() {
           />
         </button>
       </div>
+
+      {advanced && (
+        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-default-200/60 bg-content1/40 px-6 py-3">
+          {ADVANCED_FACETS.map((key) => (
+            <Facet
+              key={key}
+              label={FACET_LABELS[key]}
+              value={facets[key]}
+              options={options[key]}
+              onChange={(value) => setFacet(key, value)}
+            />
+          ))}
+
+          <select
+            value={minRating ?? ""}
+            onChange={(e) => setMinRating(e.target.value === "" ? null : Number(e.target.value))}
+            className="rounded-lg border border-default-200 bg-content2 px-3 py-2 text-sm outline-none focus:border-primary"
+          >
+            <option value="">Any rating</option>
+            {[90, 80, 70, 60, 50].map((score) => (
+              <option key={score} value={score}>
+                {score} or higher
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         {entries.isLoading ? (
