@@ -2766,11 +2766,39 @@ async fn run_program_as_installer(
                 "installer populated the games folder"
             );
             finish_install(&library, game_id, &install_dir).await;
+        } else if kind == gameyfin_core::InstallerKind::Unknown
+            && elapsed >= std::time::Duration::from_secs(3)
+        {
+            // No recognised setup toolkit, it exited cleanly, and it ran long enough to
+            // have been used: this is the game itself, not an installer. Running one used
+            // to leave the games folder empty and drop the game back to Downloads the
+            // moment the user closed it, having just played it.
+            tracing::info!(
+                game_id,
+                ?program,
+                "no setup was run; treating the download as the game itself"
+            );
+            match install_portable(&library, game_id, &program, &install_dir).await {
+                Ok(()) => finish_install(&library, game_id, &install_dir).await,
+                Err(e) => {
+                    tracing::error!(game_id, error = %e, "could not keep the program");
+                    library
+                        .set_activity(
+                            game_id,
+                            Activity::Failed {
+                                message: format!("Could not put the program in place: {e}"),
+                                stage: Stage::Install,
+                            },
+                        )
+                        .await;
+                }
+            }
         } else {
             tracing::warn!(
                 game_id,
                 ?install_dir,
                 ?elapsed,
+                kind = kind.label(),
                 "installer left the games folder empty"
             );
             library
@@ -2790,6 +2818,38 @@ async fn run_program_as_installer(
         notify_state(&app, &library, game_id).await;
     });
 
+    Ok(())
+}
+
+/// Keep a downloaded program as the game, for a `.exe` that turned out not to be a setup.
+///
+/// Copied rather than moved: the archive stays where Downloads expects it, so removing the
+/// game does not also lose the download.
+async fn install_portable(
+    library: &crate::library_state::SharedLibraryState,
+    game_id: i64,
+    program: &Path,
+    install_dir: &Path,
+) -> Result<(), String> {
+    tokio::fs::create_dir_all(install_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let name = program
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "game.exe".to_string());
+    tokio::fs::copy(program, install_dir.join(&name))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    library
+        .update_record(game_id, move |r| {
+            r.install_dir = Some(install_dir.to_path_buf());
+            r.executable = Some(name);
+            r.installed_at = Some(now_iso8601());
+        })
+        .await;
     Ok(())
 }
 

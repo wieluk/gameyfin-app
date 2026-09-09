@@ -153,12 +153,22 @@ pub fn methods_for(payload: Payload, windows_host: bool) -> Vec<InstallMethod> {
     match payload {
         Payload::Archive(_) => vec![InstallMethod::Extract],
         Payload::WindowsExecutable => {
+            // Most downloaded .exe files are installers, so that comes first, but plenty
+            // are the game itself with no setup at all. Those had nowhere to go: running
+            // one as an installer leaves the games folder empty, and the game dropped back
+            // to Downloads the moment it was closed.
             if windows_host {
-                vec![InstallMethod::RunWindowsInstaller]
+                vec![
+                    InstallMethod::RunWindowsInstaller,
+                    InstallMethod::CopyExecutable,
+                ]
             } else {
                 // On Linux a Windows installer still runs, through Proton, the same
                 // mechanism used to run the game afterwards.
-                vec![InstallMethod::RunWindowsInstallerViaProton]
+                vec![
+                    InstallMethod::RunWindowsInstallerViaProton,
+                    InstallMethod::CopyExecutable,
+                ]
             }
         }
         Payload::LinuxExecutable | Payload::ShellScript => {
@@ -237,11 +247,17 @@ mod tests {
     fn a_windows_installer_runs_natively_on_windows_and_via_proton_elsewhere() {
         assert_eq!(
             methods_for(Payload::WindowsExecutable, true),
-            vec![InstallMethod::RunWindowsInstaller]
+            vec![
+                InstallMethod::RunWindowsInstaller,
+                InstallMethod::CopyExecutable
+            ]
         );
         assert_eq!(
             methods_for(Payload::WindowsExecutable, false),
-            vec![InstallMethod::RunWindowsInstallerViaProton]
+            vec![
+                InstallMethod::RunWindowsInstallerViaProton,
+                InstallMethod::CopyExecutable
+            ]
         );
     }
 
