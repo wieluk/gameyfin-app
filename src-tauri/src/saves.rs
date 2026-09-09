@@ -411,7 +411,10 @@ async fn sync_for(
     settings: &crate::settings::Settings,
 ) -> CommandResult<SaveSync> {
     let store = store_for(state, settings).await?;
-    Ok(SaveSync::new(store, context.staging.clone())
+    // The saves root, not this game's directory inside it: `SaveSync` appends the game id
+    // itself. Passing the deeper path made it pack `Saves/<id>/<id>`, which never exists,
+    // so every upload was an empty 22 byte archive.
+    Ok(SaveSync::new(store, context.saves_root.clone())
         .identified_as(settings.installation_id.clone(), hostname()))
 }
 

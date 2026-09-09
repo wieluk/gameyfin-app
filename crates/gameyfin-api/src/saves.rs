@@ -314,6 +314,14 @@ fn check_status(endpoint: &str, status: StatusCode, body: &str) -> ApiResult<()>
 
 /// Maps the statuses the save routes add on top of the usual ones.
 fn status_error(endpoint: &str, status: StatusCode, body: &str) -> ApiError {
+    // 401 and 403 both become `Unauthenticated`, which reads as a dead session and hides
+    // which one it was. A rejected save upload with a live session is a 403.
+    tracing::warn!(
+        endpoint,
+        status = status.as_u16(),
+        body = body.chars().take(200).collect::<String>(),
+        "the server refused a save request"
+    );
     match status {
         StatusCode::METHOD_NOT_ALLOWED => ApiError::SaveSyncDisabled,
         StatusCode::PAYLOAD_TOO_LARGE => ApiError::QuotaExceeded,

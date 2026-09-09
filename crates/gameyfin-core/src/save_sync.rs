@@ -397,6 +397,25 @@ pub async fn staged_hash(saves_root: &Path, game_id: i64) -> SaveResult<Option<S
 
 #[cfg(test)]
 mod tests {
+    /// The staging directory has to be the one Ludusavi was told to write into.
+    ///
+    /// It was constructed from the wrong end for a while: the caller passed this game's
+    /// directory where the root was wanted, so packing looked in `<root>/<id>/<id>`, found
+    /// nothing, and uploaded a 22 byte empty zip over a perfectly good backup.
+    #[test]
+    fn staging_is_the_directory_ludusavi_backs_up_into() {
+        let root = std::path::Path::new("/games/Gameyfin/Saves");
+        let sync = SaveSync::new(
+            Box::new(crate::save_store::FolderStore::new("/unused", 1)),
+            root,
+        );
+
+        assert_eq!(root.join("96"), sync.staging_for(96));
+        // And the archive lands beside it, never inside what is being packed.
+        assert_eq!(root.join("96.zip"), archive_path(root, 96));
+        assert!(!archive_path(root, 96).starts_with(sync.staging_for(96)));
+    }
+
     use super::*;
 
     fn remote(id: i64, platform: &str) -> SaveVersion {
