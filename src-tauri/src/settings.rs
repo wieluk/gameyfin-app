@@ -79,9 +79,10 @@ pub struct Settings {
 
     /// Closing the window hides it to the tray rather than quitting.
     ///
-    /// On by default because the window is not the app: a download runs in this process,
-    /// and closing the window during one used to abandon it.
-    #[serde(default = "on")]
+    /// Off by default: closing a window is expected to close the program, and an app that
+    /// silently keeps running is a surprise. Downloads run in this process, so closing
+    /// during one does end it, which is why the setting exists.
+    #[serde(default)]
     pub close_to_tray: bool,
     /// Start hidden, with only the tray icon showing.
     #[serde(default)]
@@ -277,7 +278,7 @@ impl Default for Settings {
             notify_transfers: true,
             notify_failures: true,
             notify_updates: true,
-            close_to_tray: true,
+            close_to_tray: false,
             start_minimized: false,
             auto_install: false,
             umu_fixes: true,
@@ -602,7 +603,7 @@ mod tests {
             settings.server_url.as_deref(),
             Some("https://games.example")
         );
-        assert!(settings.close_to_tray, "new options take their default");
+        assert!(!settings.close_to_tray, "new options take their default");
         assert!(!settings.auto_install);
     }
 

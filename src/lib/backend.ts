@@ -640,7 +640,7 @@ const mockBackend: Backend = {
     notifyTransfers: true,
     notifyFailures: true,
     notifyUpdates: true,
-    closeToTray: true,
+    closeToTray: false,
     startMinimized: false,
     autoInstall: false,
     umuFixes: true,

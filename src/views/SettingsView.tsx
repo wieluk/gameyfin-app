@@ -339,8 +339,8 @@ function WindowSection() {
     <Section title="Window">
       <Check
         label="Closing the window keeps Gameyfin running"
-        hint="Downloads run inside this program. With this on, the close button hides the window and the tray icon brings it back."
-        checked={settings.data?.closeToTray ?? true}
+        hint="Downloads run inside this program, so closing the window stops one. Turn this on and the close button hides the window instead, with the tray icon to bring it back."
+        checked={settings.data?.closeToTray ?? false}
         onChange={(next) => save({ closeToTray: next })}
       />
       <Check
