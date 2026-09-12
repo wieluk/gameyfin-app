@@ -116,6 +116,20 @@ pub struct ScannedFile {
     pub ignored: bool,
     #[serde(default)]
     pub change: Option<Change>,
+    /// Restore only: the path in the backup, when a redirect moved the file elsewhere.
+    #[serde(default)]
+    pub original_path: Option<String>,
+    /// Backup only: the path the file is stored under, when a redirect moved it.
+    #[serde(default)]
+    pub redirected_path: Option<String>,
+    #[serde(default)]
+    pub error: Option<FileError>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileError {
+    #[serde(default)]
+    pub message: String,
 }
 
 impl<G> ApiOutput<G> {
@@ -133,6 +147,20 @@ impl ScanGame {
     pub fn produced_data(&self) -> bool {
         self.decision == Some(Decision::Processed)
             && self.files.values().any(|f| !f.failed && !f.ignored)
+    }
+
+    /// Files a restore did not put anywhere real: failed ones, and ones left under `synthetic_root`
+    /// with no redirect back, which silently succeed inside a Flatpak.
+    pub fn misplaced<'a>(
+        &'a self,
+        synthetic_root: &'a str,
+    ) -> impl Iterator<Item = (&'a str, &'a ScannedFile)> + 'a {
+        self.files
+            .iter()
+            .filter(move |(path, file)| {
+                !file.ignored && (file.failed || path.starts_with(synthetic_root))
+            })
+            .map(|(path, file)| (path.as_str(), file))
     }
 
     /// Total bytes of the files that were successfully handled.
@@ -215,5 +243,45 @@ mod tests {
         let errors = out.errors.unwrap();
         assert!(errors.some_games_failed);
         assert_eq!(errors.unknown_games, vec!["Nope"]);
+    }
+}
+
+#[cfg(test)]
+mod misplaced_tests {
+    use super::*;
+
+    fn game(json: &str) -> ScanGame {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn a_restore_mapped_onto_this_machine_misplaced_nothing() {
+        // Real output: the key is where the file went, `originalPath` where it came from.
+        let restored = game(
+            r#"{"decision":"Processed","change":"Different","files":{
+            "/var/home/u/P/1/drive_c/users/steamuser/AppData/Save_1.sav":{
+                "change":"New","bytes":14,
+                "originalPath":"/gameyfin/home/AppData/Save_1.sav"}}}"#,
+        );
+        assert_eq!(restored.misplaced("/gameyfin/").count(), 0);
+    }
+
+    #[test]
+    fn a_restore_with_no_redirect_is_misplaced_whether_or_not_it_failed() {
+        // Outside a sandbox the write to a synthetic path fails outright.
+        let refused = game(
+            r#"{"decision":"Processed","files":{
+            "/gameyfin/home/AppData/Save_1.sav":{"failed":true,
+                "error":{"message":"Permission denied (os error 13)"},"bytes":14}}}"#,
+        );
+        assert_eq!(refused.misplaced("/gameyfin/").count(), 1);
+
+        // Inside a Flatpak it succeeds into scratch space that vanishes with the process.
+        let vanished = game(
+            r#"{"decision":"Processed","files":{
+            "/gameyfin/home/AppData/Save_1.sav":{"change":"New","bytes":585374},
+            "/gameyfin/home/AppData/Save_2.sav":{"change":"New","bytes":64}}}"#,
+        );
+        assert_eq!(vanished.misplaced("/gameyfin/").count(), 2);
     }
 }

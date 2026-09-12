@@ -1,5 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { SaveSyncStatus } from "./SaveSyncStatus";
@@ -14,13 +15,14 @@ vi.mock("@/lib/useTauriEvent", () => ({
   },
 }));
 
-function emit(phase: SaveSyncProgress["phase"], skippable: boolean) {
+function emit(phase: SaveSyncProgress["phase"], skippable: boolean, blocking = false) {
   const progress: SaveSyncProgress = {
     gameId: 1,
     title: "Celeste",
     moment: "launch",
     phase,
     skippable,
+    blocking,
   };
   // Through act: the event arrives from outside React, as it does from Tauri.
   act(() => {
@@ -31,9 +33,11 @@ function emit(phase: SaveSyncProgress["phase"], skippable: boolean) {
 function show() {
   const client = new QueryClient();
   return render(
-    <QueryClientProvider client={client}>
-      <SaveSyncStatus />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <SaveSyncStatus />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -58,5 +62,14 @@ describe("SaveSyncStatus", () => {
     emit({ kind: "failed", message: "the server refused the save" }, false);
     expect(screen.getByText("the server refused the save")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+  });
+
+  it("holds a launch whose save could not be restored until the user chooses", () => {
+    // Playing on silently is how a good save gets buried under an empty one.
+    show();
+    emit({ kind: "failed", message: "The save could not be put back." }, false, true);
+    expect(screen.getByRole("button", { name: "Start anyway" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Saves" })).toBeTruthy();
+    expect(screen.getByText(/The game has not started/)).toBeTruthy();
   });
 });

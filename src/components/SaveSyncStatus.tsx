@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 
 import { Modal } from "@/components/Modal";
 import { backend } from "@/lib/backend";
+import { messageOf } from "@/lib/errors";
 import { keys } from "@/lib/queries";
 import { describe } from "@/lib/saveState";
 import { useTauriEvent } from "@/lib/useTauriEvent";
@@ -12,18 +14,19 @@ import type { SaveSyncProgress } from "@/bindings/SaveSyncProgress";
 const LINGER_MS = 1600;
 
 /**
- * What the automatic sync is doing while a game starts and after it closes.
- *
- * Both used to happen in silence: a save that could not be restored was a log line, and a
- * failed upload was nothing at all.
+ * What the automatic sync is doing while a game starts and after it closes. A restore that
+ * failed holds the launch here until the user says what to do.
  */
 export function SaveSyncStatus() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [progress, setProgress] = useState<SaveSyncProgress | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const closing = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useTauriEvent<SaveSyncProgress>("save-sync-progress", (next) => {
     if (closing.current) clearTimeout(closing.current);
+    setError(null);
     setProgress(next);
 
     if (!isFinal(next)) return;
@@ -39,6 +42,20 @@ export function SaveSyncStatus() {
   if (!progress) return null;
 
   const failed = progress.phase.kind === "failed";
+  const held = failed && progress.blocking;
+
+  /** Starts the game without the save, which is the user's call to make, not ours. */
+  async function startAnyway(gameId: number) {
+    setError(null);
+    try {
+      await backend.skipSaveSync(gameId);
+      setProgress(null);
+      await backend.launch(gameId);
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
   return (
     <Modal
       label="Saves"
@@ -58,6 +75,13 @@ export function SaveSyncStatus() {
         <p className={`text-xs leading-relaxed ${failed ? "text-danger" : "text-foreground/70"}`}>
           {phaseText(progress)}
         </p>
+        {held && (
+          <p className="mt-2 text-xs leading-relaxed text-foreground/60">
+            The game has not started. Starting it now plays without that save, and nothing is
+            uploaded when you stop until you decide which save to keep.
+          </p>
+        )}
+        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
 
         {!isFinal(progress) && (
           <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-default-200">
@@ -67,7 +91,34 @@ export function SaveSyncStatus() {
       </div>
 
       <div className="flex justify-end gap-2 border-t border-default-200/60 px-5 py-3">
-        {isFinal(progress) ? (
+        {held ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setProgress(null)}
+              className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setProgress(null);
+                navigate("/saves");
+              }}
+              className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100"
+            >
+              Open Saves
+            </button>
+            <button
+              type="button"
+              onClick={() => void startAnyway(progress.gameId)}
+              className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90"
+            >
+              Start anyway
+            </button>
+          </>
+        ) : isFinal(progress) ? (
           <button
             type="button"
             onClick={() => setProgress(null)}
@@ -80,9 +131,7 @@ export function SaveSyncStatus() {
             type="button"
             disabled={!progress.skippable}
             title={
-              progress.skippable
-                ? undefined
-                : "Stopping now would leave the save half written."
+              progress.skippable ? undefined : "Stopping now would leave the save half written."
             }
             onClick={() => void backend.skipSaveSync(progress.gameId)}
             className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100 disabled:opacity-40"
@@ -118,7 +167,7 @@ function phaseText(progress: SaveSyncProgress): string {
     case "skipped":
       return progress.moment === "launch"
         ? "Skipped. The game starts with the save already on this PC."
-        : "Skipped. The backup stays on this PC until next time.";
+        : "Not uploaded. This session started without the newer save, so choose which one to keep under Saves.";
     case "nothing-to-do":
       return "Nothing to sync.";
     case "failed":

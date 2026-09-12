@@ -9,4 +9,8 @@ export type SaveSyncProgress = { gameId: number, title: string, moment: SyncMome
 /**
  * False once stopping would leave the save half written, so the button can say so.
  */
-skippable: boolean, };
+skippable: boolean, 
+/**
+ * A failure that keeps the game from starting until the user chooses what to do.
+ */
+blocking: boolean, };

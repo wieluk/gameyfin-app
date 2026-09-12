@@ -125,6 +125,7 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
         .unwrap_or_else(|| layout.install_dir(game_id, &game.title));
     let prefix_dir = layout.prefix_dir(game_id);
     let runs_as_windows = runs_as_windows(&record, &install_dir, &prefix_dir);
+    let strategy = effective_strategy(record.save_restore_strategy.into(), runs_as_windows);
 
     Ok(GameContext {
         game_id,
@@ -134,7 +135,7 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
         install_dir,
         prefix_dir,
         record_saves: record.saves.clone(),
-        strategy: record.save_restore_strategy.into(),
+        strategy,
         redirects: record
             .save_redirects
             .iter()
@@ -147,6 +148,24 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
         runs_as_windows,
         title: game.title,
     })
+}
+
+/// The strategy a sync actually uses. For a game run in a prefix the cross-OS translation is
+/// never right: it drops the portable mapping, so a save stored under `/gameyfin/home`
+/// restores to nowhere. It was offered there before Proton games were recognised.
+fn effective_strategy(stored: RestoreStrategy, runs_as_windows: Option<bool>) -> RestoreStrategy {
+    if !cfg!(windows) && runs_as_windows == Some(true) {
+        RestoreStrategy::Portable
+    } else {
+        stored
+    }
+}
+
+/// The path as the filesystem resolves it. Ludusavi reports files by their real path, so a
+/// redirect written through a symlink (`/home` is `/var/home` on an ostree system) never
+/// matches and the backup keeps this machine's own path.
+fn real(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// A helper run, holding the shared-config lock. One config directory serves every game,
@@ -189,8 +208,19 @@ async fn ludusavi_for(
 
     let mut builder = ConfigBuilder::new(&context.staging)
         .strategy(context.strategy)
-        .manual_redirects(context.redirects.clone())
-        .portable_install_dir(&context.install_dir)
+        .manual_redirects(
+            context
+                .redirects
+                .iter()
+                .map(|redirect| Redirect {
+                    source: real(Path::new(&redirect.source))
+                        .to_string_lossy()
+                        .into_owned(),
+                    ..redirect.clone()
+                })
+                .collect::<Vec<_>>(),
+        )
+        .portable_install_dir(&real(&context.install_dir))
         // Under the game's own title, which is also what a hand-set path registers it as.
         .custom_save_paths(
             context.title.clone(),
@@ -204,7 +234,7 @@ async fn ludusavi_for(
             .join("drive_c")
             .is_dir();
     if in_prefix {
-        builder = builder.wine_prefix(&context.prefix_dir);
+        builder = builder.wine_prefix(&real(&context.prefix_dir));
     }
 
     // For a Windows game on Proton the home that travels is the one inside the prefix, so
@@ -215,17 +245,17 @@ async fn ludusavi_for(
         .flatten();
     match (prefix_home, home()) {
         (Some(prefix_home), host_home) => {
-            builder = builder.portable_home(&prefix_home);
+            builder = builder.portable_home(&real(&prefix_home));
             if let Some(host_home) = host_home {
-                builder = builder.portable_host_home(&host_home);
+                builder = builder.portable_host_home(&real(&host_home));
             }
         }
-        (None, Some(host_home)) => builder = builder.portable_home(&host_home),
+        (None, Some(host_home)) => builder = builder.portable_home(&real(&host_home)),
         (None, None) => {}
     }
     // Cross-OS translation needs one preferred prefix, which only a custom entry can carry.
     if context.strategy == RestoreStrategy::CrossOs {
-        builder = builder.preferred_wine_prefix(&context.title, &context.prefix_dir);
+        builder = builder.preferred_wine_prefix(&context.title, &real(&context.prefix_dir));
     }
 
     let config_dir = ludusavi_config_dir(&app_config);
@@ -576,6 +606,8 @@ pub struct SaveSyncProgress {
     pub phase: SaveSyncPhase,
     /// False once stopping would leave the save half written, so the button can say so.
     pub skippable: bool,
+    /// A failure that keeps the game from starting until the user chooses what to do.
+    pub blocking: bool,
 }
 
 /// Reports what an automatic sync is doing, and carries the user's answer if they skip it.
@@ -607,7 +639,7 @@ impl SyncWatch {
         }
     }
 
-    fn say(&self, phase: SaveSyncPhase, skippable: bool) {
+    fn say(&self, phase: SaveSyncPhase, skippable: bool, blocking: bool) {
         if phase.is_final() {
             // Cleared here rather than at the next launch: a skip left behind would stop a
             // sync the user never asked to stop.
@@ -621,22 +653,28 @@ impl SyncWatch {
                 moment: self.moment,
                 phase,
                 skippable,
+                blocking,
             },
         );
     }
 
     /// A step that can still be abandoned without consequence.
     fn step(&self, phase: SaveSyncPhase) {
-        self.say(phase, true);
+        self.say(phase, true, false);
     }
 
     /// A step that has to finish now it has started.
     fn committed(&self, phase: SaveSyncPhase) {
-        self.say(phase, false);
+        self.say(phase, false, false);
     }
 
     fn finish(&self, phase: SaveSyncPhase) {
-        self.say(phase, false);
+        self.say(phase, false, false);
+    }
+
+    /// Stops the launch on a failure the user has to answer before the game starts.
+    fn hold(&self, message: String) {
+        self.say(SaveSyncPhase::Failed { message }, false, true);
     }
 
     fn skipped(&self) -> bool {
@@ -996,11 +1034,32 @@ async fn do_restore(
         watch.committed(SaveSyncPhase::Restoring);
     }
     let ludusavi = ludusavi_for(app, state, &context).await?;
-    ludusavi
+    let restored = ludusavi
         .restore(&title, &context.staging)
         .await
         .context("restoring the save failed")?;
     drop(ludusavi);
+
+    // Ludusavi reports these as handled. Outside a sandbox the write fails; inside a Flatpak
+    // it lands in scratch space that vanishes, so the game never sees the save either way.
+    let misplaced: Vec<&str> = restored
+        .games
+        .values()
+        .flat_map(|game| game.misplaced(gameyfin_saves::config::SYNTHETIC_ROOT))
+        .map(|(path, _)| path)
+        .collect();
+    if !misplaced.is_empty() {
+        tracing::warn!(
+            game_id,
+            ?misplaced,
+            "the restore could not place every file"
+        );
+        return Err(CommandError::msg(format!(
+            "The save could not be put back: {} of its files have nowhere to go on this PC. \
+             Set its folders under Saves, then restore it again.",
+            misplaced.len()
+        )));
+    }
 
     let hash = staged_hash(&context).await;
     record_sync(state, game_id, Some(version.id), hash, context.platform()).await;
@@ -1695,16 +1754,23 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
                 }
             }
             if watch.skipped() {
+                crate::state::lock(&state.unsynced_sessions()).insert(game_id);
                 watch.finish(SaveSyncPhase::Skipped);
                 return LaunchGate::Proceed;
             }
             match do_restore(app, state, game_id, None, Some(&watch)).await {
+                // Skipped after the download: the game starts without the newer save.
+                Ok(SaveSyncState::RemoteNewer { .. }) => {
+                    crate::state::lock(&state.unsynced_sessions()).insert(game_id);
+                    watch.finish(SaveSyncPhase::Skipped);
+                }
                 Ok(next) => watch.finish(SaveSyncPhase::Done { state: next }),
                 Err(e) => {
                     tracing::warn!(game_id, error = %e, "could not restore the save before launch");
-                    watch.finish(SaveSyncPhase::Failed {
-                        message: e.to_string(),
-                    });
+                    // Playing on starts the game on an older save and uploads it over the
+                    // newer one at exit, so the user decides first.
+                    watch.hold(e.to_string());
+                    return LaunchGate::AwaitingSaveDecision;
                 }
             }
         }
@@ -1784,6 +1850,16 @@ pub async fn after_exit(app: &AppHandle, state: &AppState, game_id: i64) {
         SyncMoment::Exit,
     );
     watch.step(SaveSyncPhase::Checking);
+
+    // Uploading now would bury the newer save under what was played without it.
+    if crate::state::lock(&state.unsynced_sessions()).remove(&game_id) {
+        tracing::info!(
+            game_id,
+            "not uploading a session that started without the newer save"
+        );
+        watch.finish(SaveSyncPhase::Skipped);
+        return;
+    }
 
     // Sync is on by default and many servers predate it, so one request here spares a
     // backup the upload would only discard.
@@ -1923,5 +1999,32 @@ mod tests {
             runs_as_windows(&record, &dir.join("install"), &dir.join("p"))
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_symlinked_path_is_written_as_the_path_it_resolves_to() {
+        // On an ostree system `/home` is `/var/home`, and every Proton save from there kept
+        // this machine's path because the redirect was written through the link.
+        let dir = scratch("real");
+        std::fs::create_dir_all(dir.join("var/home/u")).unwrap();
+        std::os::unix::fs::symlink(dir.join("var/home"), dir.join("home")).unwrap();
+
+        assert!(real(&dir.join("home/u")) == real(&dir.join("var/home/u")));
+        // Not there yet: kept as written rather than dropped.
+        assert!(real(&dir.join("nowhere")) == dir.join("nowhere"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_game_run_in_a_prefix_always_travels_by_the_portable_mapping() {
+        // Cross-OS drops that mapping, so a save stored under /gameyfin/home restored to
+        // nowhere. It was offered for Proton games before they were recognised.
+        assert!(
+            effective_strategy(RestoreStrategy::CrossOs, Some(true)) == RestoreStrategy::Portable
+        );
+        // A native build keeps the choice: bridging it to Windows is what cross-OS is for.
+        assert!(
+            effective_strategy(RestoreStrategy::CrossOs, Some(false)) == RestoreStrategy::CrossOs
+        );
     }
 }

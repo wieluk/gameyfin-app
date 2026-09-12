@@ -1,7 +1,5 @@
-//! Ludusavi's `config.yaml`, written into a private config directory. Redirects map the
-//! account name and install directory onto targets identical on every machine, so a backup
-//! restores under a different username. Windows to native Linux is not translated at all,
-//! which the caller warns about rather than restoring across.
+//! Ludusavi's `config.yaml`. Redirects map the account name and install directory onto targets
+//! identical on every machine, so a backup restores under a different username.
 
 use std::path::{Path, PathBuf};
 
@@ -12,6 +10,9 @@ use crate::error::SaveResult;
 /// Synthetic redirect targets. Arbitrary but fixed, they only have to be identical
 /// across machines, and distinctive enough never to collide with a real path.
 const HOME_TARGET: &str = "/gameyfin/home";
+/// What every synthetic target starts with. A restored path still under it was never
+/// mapped back onto a real folder.
+pub const SYNTHETIC_ROOT: &str = "/gameyfin/";
 /// The Linux home of a machine running a Windows game, which is not the home that game
 /// writes its saves into. Its own target, so the two never collapse onto each other.
 const HOST_HOME_TARGET: &str = "/gameyfin/host-home";
@@ -27,9 +28,7 @@ pub struct Root {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RootStore {
-    /// A Steam library. Ludusavi finds Proton saves under
-    /// `steamapps/compatdata/<AppID>/pfx` automatically, and captures Proton's registry
-    /// files for games that need them.
+    /// A Steam library: Ludusavi finds Proton saves and registry files under `compatdata` itself.
     Steam,
     Heroic,
     Lutris,
@@ -127,9 +126,7 @@ struct CloudSection {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReleaseSection {
-    /// Ludusavi asks GitHub whether it is out of date on every single run. Gameyfin
-    /// manages its version itself, so that is a network call per backup with nothing to
-    /// show for it.
+    /// Off: Gameyfin manages the version, so a GitHub check on every run is wasted.
     check: bool,
 }
 
@@ -148,9 +145,8 @@ struct ConfigFile {
     cloud: CloudSection,
 }
 
-/// How a backup from elsewhere maps onto this machine. Mutually exclusive by necessity:
-/// Ludusavi stops at the first redirect that changes a path, so the portable home one
-/// would disable its own Wine translation.
+/// How a backup from elsewhere maps onto this machine. Exclusive: Ludusavi stops at the first
+/// redirect that changes a path, so the portable home one would disable Wine translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RestoreStrategy {
     /// Same operating system, possibly a different account and install directory.
@@ -162,7 +158,6 @@ pub enum RestoreStrategy {
     CrossOs,
 }
 
-/// Builds the Ludusavi configuration for this machine.
 #[derive(Debug, Clone)]
 pub struct ConfigBuilder {
     staging: PathBuf,
@@ -207,10 +202,7 @@ impl ConfigBuilder {
         self.root(RootStore::OtherWine, prefix_dir.to_string_lossy())
     }
 
-    /// Make the user's home directory portable across machines and accounts.
-    ///
-    /// For a Windows game this is the home *inside* the prefix, which is what lets its save
-    /// land in a real Windows user folder on another machine.
+    /// Make the user's home portable. For a Windows game this is the home inside the prefix.
     pub fn portable_home(mut self, home: &Path) -> Self {
         self.portable_redirects.push(Redirect {
             kind: RedirectKind::Bidirectional,
@@ -220,11 +212,8 @@ impl ConfigBuilder {
         self
     }
 
-    /// The machine's own home, for a Windows game whose portable home is the prefix's.
-    ///
-    /// Anything such a game leaves outside the prefix would otherwise be stored under a
-    /// path naming this user. Added after [`Self::portable_home`], since Ludusavi stops at
-    /// the first redirect that matches and the prefix is the more specific path.
+    /// The machine's own home, for a Windows game whose portable home is the prefix's. Added after
+    /// [`Self::portable_home`], since Ludusavi stops at the first matching redirect.
     pub fn portable_host_home(mut self, home: &Path) -> Self {
         self.portable_redirects.push(Redirect {
             kind: RedirectKind::Bidirectional,
@@ -234,7 +223,6 @@ impl ConfigBuilder {
         self
     }
 
-    /// Make a game's install directory portable across machines.
     pub fn portable_install_dir(mut self, install_dir: &Path) -> Self {
         self.portable_redirects.push(Redirect {
             kind: RedirectKind::Bidirectional,
@@ -337,7 +325,6 @@ impl ConfigBuilder {
         Ok(serde_yaml_ng::to_string(&self.build())?)
     }
 
-    /// Write `config.yaml` into `config_dir`, creating it if needed.
     pub async fn write(&self, config_dir: &Path) -> SaveResult<PathBuf> {
         tokio::fs::create_dir_all(config_dir).await?;
         let path = config_dir.join("config.yaml");
@@ -450,9 +437,8 @@ mod tests {
 
     #[test]
     fn the_prefix_home_outranks_the_machines_own() {
-        // A Windows game writes into the prefix's home, so that is the one that travels.
-        // The Linux home gets its own target: collapsing both onto /gameyfin/home would
-        // make a save restore into whichever of the two Ludusavi matched first.
+        // The prefix's home travels; the Linux home gets its own target, or a save could restore
+        // into whichever of the two Ludusavi matched first.
         let yaml = ConfigBuilder::new("/stage")
             .portable_home(Path::new(
                 "/games/Gameyfin/Prefixes/7/pfx/drive_c/users/steamuser",
@@ -474,9 +460,7 @@ mod tests {
 
     #[test]
     fn the_wine_prefix_root_is_a_real_path() {
-        // Not "<prefixes>/<game>": that token expands to the game's name, while prefixes
-        // are created under the game's id, so the root matched nothing and a Windows game
-        // on Linux backed up zero files.
+        // Not "<prefixes>/<game>": that token expands to the name, while prefixes are named by id.
         let yaml = ConfigBuilder::new("/stage")
             .wine_prefix(Path::new("/data/prefixes/1234"))
             .to_yaml()
