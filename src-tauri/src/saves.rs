@@ -1824,7 +1824,9 @@ pub async fn ensure_installation_id(state: &AppState) -> CommandResult<()> {
     state.set_settings(|s| s.installation_id = Some(id)).await
 }
 
-#[cfg(test)]
+/// Not on Windows: every test here is about how a Linux machine tells a Proton game from a
+/// native one, which on Windows is the question that never arises.
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
 
@@ -1837,7 +1839,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn a_windows_game_is_recognised_by_the_file_it_launches() {
         // The bug this covers: the executable is stored relative to the install folder, and
         // testing that path directly always failed to open, so every Windows game on Linux
@@ -1869,7 +1870,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn a_missing_executable_falls_back_to_its_name_then_to_the_prefix() {
         let dir = scratch("fallback");
         let install = dir.join("install");
@@ -1892,7 +1892,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn a_game_with_nothing_on_disk_is_not_guessed_at() {
         let dir = scratch("unknown");
         let unknown = runs_as_windows(&GameRecord::default(), &dir.join("install"), &dir.join("p"));
@@ -1909,7 +1908,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn a_previous_sync_settles_it_when_the_files_are_gone() {
         let dir = scratch("remembered");
         let mut record = GameRecord::default();

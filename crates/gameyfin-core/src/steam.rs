@@ -381,7 +381,6 @@ pub fn shortcut_files(home: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Whether Steam appears to be installed for this user at all.
 /// Steam's own folder, the one holding `steamapps` and `userdata`. A save scanner wants it
 /// because Proton keeps each game's prefix under `steamapps/compatdata`.
 pub fn root(home: &Path) -> Option<PathBuf> {

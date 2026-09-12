@@ -395,6 +395,7 @@ pub fn find_windows_runtime(ctx: &RuntimeContext, kind: &str) -> Option<WindowsR
 
 /// Where an i386 dynamic loader lives, across the layouts in use: the old `lib32` split,
 /// Debian-style multiarch, and the two mount points a Flatpak's i386 extension takes.
+#[cfg(unix)]
 const I386_LOADERS: [&str; 7] = [
     "/lib/ld-linux.so.2",
     "/lib32/ld-linux.so.2",

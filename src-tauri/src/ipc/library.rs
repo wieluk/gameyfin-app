@@ -745,23 +745,28 @@ mod tests {
 
     #[test]
     fn a_browsed_file_is_stored_relative_to_the_game() {
-        let dir = std::env::temp_dir().join(format!("gameyfin-choice-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let root = std::env::temp_dir().join(format!("gameyfin-choice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("game");
         std::fs::create_dir_all(dir.join("bin")).unwrap();
-        std::fs::write(dir.join("bin/game.exe"), b"MZ").unwrap();
+        std::fs::write(dir.join("bin").join("game.exe"), b"MZ").unwrap();
+        // Built rather than written out: the separator is the platform's.
+        let relative = Path::new("bin").join("game.exe").display().to_string();
 
         // What a file dialog hands back.
-        let absolute = dir.join("bin/game.exe").display().to_string();
-        assert_eq!(relative_choice(&dir, &absolute).unwrap(), "bin/game.exe");
+        let absolute = dir.join("bin").join("game.exe").display().to_string();
+        assert_eq!(relative_choice(&dir, &absolute).unwrap(), relative);
         // A relative path is already what we store.
-        assert_eq!(
-            relative_choice(&dir, "bin/game.exe").unwrap(),
-            "bin/game.exe"
-        );
-        // Free choice stops at the game's folder.
-        assert!(relative_choice(&dir, "/etc/passwd").is_err());
+        assert_eq!(relative_choice(&dir, &relative).unwrap(), relative);
 
-        std::fs::remove_dir_all(&dir).unwrap();
+        // Free choice stops at the game's folder.
+        let elsewhere = root.join("other");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("game.exe"), b"MZ").unwrap();
+        let outside = elsewhere.join("game.exe").display().to_string();
+        assert!(relative_choice(&dir, &outside).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

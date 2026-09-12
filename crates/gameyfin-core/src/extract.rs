@@ -686,6 +686,12 @@ where
     // Piped so the child does not inherit our stdio, and so failures can be reported.
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        // Nobody reads a console whose output we are capturing; it only flashes up.
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(crate::process::CREATE_NO_WINDOW);
+    }
     for flag in flags {
         // The 7-Zip family joins the output directory to its flag with no separator.
         if *flag == "-o" {
