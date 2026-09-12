@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* The palette, as `<r> <g> <b>` channels so Tailwind's `/50` opacity modifiers work.
+     `.dark` is toggled on the root element from the theme setting. */
+  :root {
+    --gf-background: 250 250 250;
+    --gf-foreground: 24 24 27;
+    --gf-content1: 255 255 255;
+    --gf-content2: 244 244 245;
+    --gf-default-100: 244 244 245;
+    --gf-default-200: 228 228 231;
+    --gf-default-300: 212 212 216;
+    --gf-primary: 59 130 246;
+    --gf-primary-600: 37 99 235;
+    --gf-primary-foreground: 255 255 255;
+    --gf-danger: 220 38 38;
+    --gf-danger-600: 185 28 28;
+    --gf-warning: 217 119 6;
+    --gf-warning-600: 180 83 9;
+    --gf-success: 22 163 74;
+    --gf-success-600: 21 128 61;
+  }
+
+  .dark {
+    --gf-background: 9 9 11;
+    --gf-foreground: 244 244 245;
+    --gf-content1: 24 24 27;
+    --gf-content2: 39 39 42;
+    --gf-default-100: 39 39 42;
+    --gf-default-200: 63 63 70;
+    --gf-default-300: 82 82 91;
+    --gf-primary: 96 165 250;
+    --gf-primary-600: 59 130 246;
+    --gf-primary-foreground: 9 9 11;
+    --gf-danger: 248 113 113;
+    --gf-danger-600: 239 68 68;
+    --gf-warning: 251 191 36;
+    --gf-warning-600: 245 158 11;
+    --gf-success: 74 222 128;
+    --gf-success-600: 34 197 94;
+  }
+
+  html, body, #root { height: 100%; }
+  body {
+    /* The app owns the whole viewport; nothing here should scroll like a document. */
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* Dragging comes from Tauri's `data-tauri-drag-region`; `-webkit-app-region` is Electron's
+   and does nothing here. */
+[data-tauri-drag-region] { cursor: default; }
+
+/* With no pointer and no caret, the focus ring is all a controller user has to go by, and
+   Tailwind's reset drops the browser's. `data-pad-focus` says a pad is driving outright,
+   since `:focus-visible` reads programmatic focus as invisible after a mouse click. */
+:focus-visible,
+html[data-pad-focus="true"] :focus {
+  @apply outline outline-2 outline-offset-2 outline-primary;
+  border-radius: 0.5rem;
+}
+
+/* The large-format layout, scaled from the root font size: every size in the app is in
+   rem, so one change carries text, padding and spacing together with nothing missed. */
+html[data-couch="true"] {
+  font-size: 20px;
+}
+
+html[data-couch="true"] :focus-visible,
+html[data-couch="true"][data-pad-focus="true"] :focus {
+  outline-width: 3px;
+  outline-offset: 3px;
+}
+
+/* Fewer, larger tiles per row, in px rather than rem: a cover is an image, not text. */
+html[data-couch="true"] [data-library-grid] {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
