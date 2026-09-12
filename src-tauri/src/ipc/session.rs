@@ -24,6 +24,11 @@ pub struct ConnectionStatus {
 
 #[tauri::command]
 pub async fn connection_status(state: State<'_, AppState>) -> CommandResult<ConnectionStatus> {
+    // Answering from the defaults startup has not overwritten yet would report a signed-in
+    // user as configured-from-scratch, and the window would show the wizard.
+    if !state.wait_until_restored().await {
+        tracing::warn!("startup has not read the settings yet; reporting what is in memory");
+    }
     let settings = state.settings();
     let (authenticated, offline) = state.check_session(settings.has_session()).await;
     Ok(ConnectionStatus {
@@ -130,8 +135,11 @@ pub async fn poll_login(app: AppHandle, state: State<'_, AppState>) -> CommandRe
     })
 }
 
+/// Clears the sign-in data and its session, or the app stays signed in as the account being
+/// left. Unlike signing out, a failure to clear is reported.
 #[tauri::command]
-pub async fn reset_login(app: AppHandle) -> CommandResult<()> {
+pub async fn reset_login(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    forget_session(&state).await?;
     auth_flow::reset_login_profile(&app)
         .await
         .map_err(CommandError::Message)
@@ -146,12 +154,19 @@ pub async fn cancel_login(app: AppHandle) -> CommandResult<()> {
 /// Forgets the session, the catalogue and the sign-in profile, keeping the server address.
 #[tauri::command]
 pub async fn sign_out(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
-    state.disconnect();
-    state.forget_catalog().await;
-    // Otherwise the next sign-in silently reuses this account's provider session.
+    forget_session(&state).await?;
+    // Otherwise the next sign-in silently reuses this account's provider session. Only
+    // logged: the user is signed out either way.
     if let Err(e) = auth_flow::reset_login_profile(&app).await {
         tracing::warn!("{e}");
     }
+    Ok(())
+}
+
+/// Drops the session cookies and everything fetched with them, keeping the server address.
+async fn forget_session(state: &AppState) -> CommandResult<()> {
+    state.disconnect();
+    state.forget_catalog().await;
     state.set_settings(Settings::clear_session).await
 }
 
@@ -164,6 +179,8 @@ pub async fn quit_app(app: AppHandle) -> CommandResult<()> {
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> CommandResult<PublicSettings> {
+    // Same reason as `connection_status`: defaults are not this user's settings.
+    state.wait_until_restored().await;
     Ok(state.settings().into())
 }
 

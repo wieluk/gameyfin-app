@@ -25,6 +25,42 @@ pub struct CachedCatalog {
     pub libraries: Vec<Library>,
 }
 
+/// A one-way flag that tasks can wait on, for "startup has read the settings file".
+#[derive(Debug)]
+struct ReadyFlag {
+    tx: tokio::sync::watch::Sender<bool>,
+    rx: tokio::sync::watch::Receiver<bool>,
+}
+
+impl Default for ReadyFlag {
+    fn default() -> Self {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        Self { tx, rx }
+    }
+}
+
+impl ReadyFlag {
+    fn set(&self) {
+        let _ = self.tx.send(true);
+    }
+
+    fn get(&self) -> bool {
+        *self.rx.borrow()
+    }
+
+    async fn wait(&self) {
+        let mut rx = self.rx.clone();
+        loop {
+            if *rx.borrow_and_update() {
+                return;
+            }
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
 /// Per-game handles for work that can be stopped: download cancels, process stoppers.
 pub struct Registry<T>(Arc<Mutex<HashMap<i64, T>>>);
 
@@ -75,6 +111,9 @@ pub struct AppState {
     settings: RwLock<Settings>,
     /// Serialises read-modify-write of settings, so concurrent changes are not lost.
     settings_writer: tokio::sync::Mutex<()>,
+    /// Set once the settings file has been read. Until then every field holds its default,
+    /// which would read as "no server, no session".
+    restored: ReadyFlag,
     config_dir: OnceLock<PathBuf>,
     http: OnceLock<reqwest::Client>,
     transfer_http: OnceLock<reqwest::Client>,
@@ -401,9 +440,12 @@ impl AppState {
         change: impl FnOnce(&mut Settings) -> Result<R, String>,
     ) -> CommandResult<R> {
         let _writer = self.settings_writer.lock().await;
+        // Writing before the file has been read would persist the defaults over whatever it
+        // holds, which for a stored session means signing the user out.
         let dir = self
             .config_dir
             .get()
+            .filter(|_| self.restored.get())
             .ok_or_else(|| CommandError::msg("Gameyfin is still starting. Try again."))?;
         let mut next = self.settings();
         let result = change(&mut next).map_err(CommandError::Message)?;
@@ -420,6 +462,23 @@ impl AppState {
             Ok(())
         })
         .await
+    }
+
+    #[cfg(test)]
+    pub fn is_restored(&self) -> bool {
+        self.restored.get()
+    }
+
+    /// Waits for startup to have read the settings file, so a command cannot answer from
+    /// defaults. Bounded: a startup that never finishes must not hang the window forever.
+    pub async fn wait_until_restored(&self) -> bool {
+        const GIVE_UP_AFTER: Duration = Duration::from_secs(20);
+        if self.restored.get() {
+            return true;
+        }
+        tokio::time::timeout(GIVE_UP_AFTER, self.restored.wait())
+            .await
+            .is_ok()
     }
 
     /// Loads everything from disk and reconnects a stored session. True when it authenticated.
@@ -450,21 +509,23 @@ impl AppState {
         *write(&self.settings) = settings.clone();
 
         let (Some(url), true) = (settings.server_url.clone(), settings.has_session()) else {
+            self.restored.set();
             return false;
         };
-        if self
+        let connected = self
             .connect_with_cookies(&url, settings.cookies.clone())
             .await
-            .is_err()
-        {
-            return false;
-        }
-        self.check_session(true).await.0
+            .is_ok();
+        // Before the session check, which talks to the server: callers wait for the stored
+        // answer, not for a round trip that a slow or absent network can stretch out.
+        self.restored.set();
+        connected && self.check_session(true).await.0
     }
 
     #[cfg(test)]
     pub fn set_config_dir(&self, dir: PathBuf) {
         let _ = self.config_dir.set(dir);
+        self.restored.set();
     }
 }
 
@@ -576,6 +637,36 @@ mod tests {
             .await
             .is_err());
         assert!(!state.settings().auto_install);
+    }
+
+    #[tokio::test]
+    async fn a_write_racing_startup_cannot_persist_defaults_over_the_stored_session() {
+        let dir = scratch("settings-startup-race");
+        let stored = AppState::default();
+        stored.set_config_dir(dir.clone());
+        stored
+            .set_settings(|s| {
+                s.server_url = Some("https://games.example".into());
+                s.cookies = HashMap::from([("JSESSIONID".to_string(), "abc".to_string())]);
+            })
+            .await
+            .unwrap();
+
+        // The window is up and firing commands while startup is still reading the file.
+        let state = AppState::default();
+        assert!(!state.is_restored());
+        assert!(state
+            .update_settings(|s| {
+                s.auto_install = true;
+                Ok(())
+            })
+            .await
+            .is_err());
+
+        state.restore(dir.clone()).await;
+        assert!(state.settings().has_session());
+        assert!(state.is_restored());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test]

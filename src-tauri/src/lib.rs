@@ -148,6 +148,10 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     let restored = state.restore(config_dir.clone()).await;
     tracing::info!(restored, "stored session restored");
 
+    // A sign-in profile that was locked when it was cleared can be deleted now, before
+    // anything has it open.
+    auth_flow::sweep_stale_profiles(&app).await;
+
     // From cache first, so an early launch is not delayed by a fetch.
     state.load_umu_database(&config_dir);
     tauri::async_runtime::spawn(keep_umu_database_fresh(app.clone()));

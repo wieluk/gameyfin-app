@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Icon } from "@/components/Icon";
 import { backend } from "@/lib/backend";
 import { useAction } from "@/lib/useAction";
@@ -6,6 +7,7 @@ import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { LoginProgress } from "@/bindings/LoginProgress";
 import { Alert } from "@/components/Alert";
 import { messageOf } from "@/lib/errors";
+import { keys } from "@/lib/queries";
 
 /**
  * First-run setup: choose a server, sign in, choose where games live. Sign-in hands off
@@ -15,7 +17,14 @@ import { messageOf } from "@/lib/errors";
 
 type Step = "server" | "signin" | "library";
 
-export function WelcomeView({ onComplete }: { onComplete: () => void }) {
+export function WelcomeView({
+  onStarted,
+  onComplete,
+}: {
+  /** The user has answered a step, so the wizard is theirs to finish. */
+  onStarted: () => void;
+  onComplete: () => void;
+}) {
   const [step, setStep] = useState<Step>("server");
   const [serverUrl, setServerUrl] = useState("");
 
@@ -41,6 +50,7 @@ export function WelcomeView({ onComplete }: { onComplete: () => void }) {
             <ServerStep
               initial={serverUrl}
               onDone={(url) => {
+                onStarted();
                 setServerUrl(url);
                 setStep("signin");
               }}
@@ -184,6 +194,9 @@ function SignInStep({
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [host, setHost] = useState<string | null>(null);
+  const [cleared, setCleared] = useState(false);
+  const clearing = useAction();
+  const queryClient = useQueryClient();
   const cancelled = useRef(false);
 
   useEffect(() => {
@@ -238,6 +251,7 @@ function SignInStep({
   async function start(direct = false) {
     setError(null);
     setDetail(null);
+    setCleared(false);
     try {
       await backend.beginLogin(direct);
       setWaiting(true);
@@ -246,16 +260,21 @@ function SignInStep({
     }
   }
 
+  // Clearing closes the sign-in window and waits for the webview to let go of its files,
+  // which takes a moment on Windows.
   async function reset() {
     setError(null);
     setDetail(null);
     setHost(null);
     setWaiting(false);
-    try {
+    setCleared(false);
+    const done = await clearing.run(async () => {
       await backend.resetLogin();
-    } catch (e) {
-      setError(messageOf(e));
-    }
+      // It signs out as well as clearing the window's data, so the status is now stale.
+      await queryClient.invalidateQueries({ queryKey: keys.status });
+      return true;
+    });
+    setCleared(Boolean(done));
   }
 
   return (
@@ -333,10 +352,19 @@ function SignInStep({
             <button
               type="button"
               onClick={reset}
-              className="self-start text-xs text-foreground/45 underline-offset-2 transition-colors hover:text-foreground hover:underline"
+              disabled={clearing.busy}
+              className="self-start text-xs text-foreground/45 underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:opacity-50"
             >
-              Login window misbehaving? Clear its saved data and start over.
+              {clearing.busy
+                ? "Clearing the saved login data…"
+                : "Login window misbehaving? Sign out of it and clear its saved data."}
             </button>
+            {clearing.error && <Alert>{clearing.error}</Alert>}
+            {cleared && (
+              <p className="text-[11px] text-success-600">
+                Cleared. The next sign in starts from scratch.
+              </p>
+            )}
           </div>
         </>
       )}

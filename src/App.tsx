@@ -12,6 +12,7 @@ import { SetupWizard } from "@/components/SetupWizard";
 import { isMockBackend } from "@/lib/backend";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import { useGamepad } from "@/lib/useGamepad";
+import { useSetupGate } from "@/lib/useSetupGate";
 import { useCouch } from "@/state/couch";
 import type { LibraryEntry } from "@/types";
 import { DownloadsView } from "@/views/DownloadsView";
@@ -42,17 +43,20 @@ export function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  const onConnected = useCallback(async () => {
-    await queryClient.invalidateQueries();
-    navigate("/");
-  }, [queryClient, navigate]);
-
   const ready = restoreSettled && !status.isLoading;
   const offline = Boolean(status.data?.offline);
   // Never while offline: signing in is impossible then, and the wizard's first step offers
   // to switch servers, discarding the session and cached library.
   const needsSetup =
     ready && !offline && !(status.data?.configured && status.data?.authenticated);
+  // The wizard runs to its last step, not to the moment the session becomes valid.
+  const setup = useSetupGate(needsSetup);
+
+  const onConnected = useCallback(async () => {
+    setup.close();
+    await queryClient.invalidateQueries();
+    navigate("/");
+  }, [setup, queryClient, navigate]);
 
   // Once the server answers again, everything fetched from cache while it was down is worth re-reading.
   const wasOffline = useRef(offline);
@@ -71,8 +75,8 @@ export function App() {
 
       {!ready ? (
         <Splash />
-      ) : needsSetup ? (
-        <WelcomeView onComplete={onConnected} />
+      ) : setup.open ? (
+        <WelcomeView onStarted={setup.engage} onComplete={onConnected} />
       ) : (
         <Shell onSignedOut={() => void queryClient.invalidateQueries({ queryKey: keys.status })} />
       )}
