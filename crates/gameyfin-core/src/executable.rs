@@ -204,10 +204,8 @@ impl Detection {
 /// How much better the top candidate must be before it is chosen unattended.
 const DECISIVE_MARGIN: i32 = 15;
 
-/// Scan `root` for launch candidates.
-///
-/// `title` is the game's name, used to reward a binary that resembles it.
-pub fn detect(root: &Path, title: &str) -> std::io::Result<Detection> {
+/// Every launch candidate under `root`, best first, so a picker can offer the runner-up.
+pub fn candidates(root: &Path, title: &str) -> std::io::Result<Vec<Candidate>> {
     let mut candidates = Vec::new();
     // Games nest a few levels at most; deeper is tooling or engine content.
     walk(root, 0, 5, &mut |path| {
@@ -216,16 +214,22 @@ pub fn detect(root: &Path, title: &str) -> std::io::Result<Detection> {
         }
     })?;
 
-    if candidates.is_empty() {
-        return Ok(Detection::None);
-    }
-
     candidates.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
             // Stable, predictable ordering for equal scores.
             .then_with(|| a.path.cmp(&b.path))
     });
+    Ok(candidates)
+}
+
+/// The one candidate worth launching unattended. `title` rewards a binary resembling it.
+pub fn detect(root: &Path, title: &str) -> std::io::Result<Detection> {
+    let mut candidates = candidates(root, title)?;
+
+    if candidates.is_empty() {
+        return Ok(Detection::None);
+    }
 
     if candidates.len() == 1 {
         return Ok(Detection::Confident(candidates.remove(0).path));

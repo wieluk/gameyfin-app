@@ -201,7 +201,10 @@ pub async fn install_game(
     method: Option<String>,
     delete_archive: Option<bool>,
 ) -> CommandResult<()> {
-    let method = method.unwrap_or_else(|| "extract".to_string());
+    let method = match method {
+        Some(method) => method,
+        None => default_method(&state, game_id).await?,
+    };
     if method == "extract" {
         return extract_download(&app, game_id, delete_archive).await;
     }
@@ -237,6 +240,33 @@ pub async fn install_game(
             "{method} is not a way to install this."
         ))),
     }
+}
+
+/// With no method named, whatever the chooser would put first for what is on disk.
+async fn default_method(state: &AppState, game_id: i64) -> CommandResult<String> {
+    let record = state.library().record(game_id);
+    if record.existing_staging().is_some() {
+        return Ok("move".to_string());
+    }
+    let archive = record
+        .existing_archive()
+        .ok_or_else(|| CommandError::msg("This game has not been downloaded yet."))?;
+    let payload = blocking("could not inspect the download", move || {
+        gameyfin_core::classify(&archive)
+    })
+    .await?;
+    if payload.is_archive() {
+        return Ok("extract".to_string());
+    }
+    gameyfin_core::methods_for(payload, cfg!(windows))
+        .first()
+        .map(|method| method.key().to_string())
+        .ok_or_else(|| {
+            CommandError::msg(format!(
+                "Gameyfin does not know how to install a {}.",
+                payload.label()
+            ))
+        })
 }
 
 fn claim(
@@ -700,6 +730,64 @@ fn memory_advice(
         Some(fix) if certain => format!("This installer ran out of memory{under}. In Settings, Compatibility, {fix}."),
         Some(fix) => format!("If the installer ran out of memory, in Settings, Compatibility, {fix}."),
     })
+}
+
+/// What a finished download does with automatic install on: an archive is unpacked, a program
+/// that needs no answers is installed, and a setup wizard waits in Downloads.
+pub async fn auto_install_download(
+    app: &AppHandle,
+    game_id: i64,
+    title: &str,
+) -> CommandResult<()> {
+    let state = app.state::<AppState>();
+    let archive = state
+        .library()
+        .record(game_id)
+        .existing_archive()
+        .ok_or_else(|| CommandError::msg("This game has not been downloaded yet."))?;
+
+    let inspect = archive.clone();
+    let payload = blocking("could not inspect the download", move || {
+        gameyfin_core::classify(&inspect)
+    })
+    .await?;
+    if payload.is_archive() {
+        return extract_download(app, game_id, None).await;
+    }
+
+    let method = gameyfin_core::methods_for(payload, cfg!(windows))
+        .into_iter()
+        .next();
+    tracing::info!(game_id, ?payload, ?method, "the download is not an archive");
+    match method {
+        Some(method) if !method.is_interactive() => {
+            let install_dir = super::install_dir_for(&state, game_id).await?;
+            copy_executable(app, game_id, &archive, &install_dir).await
+        }
+        Some(_) => {
+            crate::notify::send(
+                app,
+                crate::notify::Category::Transfer,
+                "Setup needed",
+                &format!("{title} downloaded as an installer. Run it from Downloads."),
+            )
+            .await;
+            Ok(())
+        }
+        None => {
+            crate::notify::send(
+                app,
+                crate::notify::Category::Transfer,
+                "Downloaded",
+                &format!(
+                    "{title} is a {}. Choose how to install it in Downloads.",
+                    payload.label()
+                ),
+            )
+            .await;
+            Ok(())
+        }
+    }
 }
 
 /// Moves the unpacked files into place after an automatic extraction.

@@ -327,18 +327,42 @@ function Options({
   const queryClient = useQueryClient();
   // Its own error line: the page-level error is far from this expanded row.
   const [folderError, setFolderError] = useState<string | null>(null);
+  // What the user just picked, until the catalogue answers with it: the select is
+  // controlled by the stored value and would otherwise snap back to the old one.
+  const [picked, setPicked] = useState<string | null>(null);
   const executables = useQuery({
     queryKey: ["executables", gameId],
     queryFn: () => backend.listExecutables(gameId),
   });
 
+  const chosen = picked ?? current;
+  const listed = executables.data ?? [];
+  // The list holds only files that are there, so a choice missing from it is a file that
+  // has been deleted or moved since it was chosen.
+  const missing = Boolean(chosen) && listed.length > 0 && !listed.includes(chosen as string);
+
   async function chooseExecutable(relative: string) {
     setFolderError(null);
+    setPicked(relative);
     try {
       await backend.setExecutable(gameId, relative);
-      // The select is controlled by the stored value, so it snaps back to the old one
-      // until the catalogue is refetched.
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
+      await queryClient.invalidateQueries({ queryKey: ["executables", gameId] });
+    } catch (e) {
+      setFolderError(messageOf(e));
+    } finally {
+      // The stored value is authoritative again: a browsed file was picked by its full
+      // path and is stored relative to the game's folder.
+      setPicked(null);
+    }
+  }
+
+  /** Any file in the game's folder, for a launcher the scan did not think was one. */
+  async function browseForExecutable() {
+    setFolderError(null);
+    try {
+      const file = await backend.pickFile(installDir ?? undefined);
+      if (file) await chooseExecutable(file);
     } catch (e) {
       setFolderError(messageOf(e));
     }
@@ -348,25 +372,44 @@ function Options({
     <div className="flex flex-col gap-3 border-t border-default-200/60 px-3 py-3">
       <div>
         <p className="mb-1 text-[11px] text-foreground/45">Launch executable</p>
-        {executables.data && executables.data.length > 0 ? (
+        <div className="flex gap-2">
           <select
-            value={current ?? ""}
+            value={chosen ?? ""}
             onChange={(e) => void chooseExecutable(e.target.value)}
-            className="w-full rounded-lg border border-default-200 bg-content2 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary"
+            disabled={executables.isLoading}
+            className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary disabled:opacity-50"
           >
             <option value="" disabled>
-              Choose an executable…
+              {executables.isLoading ? "Scanning…" : "Choose an executable…"}
             </option>
-            {executables.data.map((exe) => (
+            {/* Kept in the list so the box is not blank about a file that is gone. */}
+            {missing && <option value={chosen as string}>{chosen} (missing)</option>}
+            {listed.map((exe) => (
               <option key={exe} value={exe}>
                 {exe}
               </option>
             ))}
           </select>
-        ) : (
-          <p className="text-[11px] text-foreground/40">
-            {executables.isLoading ? "Scanning…" : "No launchable file found in this folder."}
+          <button
+            type="button"
+            onClick={() => void browseForExecutable()}
+            title="Pick any file in this game's folder"
+            className="shrink-0 rounded-lg border border-default-200 px-2.5 py-1.5 text-[11px] text-foreground/70 transition-colors hover:bg-default-100"
+          >
+            Browse…
+          </button>
+        </div>
+        {missing ? (
+          <p className="mt-1 text-[11px] text-warning-600">
+            That file is no longer in the game's folder. Choose another, or browse for it.
           </p>
+        ) : (
+          !executables.isLoading &&
+          listed.length === 0 && (
+            <p className="mt-1 text-[11px] text-foreground/40">
+              Nothing launchable was found here. Browse to point at the file yourself.
+            </p>
+          )
         )}
       </div>
 

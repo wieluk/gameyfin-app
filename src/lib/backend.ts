@@ -156,6 +156,8 @@ export const backend = {
   installProton: (family: ProtonFamily, tag?: string) =>
     invoke<InstalledProton>("install_proton", { family, tag }),
   removeProton: (name: string) => invoke<void>("remove_proton", { name }),
+  /** Flatpak only: installs the runtime's 32-bit libraries on the host. */
+  install32bitSupport: () => invoke<string>("install_32bit_support"),
 
   shortcutStatus: (gameId: number) => invoke<ShortcutStatus>("shortcut_status", { gameId }),
   setShortcut: (gameId: number, location: ShortcutLocation, enabled: boolean) =>

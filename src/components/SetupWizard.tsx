@@ -11,7 +11,7 @@ import { useAppSettings, useSettingsUpdate } from "@/lib/queries";
 import { Modal } from "./Modal";
 import { BUTTON_MAYBE_DISABLED } from "@/lib/ui";
 
-type StepKey = "proton" | "wine" | "graphics";
+type StepKey = "proton" | "wine" | "graphics" | "i386";
 
 /** Something the wizard can download, with what it costs and whether it is already there. */
 interface Step {
@@ -38,6 +38,9 @@ export function SetupWizard() {
   const [busy, setBusy] = useState<StepKey | null>(null);
   const [progress, setProgress] = useState<TransferProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The runtime's extensions are mounted when the sandbox starts, so a fresh one is only
+  // there after a restart.
+  const [restartNeeded, setRestartNeeded] = useState(false);
 
   const done = settings.data?.setupDismissed ?? true;
   const enabled = !isWindows && !isMockBackend && settings.isSuccess && !done;
@@ -81,6 +84,9 @@ export function SetupWizard() {
   const hasGraphics = Boolean(graphics.data?.installed.dxvk && graphics.data?.installed.vkd3d);
   const noVulkan = graphics.data ? graphics.data.vulkan.apiVersion === null : false;
   const no32Bit = proton.data ? !proton.data.supports32bit : false;
+  // In a Flatpak the 32-bit libraries are one download away; elsewhere they are the
+  // distribution's to install, so there is nothing to offer.
+  const canAdd32Bit = proton.data?.missingI386Extension ?? false;
 
   const steps: Step[] = [
     {
@@ -117,6 +123,25 @@ export function SetupWizard() {
         await backend.installGraphics("vkd3d");
       },
     },
+    // Only where it can be fixed from here. It comes from Flathub rather than from
+    // Gameyfin, which is why it is not installed along with the app.
+    ...(canAdd32Bit
+      ? [
+          {
+            key: "i386" as const,
+            label: "32-bit support",
+            detail:
+              "The Flatpak runtime's 32-bit libraries, from Flathub. Installers and older games need them to run in the container rather than on Wine.",
+            bytes: null,
+            installed: false,
+            blocked: null,
+            run: async () => {
+              await backend.install32bitSupport();
+              setRestartNeeded(true);
+            },
+          },
+        ]
+      : []),
   ];
 
   // Everything that can be downloaded starts ticked, so the usual answer is one click.
@@ -160,7 +185,8 @@ export function SetupWizard() {
     await Promise.all([proton.refetch(), wine.refetch(), graphics.refetch()]);
     // The install screen greys out without a runtime; tell it one exists now.
     await queryClient.invalidateQueries({ queryKey: ["install-options"] });
-    await finish();
+    // Left open when a restart is what makes the last step count, so the user reads why.
+    if (!restartNeeded) await finish();
   }
 
   const nothingToDo = steps.every((step) => step.installed || step.blocked);
@@ -194,9 +220,11 @@ export function SetupWizard() {
             value={loading ? "…" : no32Bit ? "Not supported" : "Supported"}
             good={!no32Bit}
             note={
-              no32Bit
-                ? "Installers and 32-bit games will run on Wine instead of Proton."
-                : undefined
+              !no32Bit
+                ? undefined
+                : canAdd32Bit
+                  ? "Tick 32-bit support below to install them; without them, installers and 32-bit games run on Wine instead of Proton."
+                  : "Installers and 32-bit games will run on Wine instead of Proton."
             }
           />
           <Finding
@@ -261,6 +289,12 @@ export function SetupWizard() {
                 : "Starting download…"}
             </p>
           </div>
+        )}
+
+        {restartNeeded && !busy && (
+          <p role="status" className="mt-3 text-[11px] leading-relaxed text-success-600">
+            The 32-bit libraries are installed. Restart Gameyfin to use them.
+          </p>
         )}
 
         {error && (

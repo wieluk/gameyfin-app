@@ -179,7 +179,9 @@ pub async fn start_download(
                 library.clear_activity(game_id);
                 if app.state::<AppState>().settings().auto_install {
                     notify(&app);
-                    if let Err(e) = extract_download(&app, game_id, None).await {
+                    let installed =
+                        super::install::auto_install_download(&app, game_id, &game.title).await;
+                    if let Err(e) = installed {
                         fail(&app, game_id, Stage::Install, &game.title, e.to_string()).await;
                     }
                 } else {
@@ -660,7 +662,8 @@ pub async fn game_options(state: State<'_, AppState>, game_id: i64) -> CommandRe
     })
 }
 
-/// `executable` must be a file inside the game's install folder.
+/// `executable` must be a file inside the game's install folder, given either relative to
+/// it or as the absolute path a file dialog returns.
 #[tauri::command]
 pub async fn set_game_executable(
     app: AppHandle,
@@ -673,18 +676,36 @@ pub async fn set_game_executable(
         .record(game_id)
         .install_dir
         .ok_or_else(|| CommandError::msg("This game is not installed."))?;
-    if !super::contained(&dir, &executable)?.is_file() {
+    let relative = relative_choice(&dir, &executable)?;
+    if !super::contained(&dir, &relative)?.is_file() {
         return Err(CommandError::msg(format!("{executable} is not a file.")));
     }
     state
         .library()
-        .update_record(game_id, |r| r.executable = Some(executable))
+        .update_record(game_id, |r| r.executable = Some(relative))
         .await;
     notify(&app);
     Ok(())
 }
 
-/// Launch candidates, the user's own choice first and never filtered out.
+/// The path to store for a chosen file. A picker hands back an absolute path, of which only
+/// the part inside the game's folder is worth keeping: the folder can move.
+fn relative_choice(dir: &Path, chosen: &str) -> CommandResult<String> {
+    let path = Path::new(chosen);
+    if !path.is_absolute() {
+        return Ok(chosen.to_string());
+    }
+    let outside = || CommandError::msg(format!("{chosen} is not inside this game's folder."));
+    // Through the resolved paths, so a symlinked games folder does not read as outside it.
+    let (resolved, root) = (
+        path.canonicalize().map_err(|_| outside())?,
+        dir.canonicalize().map_err(|_| outside())?,
+    );
+    crate::library_state::relative_to(&resolved, &root).ok_or_else(outside)
+}
+
+/// Everything launchable in the game's folder, best first, the user's choice pinned on top. A
+/// choice no longer there is left out, which tells the picker to say so.
 #[tauri::command]
 pub async fn list_executables(
     state: State<'_, AppState>,
@@ -695,17 +716,15 @@ pub async fn list_executables(
         return Ok(Vec::new());
     };
     let scan_dir = dir.clone();
-    let detected = blocking("could not scan for executables", move || {
-        gameyfin_core::executable::detect(&scan_dir, "")
+    // Every candidate, not just the one detection would launch unattended: a picker that
+    // offers a single file is a picker that cannot change anything.
+    let paths = blocking("could not scan for executables", move || {
+        gameyfin_core::executable::candidates(&scan_dir, "")
     })
-    .await?;
-    let paths = match detected {
-        gameyfin_core::Detection::Confident(path) => vec![path],
-        gameyfin_core::Detection::Ambiguous(candidates) => {
-            candidates.into_iter().map(|c| c.path).collect()
-        }
-        gameyfin_core::Detection::None => Vec::new(),
-    };
+    .await?
+    .into_iter()
+    .map(|candidate| candidate.path)
+    .collect::<Vec<_>>();
 
     let settings = state.settings();
     let mut listed: Vec<String> = paths
@@ -723,6 +742,27 @@ pub async fn list_executables(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_browsed_file_is_stored_relative_to_the_game() {
+        let dir = std::env::temp_dir().join(format!("gameyfin-choice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin/game.exe"), b"MZ").unwrap();
+
+        // What a file dialog hands back.
+        let absolute = dir.join("bin/game.exe").display().to_string();
+        assert_eq!(relative_choice(&dir, &absolute).unwrap(), "bin/game.exe");
+        // A relative path is already what we store.
+        assert_eq!(
+            relative_choice(&dir, "bin/game.exe").unwrap(),
+            "bin/game.exe"
+        );
+        // Free choice stops at the game's folder.
+        assert!(relative_choice(&dir, "/etc/passwd").is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn download_targets_collapse_into_their_parents() {

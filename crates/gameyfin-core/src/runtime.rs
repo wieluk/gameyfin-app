@@ -393,6 +393,18 @@ pub fn find_windows_runtime(ctx: &RuntimeContext, kind: &str) -> Option<WindowsR
     }
 }
 
+/// Where an i386 dynamic loader lives, across the layouts in use: the old `lib32` split,
+/// Debian-style multiarch, and the two mount points a Flatpak's i386 extension takes.
+const I386_LOADERS: [&str; 7] = [
+    "/lib/ld-linux.so.2",
+    "/lib32/ld-linux.so.2",
+    "/usr/lib/ld-linux.so.2",
+    "/usr/lib32/ld-linux.so.2",
+    "/lib/i386-linux-gnu/ld-linux.so.2",
+    "/usr/lib/i386-linux-gnu/ld-linux.so.2",
+    "/app/lib/i386-linux-gnu/ld-linux.so.2",
+];
+
 /// Whether this system can start a 32-bit program at all, which the container needs and
 /// fails silently without. Looked for once: a loader does not appear while the app runs.
 pub fn has_32bit_support() -> bool {
@@ -404,16 +416,7 @@ pub fn has_32bit_support() -> bool {
     {
         static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *FOUND.get_or_init(|| {
-            let found = [
-                "/lib/ld-linux.so.2",
-                "/lib32/ld-linux.so.2",
-                "/usr/lib/ld-linux.so.2",
-                "/usr/lib32/ld-linux.so.2",
-                // Where a Flatpak mounts the runtime's i386 compatibility extension.
-                "/app/lib/i386-linux-gnu/ld-linux.so.2",
-            ]
-            .iter()
-            .any(|path| Path::new(path).exists());
+            let found = I386_LOADERS.iter().any(|path| Path::new(path).exists());
             if !found {
                 tracing::info!("no 32-bit loader here, so 32-bit games will run on Wine");
             }

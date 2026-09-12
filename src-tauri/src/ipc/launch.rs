@@ -47,16 +47,24 @@ async fn launch(
         .clone()
         .filter(|d| d.exists())
         .ok_or_else(|| CommandError::msg("This game is not installed."))?;
-    let executable = record
-        .executable
-        .as_deref()
-        .and_then(|exe| super::contained(&install_dir, exe).ok())
-        .filter(|p| p.is_file())
-        .ok_or_else(|| {
-            CommandError::msg(
-                "No launch executable has been chosen yet. Pick one in the game's options.",
-            )
-        })?;
+    // The two cases read the same to the code and not at all the same to the user: one
+    // has never been asked, the other picked a file that has since gone.
+    let executable = match record.executable.as_deref() {
+        Some(chosen) => super::contained(&install_dir, chosen)
+            .ok()
+            .filter(|p| p.is_file())
+            .ok_or_else(|| {
+                CommandError::msg(format!(
+                    "{chosen} is no longer in this game's folder. \
+                     Choose another file under Installed."
+                ))
+            })?,
+        None => {
+            return Err(CommandError::msg(
+                "No launch executable has been chosen yet. Choose one under Installed.",
+            ))
+        }
+    };
     super::ensure_windows_program(&executable, "install")?;
 
     let mut launched_with = None;

@@ -55,6 +55,18 @@ Grab a build from the [releases](https://github.com/wieluk/gameyfin-app/releases
 The Windows installers are not code signed, so SmartScreen warns on first run: choose
 "More info" then "Run anyway".
 
+On the Flatpak, 32-bit support is a separate download. Flatpak only pulls an app's
+extensions from the remote the app came from, and a freedesktop runtime extension is not
+something Gameyfin's own repository carries, so it never arrives with the app. Installers
+and older games are 32-bit and need it to run in the Proton container rather than on Wine:
+
+```bash
+flatpak install --user flathub org.freedesktop.Platform.Compat.i386//25.08
+```
+
+Settings, Compatibility offers a button that runs exactly that, and first-time setup offers
+it as a step. Restart Gameyfin afterwards: extensions are mounted when the sandbox starts.
+
 ## Licence
 
 MIT. Ludusavi, bundled as a save-backup sidecar, is MIT licensed; its notice is fetched

@@ -312,6 +312,7 @@ pub fn run() {
             graphics::remove_graphics,
             proton::proton_status,
             proton::install_proton,
+            proton::install_32bit_support,
             proton::remove_proton,
             integrations::shortcut_status,
             integrations::set_shortcut,
