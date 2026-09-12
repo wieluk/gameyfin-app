@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/ludusavi",
+      "binaries/umu-run"
+    ]
+  }
+}

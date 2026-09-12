@@ -1,0 +1,64 @@
+[package]
+name = "gameyfin-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gameyfin desktop client"
+default-run = "gameyfin-app"
+
+[lib]
+name = "gameyfin_app_lib"
+# A desktop app: the mobile crate types the template ships are not built here.
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+gameyfin-api = { path = "../crates/gameyfin-api" }
+gameyfin-core = { path = "../crates/gameyfin-core" }
+gameyfin-saves = { path = "../crates/gameyfin-saves" }
+# `image-png` decodes the tray icon, which every package format ships as a PNG.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-notification = "2"
+# In-place updates for AppImage, MSI and NSIS; see `updater.rs` for deb, rpm and Flatpak.
+tauri-plugin-updater = "2"
+# A shortcut launched while the app is already running must reach the running copy, not
+# start a second one that fights it over the library file and download checkpoints.
+tauri-plugin-single-instance = "2"
+# Start at login: a registry Run key on Windows, an autostart desktop entry on Linux.
+tauri-plugin-autostart = "2"
+semver = "1"
+
+# Gamepad input. Reads evdev on Linux and XInput on Windows, and maps every common pad
+# onto one layout, so no per-device button tables are needed.
+gilrs = "0.11"
+serde.workspace = true
+ts-rs.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+time.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+reqwest.workspace = true
+url.workspace = true
+
+# The settings file holds session cookies, so on Windows its DACL is narrowed to the
+# owner. Unix does the same with a 0600 chmod, which needs no dependency.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+] }
+
+[features]
+# Tauri's own convention: enabled by the CLI for production builds.
+custom-protocol = ["tauri/custom-protocol"]
