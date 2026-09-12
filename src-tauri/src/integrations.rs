@@ -100,7 +100,7 @@ pub async fn set_shortcut(
     let icon_path = gameyfin_core::icon::path_for(&state.config_dir().join(ICON_DIR), game_id);
 
     if !enabled {
-        gameyfin_core::shortcuts::remove(&home, location, game_id, &title);
+        gameyfin_core::shortcuts::remove(&home, location, game_id);
         // Desktop and menu share one icon, so it goes with the last of them.
         if gameyfin_core::shortcuts::installed_for(&home, game_id).is_empty() {
             let _ = std::fs::remove_file(&icon_path);
