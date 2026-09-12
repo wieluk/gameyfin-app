@@ -15,7 +15,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{CommandError, CommandResult, Context};
-use crate::library_state::SaveRestoreStrategy;
+use crate::library_state::{GameRecord, SaveRestoreStrategy};
 use crate::settings::{SaveBackend, Settings};
 use crate::state::AppState;
 
@@ -55,12 +55,60 @@ struct GameContext {
     record_saves: LocalSaveState,
     strategy: RestoreStrategy,
     redirects: Vec<Redirect>,
-    windows_program: bool,
+    /// Whether this game runs as a Windows program here. `None` when nothing on disk says.
+    runs_as_windows: Option<bool>,
 }
 
 impl GameContext {
     fn platform(&self) -> SavePlatform {
-        SavePlatform::for_game(self.windows_program)
+        match self.runs_as_windows {
+            Some(windows) => SavePlatform::for_game(windows),
+            // Interchangeable with everything, so a game with no files here never reports a
+            // mismatch it has no way to be sure about.
+            None => SavePlatform::Unknown,
+        }
+    }
+
+    /// Whether this game's saves live inside a Wine prefix rather than in the Linux home.
+    fn saves_in_prefix(&self) -> bool {
+        !cfg!(windows) && self.runs_as_windows == Some(true)
+    }
+}
+
+/// Whether a game runs as a Windows program on this machine, which is what decides where
+/// its saves live and how they are tagged.
+///
+/// Evidence in order of how much it is worth: the file that would be launched, then the
+/// name it was recorded under, then a prefix that has booted, then what a previous sync
+/// concluded. `None` rather than a guess: tagging a save wrongly is what makes another
+/// machine refuse it.
+fn runs_as_windows(record: &GameRecord, install_dir: &Path, prefix_dir: &Path) -> Option<bool> {
+    // Everything runs as a Windows program on Windows, and `needs_proton` says so too.
+    if cfg!(windows) {
+        return Some(true);
+    }
+    if let Some(executable) = &record.executable {
+        let absolute = install_dir.join(executable);
+        if absolute.is_file() {
+            return Some(
+                gameyfin_core::needs_proton(&absolute)
+                    || gameyfin_core::looks_like_windows_program(&absolute),
+            );
+        }
+        // Gone from disk: the name it was recorded under still says what it was.
+        return Some(gameyfin_core::needs_proton(Path::new(executable)));
+    }
+    // A prefix that has been booted means this game has already run as Windows here.
+    if gameyfin_core::prefix::wine_root(prefix_dir)
+        .join("drive_c")
+        .is_dir()
+    {
+        return Some(true);
+    }
+    match record.saves.platform {
+        Some(SavePlatform::Windows | SavePlatform::Proton) => Some(true),
+        Some(SavePlatform::Linux | SavePlatform::MacOS) => Some(false),
+        _ => None,
     }
 }
 
@@ -68,20 +116,20 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
     let game = state.game(game_id).await?;
     let layout = InstallLayout::new(crate::ipc::root_for_game(state, game_id)?);
     let record = state.library().record(game_id);
-    let windows_program = record.executable.as_ref().map_or(cfg!(windows), |exe| {
-        gameyfin_core::looks_like_windows_program(Path::new(exe))
-    });
+    let install_dir = record
+        .install_dir
+        .clone()
+        .unwrap_or_else(|| layout.install_dir(game_id, &game.title));
+    let prefix_dir = layout.prefix_dir(game_id);
+    let runs_as_windows = runs_as_windows(&record, &install_dir, &prefix_dir);
 
     Ok(GameContext {
         game_id,
         steam_app_id: game.steam_app_id(),
         staging: layout.saves_dir(game_id),
         saves_root: layout.saves_root(),
-        install_dir: record
-            .install_dir
-            .clone()
-            .unwrap_or_else(|| layout.install_dir(game_id, &game.title)),
-        prefix_dir: layout.prefix_dir(game_id),
+        install_dir,
+        prefix_dir,
         record_saves: record.saves.clone(),
         strategy: record.save_restore_strategy.into(),
         redirects: record
@@ -93,7 +141,7 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
                 target: target.clone(),
             })
             .collect(),
-        windows_program,
+        runs_as_windows,
         title: game.title,
     })
 }
@@ -138,7 +186,6 @@ async fn ludusavi_for(
 
     let mut builder = ConfigBuilder::new(&context.staging)
         .strategy(context.strategy)
-        .wine_prefix(&context.prefix_dir)
         .manual_redirects(context.redirects.clone())
         .portable_install_dir(&context.install_dir)
         // Under the game's own title, which is also what a hand-set path registers it as.
@@ -147,15 +194,31 @@ async fn ludusavi_for(
             context.record_saves.custom_paths.clone(),
         );
 
+    // Only where the game actually keeps saves: on Windows, and for a native game, the
+    // prefix is either absent or irrelevant, and an empty root is one more place to scan.
+    let in_prefix = context.saves_in_prefix()
+        && gameyfin_core::prefix::wine_root(&context.prefix_dir)
+            .join("drive_c")
+            .is_dir();
+    if in_prefix {
+        builder = builder.wine_prefix(&context.prefix_dir);
+    }
+
     // For a Windows game on Proton the home that travels is the one inside the prefix, so
-    // pointing both at one synthetic target is what lets a save cross between the two.
-    let portable_home = if context.windows_program && !cfg!(windows) {
-        gameyfin_core::prefix::prefix_home(&context.prefix_dir).or_else(home)
-    } else {
-        home()
-    };
-    if let Some(home) = portable_home {
-        builder = builder.portable_home(&home);
+    // pointing both at one synthetic target is what lets a save cross between the two. The
+    // machine's own home is registered after it, and only as itself.
+    let prefix_home = in_prefix
+        .then(|| gameyfin_core::prefix::prefix_home(&context.prefix_dir))
+        .flatten();
+    match (prefix_home, home()) {
+        (Some(prefix_home), host_home) => {
+            builder = builder.portable_home(&prefix_home);
+            if let Some(host_home) = host_home {
+                builder = builder.portable_host_home(&host_home);
+            }
+        }
+        (None, Some(host_home)) => builder = builder.portable_home(&host_home),
+        (None, None) => {}
     }
     // Cross-OS translation needs one preferred prefix, which only a custom entry can carry.
     if context.strategy == RestoreStrategy::CrossOs {
@@ -447,6 +510,7 @@ pub async fn state_of(
         remote.as_ref(),
         local_changed,
         context.platform(),
+        settings.installation_id.as_deref(),
     ))
 }
 
@@ -1129,4 +1193,108 @@ pub async fn ensure_installation_id(state: &AppState) -> CommandResult<()> {
     }
     let id = uuid::Uuid::new_v4().to_string();
     state.set_settings(|s| s.installation_id = Some(id)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("gameyfin-saves-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn a_windows_game_is_recognised_by_the_file_it_launches() {
+        // The bug this covers: the executable is stored relative to the install folder, and
+        // testing that path directly always failed to open, so every Windows game on Linux
+        // was tagged as a native one and its save refused a Windows PC's.
+        let dir = scratch("exe");
+        let install = dir.join("install");
+        std::fs::create_dir_all(install.join("bin")).unwrap();
+        std::fs::write(install.join("bin/game.exe"), b"MZ").unwrap();
+
+        let record = GameRecord {
+            executable: Some("bin/game.exe".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            Some(true),
+            runs_as_windows(&record, &install, &dir.join("prefix"))
+        );
+
+        let native = GameRecord {
+            executable: Some("bin/game".into()),
+            ..Default::default()
+        };
+        std::fs::write(install.join("bin/game"), b"\x7fELF").unwrap();
+        assert_eq!(
+            Some(false),
+            runs_as_windows(&native, &install, &dir.join("prefix"))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn a_missing_executable_falls_back_to_its_name_then_to_the_prefix() {
+        let dir = scratch("fallback");
+        let install = dir.join("install");
+        let prefix = dir.join("prefix");
+
+        let deleted = GameRecord {
+            executable: Some("Game.exe".into()),
+            ..Default::default()
+        };
+        assert_eq!(Some(true), runs_as_windows(&deleted, &install, &prefix));
+
+        // Nothing recorded at all, but the prefix has booted, which only happens for a
+        // Windows game.
+        std::fs::create_dir_all(prefix.join("pfx/drive_c")).unwrap();
+        assert_eq!(
+            Some(true),
+            runs_as_windows(&GameRecord::default(), &install, &prefix)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn a_game_with_nothing_on_disk_is_not_guessed_at() {
+        let dir = scratch("unknown");
+        let unknown = runs_as_windows(&GameRecord::default(), &dir.join("install"), &dir.join("p"));
+        assert_eq!(None, unknown);
+
+        // And an unknown platform is interchangeable with everything, so such a game never
+        // reports a mismatch it cannot be sure about.
+        let context_platform = match unknown {
+            Some(windows) => SavePlatform::for_game(windows),
+            None => SavePlatform::Unknown,
+        };
+        assert!(context_platform.interchangeable_with(SavePlatform::Windows));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn a_previous_sync_settles_it_when_the_files_are_gone() {
+        let dir = scratch("remembered");
+        let mut record = GameRecord::default();
+        record.saves.platform = Some(SavePlatform::Proton);
+        assert_eq!(
+            Some(true),
+            runs_as_windows(&record, &dir.join("install"), &dir.join("p"))
+        );
+
+        record.saves.platform = Some(SavePlatform::Linux);
+        assert_eq!(
+            Some(false),
+            runs_as_windows(&record, &dir.join("install"), &dir.join("p"))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

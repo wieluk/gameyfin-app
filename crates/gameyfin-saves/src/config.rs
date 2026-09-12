@@ -12,6 +12,9 @@ use crate::error::SaveResult;
 /// Synthetic redirect targets. Arbitrary but fixed, they only have to be identical
 /// across machines, and distinctive enough never to collide with a real path.
 const HOME_TARGET: &str = "/gameyfin/home";
+/// The Linux home of a machine running a Windows game, which is not the home that game
+/// writes its saves into. Its own target, so the two never collapse onto each other.
+const HOST_HOME_TARGET: &str = "/gameyfin/host-home";
 const INSTALL_TARGET: &str = "/gameyfin/install";
 
 /// A location Ludusavi should scan, and how to interpret its layout.
@@ -205,11 +208,28 @@ impl ConfigBuilder {
     }
 
     /// Make the user's home directory portable across machines and accounts.
+    ///
+    /// For a Windows game this is the home *inside* the prefix, which is what lets its save
+    /// land in a real Windows user folder on another machine.
     pub fn portable_home(mut self, home: &Path) -> Self {
         self.portable_redirects.push(Redirect {
             kind: RedirectKind::Bidirectional,
             source: home.to_string_lossy().into_owned(),
             target: HOME_TARGET.to_string(),
+        });
+        self
+    }
+
+    /// The machine's own home, for a Windows game whose portable home is the prefix's.
+    ///
+    /// Anything such a game leaves outside the prefix would otherwise be stored under a
+    /// path naming this user. Added after [`Self::portable_home`], since Ludusavi stops at
+    /// the first redirect that matches and the prefix is the more specific path.
+    pub fn portable_host_home(mut self, home: &Path) -> Self {
+        self.portable_redirects.push(Redirect {
+            kind: RedirectKind::Bidirectional,
+            source: home.to_string_lossy().into_owned(),
+            target: HOST_HOME_TARGET.to_string(),
         });
         self
     }
@@ -426,6 +446,30 @@ mod tests {
         assert_eq!(redirects[0]["target"].as_str(), Some("/gameyfin/home"));
         assert_eq!(redirects[1]["source"].as_str(), Some("/games/Celeste"));
         assert_eq!(redirects[1]["target"].as_str(), Some("/gameyfin/install"));
+    }
+
+    #[test]
+    fn the_prefix_home_outranks_the_machines_own() {
+        // A Windows game writes into the prefix's home, so that is the one that travels.
+        // The Linux home gets its own target: collapsing both onto /gameyfin/home would
+        // make a save restore into whichever of the two Ludusavi matched first.
+        let yaml = ConfigBuilder::new("/stage")
+            .portable_home(Path::new(
+                "/games/Gameyfin/Prefixes/7/pfx/drive_c/users/steamuser",
+            ))
+            .portable_host_home(Path::new("/home/alice"))
+            .to_yaml()
+            .unwrap();
+        let v = parse(&yaml);
+        let redirects = v["redirects"].as_sequence().unwrap();
+
+        assert_eq!(
+            redirects[0]["source"].as_str(),
+            Some("/games/Gameyfin/Prefixes/7/pfx/drive_c/users/steamuser")
+        );
+        assert_eq!(redirects[0]["target"].as_str(), Some("/gameyfin/home"));
+        assert_eq!(redirects[1]["source"].as_str(), Some("/home/alice"));
+        assert_eq!(redirects[1]["target"].as_str(), Some("/gameyfin/host-home"));
     }
 
     #[test]

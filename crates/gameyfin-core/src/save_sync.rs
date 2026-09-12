@@ -121,12 +121,13 @@ pub enum ConflictChoice {
 }
 
 /// Decides what a game's saves need. `local_changed` comes from the caller's hashing, so
-/// this stays a pure function.
+/// this stays a pure function. `this_installation` identifies this machine's uploads.
 pub fn decide(
     local: &LocalSaveState,
     remote_newest: Option<&SaveVersion>,
     local_changed: bool,
     this_platform: SavePlatform,
+    this_installation: Option<&str>,
 ) -> SaveSyncState {
     let Some(remote) = remote_newest else {
         return if local.last_backup_hash.is_some() {
@@ -143,9 +144,16 @@ pub fn decide(
         .parse::<SavePlatform>()
         .unwrap_or(SavePlatform::Unknown);
 
+    // Our own upload is restorable here whatever it is tagged: it came from these very
+    // paths. Versions written before Gameyfin could tell a Proton game from a native one
+    // carry the wrong platform, and this is what keeps them usable until the next backup
+    // re-tags them.
+    let ours =
+        this_installation.is_some() && remote.installation_id.as_deref() == this_installation;
+
     // A save that cannot be restored here is worth saying so about before anything else,
     // otherwise the UI would offer a restore that would scatter files into wrong paths.
-    if !remote_platform.interchangeable_with(this_platform) {
+    if !ours && !remote_platform.interchangeable_with(this_platform) {
         return SaveSyncState::PlatformMismatch {
             local: this_platform,
             remote: remote_platform,
@@ -473,13 +481,14 @@ mod tests {
             None,
             false,
             SavePlatform::Windows,
+            None,
         );
         assert_eq!(SaveSyncState::NeverSynced, state);
     }
 
     #[test]
     fn a_local_backup_with_no_remote_is_ready_to_upload() {
-        let state = decide(&synced_to(1), None, false, SavePlatform::Windows);
+        let state = decide(&synced_to(1), None, false, SavePlatform::Windows, None);
         assert!(matches!(state, SaveSyncState::LocalNewer { .. }));
     }
 
@@ -490,6 +499,7 @@ mod tests {
             Some(&remote(5, "WINDOWS")),
             false,
             SavePlatform::Windows,
+            None,
         );
         assert!(matches!(state, SaveSyncState::InSync { .. }));
     }
@@ -501,6 +511,7 @@ mod tests {
             Some(&remote(5, "WINDOWS")),
             true,
             SavePlatform::Windows,
+            None,
         );
         assert!(matches!(state, SaveSyncState::LocalNewer { .. }));
     }
@@ -512,6 +523,7 @@ mod tests {
             Some(&remote(9, "WINDOWS")),
             false,
             SavePlatform::Windows,
+            None,
         );
         match state {
             SaveSyncState::RemoteNewer { device, .. } => {
@@ -528,6 +540,7 @@ mod tests {
             Some(&remote(9, "WINDOWS")),
             true,
             SavePlatform::Windows,
+            None,
         );
         match state {
             SaveSyncState::Conflict { remote, .. } => assert_eq!("9", remote.id),
@@ -542,6 +555,7 @@ mod tests {
             Some(&remote(5, "PROTON")),
             false,
             SavePlatform::Windows,
+            None,
         );
         assert!(matches!(state, SaveSyncState::InSync { .. }));
     }
@@ -553,6 +567,7 @@ mod tests {
             Some(&remote(5, "WINDOWS")),
             false,
             SavePlatform::Linux,
+            None,
         );
         match state {
             SaveSyncState::PlatformMismatch {
@@ -569,6 +584,7 @@ mod tests {
             Some(&remote(5, "MACOS")),
             false,
             SavePlatform::Linux,
+            None,
         );
         match state {
             SaveSyncState::PlatformMismatch {
@@ -576,6 +592,39 @@ mod tests {
             } => assert!(!cross_os_available),
             other => panic!("expected a platform mismatch, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn our_own_upload_is_restorable_whatever_it_is_tagged() {
+        // Versions written before Gameyfin could tell a Proton game from a native one carry
+        // LINUX. They came from these very paths, so the machine that wrote them keeps
+        // using them rather than being told its own save is foreign.
+        let mut mine = remote(5, "LINUX");
+        mine.installation_id = Some("this-pc".into());
+
+        let state = decide(
+            &synced_to(5),
+            Some(&mine),
+            false,
+            SavePlatform::Proton,
+            Some("this-pc"),
+        );
+        assert!(matches!(state, SaveSyncState::InSync { .. }));
+    }
+
+    #[test]
+    fn another_machines_upload_is_still_judged_on_its_platform() {
+        let mut theirs = remote(5, "LINUX");
+        theirs.installation_id = Some("laptop".into());
+
+        let state = decide(
+            &synced_to(5),
+            Some(&theirs),
+            false,
+            SavePlatform::Proton,
+            Some("this-pc"),
+        );
+        assert!(matches!(state, SaveSyncState::PlatformMismatch { .. }));
     }
 
     #[test]
@@ -587,6 +636,7 @@ mod tests {
             Some(&remote(9, "WINDOWS")),
             true,
             SavePlatform::Linux,
+            None,
         );
         assert!(matches!(state, SaveSyncState::PlatformMismatch { .. }));
     }
@@ -598,6 +648,7 @@ mod tests {
             Some(&remote(5, "")),
             false,
             SavePlatform::Linux,
+            None,
         );
         assert!(matches!(state, SaveSyncState::InSync { .. }));
     }
