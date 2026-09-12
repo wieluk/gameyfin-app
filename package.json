@@ -1,0 +1,47 @@
+{
+  "name": "gameyfin-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "set-version": "node scripts/set-version.mjs",
+    "test": "vitest run",
+    "tauri": "tauri",
+    "fetch-sidecars": "node scripts/fetch-sidecar.mjs",
+    "package": "node scripts/package.mjs",
+    "package:flatpak": "node scripts/build-flatpak.mjs",
+    "icons": "node scripts/generate-icons.mjs",
+    "verify": "npm run typecheck && npm test && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
+    "package:flatpak:install": "node scripts/build-flatpak.mjs --install"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.2",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.9.1",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/cli": "^2.8.4",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.3",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^26.5.0",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "autoprefixer": "^10.4.21",
+    "jsdom": "^27.0.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5",
+    "vitest": "^3.2.4"
+  }
+}

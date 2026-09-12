@@ -1,0 +1,242 @@
+# Built from the prebuilt `.deb` for self-distribution, not Flathub, which needs a source build.
+app-id: org.gameyfin.Gameyfin
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: gameyfin-app
+separate-locales: false
+
+# Nobody downloads a debuginfo extension for a self-distributed bundle, and skipping it drops
+# the elfutils build dependency.
+build-options:
+  no-debuginfo: true
+  strip: true
+
+# 32-bit games in umu's container take i386 GL/Vulkan drivers from these extensions. Versions
+# follow the GNOME 50 runtime's freedesktop 25.08 base.
+add-extensions:
+  org.freedesktop.Platform.Compat.i386:
+    directory: lib/i386-linux-gnu
+    version: '25.08'
+
+  org.freedesktop.Platform.GL32:
+    directory: lib/i386-linux-gnu/GL
+    version: '1.4'
+    versions: 25.08;25.08-extra;1.4
+    subdirectories: true
+    no-autodownload: true
+    autodelete: false
+    add-ld-path: lib
+    merge-dirs: vulkan/icd.d;glvnd/egl_vendor.d;OpenCL/vendors;lib/dri;lib/d3d;vulkan/explicit_layer.d;vulkan/implicit_layer.d
+    download-if: active-gl-driver
+    enable-if: active-gl-driver
+    autoprune-unless: active-gl-driver
+
+finish-args:
+  # Wine, Proton and umu run on the host through `flatpak-spawn`. That escapes the sandbox, so it
+  # guards against accidents here, not against the games.
+  - --talk-name=org.freedesktop.Flatpak
+
+  # Talking to a Gameyfin server, and the webview's own IPC.
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  # Not fallback-x11: Proton draws through X11, and fallback-x11 grants no socket at all
+  # on a Wayland session, so a game starts with sound and no window.
+  - --socket=x11
+  - --device=dri
+
+  # Games need audio, controllers and the GPU.
+  - --socket=pulseaudio
+  - --device=all
+  - --allow=devel
+
+  # Required for 32-bit Windows programs: without it seccomp blocks i386 and `modify_ldt`,
+  # and every 32-bit executable (Inno Setup stubs, much of Unity) fails at CreateProcess.
+  - --allow=multiarch
+
+  # Wine's fsync keeps its shared memory in /dev/shm, and umu's runtime lives in the host's
+  # ~/.local/share/umu, shared with other launchers.
+  - --allow=per-app-dev-shm
+  - --filesystem=xdg-data/umu:create
+
+  # The library root is chosen at runtime, so narrower access is not possible. Only removable
+  # media and Steam's own Flatpak sit outside `home`.
+  - --filesystem=home
+  - --filesystem=/run/media
+  - --filesystem=~/.var/app/com.valvesoftware.Steam:rw
+
+  # Tray icon, notifications, and the keychain that holds the device token.
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.secrets
+
+  - --env=PATH=/app/bin:/usr/bin
+
+  # A host Steam session's variables make pressure-vessel pick the wrong libraries or
+  # video driver inside the container.
+  - --unset-env=STEAM_RUNTIME
+  - --unset-env=STEAM_RUNTIME_PREFER_HOST_LIBRARIES
+  - --unset-env=SDL_VIDEODRIVER
+  # Vulkan layers from runtime extensions, and pressure-vessel's own graphics overrides.
+  - --env=XDG_DATA_DIRS=/app/share:/usr/lib/extensions/vulkan/share:/usr/share:/usr/share/runtime/share:/run/host/user-share:/run/host/share:/usr/lib/pressure-vessel/overrides/share
+
+  # WebKitGTK's DMA-BUF renderer crashes some Wayland compositors (Error 71) before the
+  # window appears. Override per machine with `flatpak override --user --unset-env=...`.
+  - --env=WEBKIT_DISABLE_DMABUF_RENDERER=1
+
+modules:
+  # Tauri's tray aborts without appindicator, which the GNOME runtime lacks, so it is built here.
+  # libdbusmenu's configure needs intltool, which is cleaned out after the build.
+  - name: intltool
+    cleanup:
+      - '*'
+    sources:
+      - type: archive
+        url: https://launchpad.net/intltool/trunk/0.51.0/+download/intltool-0.51.0.tar.gz
+        sha256: 67c74d94196b153b774ab9f89b2fa6c6ba79352407037c8c14d5aeb334e959cd
+      - type: shell
+        commands:
+          # Unescaped braces in a regex have been a hard error in perl since 5.26.
+          - sed -i 's/\\${/\\$\\{/g' intltool-update.in
+
+  - name: libdbusmenu
+    buildsystem: autotools
+    build-options:
+      # A 2016 codebase against a 2025 glib, whose deprecations would fail its -Werror build.
+      cflags: -Wno-error -Wno-deprecated-declarations
+      env:
+        # The tarball's configure leaves these substitutions unresolved without valgrind,
+        # which the runtime does not ship, and the generated Makefile then fails to parse.
+        HAVE_VALGRIND_TRUE: '#'
+        HAVE_VALGRIND_FALSE: ''
+    config-opts:
+      - --with-gtk=3
+      - --disable-dumper
+      - --disable-static
+      - --disable-tests
+      - --disable-gtk-doc
+      - --disable-vala
+      - --enable-introspection=no
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+      - /share/doc
+    sources:
+      - type: archive
+        url: https://launchpad.net/libdbusmenu/16.04/16.04.0/+download/libdbusmenu-16.04.0.tar.gz
+        sha256: b9cc4a2acd74509435892823607d966d424bd9ad5d0b00938f27240a1bfa878a
+
+  - name: ayatana-ido
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      # CMake defaults to lib64 here, where flatpak's pkg-config never looks.
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DENABLE_TESTS=OFF
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: archive
+        url: https://github.com/AyatanaIndicators/ayatana-ido/archive/refs/tags/0.10.4.tar.gz
+        sha256: bd59abd5f1314e411d0d55ce3643e91cef633271f58126be529de5fb71c5ab38
+
+  - name: libayatana-indicator
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      # CMake defaults to lib64 here, where flatpak's pkg-config never looks.
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DENABLE_TESTS=OFF
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: archive
+        url: https://github.com/AyatanaIndicators/libayatana-indicator/archive/refs/tags/0.9.4.tar.gz
+        sha256: a18d3c682e29afd77db24366f8475b26bda22b0e16ff569a2ec71cd6eb4eac95
+
+  - name: libayatana-appindicator
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      # CMake defaults to lib64 here, where flatpak's pkg-config never looks.
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DENABLE_BINDINGS_MONO=OFF
+      - -DENABLE_BINDINGS_VALA=OFF
+      - -DFLAVOUR_GTK3=ON
+      # Its gtk-doc step fails, and a bundle has no use for API docs.
+      - -DENABLE_GTKDOC=OFF
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: archive
+        url: https://github.com/AyatanaIndicators/libayatana-appindicator/archive/refs/tags/0.5.93.tar.gz
+        sha256: cbefed7a918a227bf71286246e237fcd3a9c8499b3eaac4897811a869409edf0
+
+  # 7-Zip for unpacking downloads: the sandbox has no host `7z`/`unar` to fall back to.
+  - name: sevenzip
+    buildsystem: simple
+    build-commands:
+      - cd CPP/7zip/Bundles/Alone2 && make -j ${FLATPAK_BUILDER_N_JOBS:-4} -f ../../cmpl_gcc.mak
+      - install -Dm755 CPP/7zip/Bundles/Alone2/b/g/7zz /app/bin/7zz
+    sources:
+      - type: archive
+        url: https://7-zip.org/a/7z2501-src.tar.xz
+        sha256: ed087f83ee789c1ea5f39c464c55a5c9d4008deb0efe900814f2df262b82c36e
+        # No wrapping directory in the tarball.
+        strip-components: 0
+
+  - name: gameyfin
+    buildsystem: simple
+    build-commands:
+      - ar x gameyfin.deb
+      - tar -xf data.tar.gz
+      - install -Dm755 usr/bin/gameyfin-app /app/bin/gameyfin-app
+
+      # Mount points for the i386 extensions above, and the loader path that finds them.
+      - mkdir -p /app/lib/i386-linux-gnu/GL /app/etc
+      - printf '%s\n' /app/lib32 /app/lib/i386-linux-gnu > /app/etc/ld.so.conf
+
+      # The save backup helper, shipped as a Tauri sidecar. Guarded so a deb built before
+      # save sync still produces a working bundle, just without save support.
+      - |
+        set -e
+        if [ -f usr/bin/ludusavi ]; then
+          install -Dm755 usr/bin/ludusavi /app/bin/ludusavi
+          install -Dm644 usr/bin/LUDUSAVI-LICENSE.txt \
+            /app/share/licenses/org.gameyfin.Gameyfin/LUDUSAVI-LICENSE.txt 2>/dev/null || true
+        fi
+
+      # umu-run, the Proton launcher, a Linux-only sidecar. A Python zipapp, run by the
+      # runtime's own python3.
+      - |
+        set -e
+        if [ -f usr/bin/umu-run ]; then
+          install -Dm755 usr/bin/umu-run /app/bin/umu-run
+        fi
+
+      # Desktop file, icons and metainfo must be named after the app id.
+      - install -Dm644 usr/share/applications/Gameyfin.desktop
+        /app/share/applications/org.gameyfin.Gameyfin.desktop
+      - desktop-file-edit --set-icon=org.gameyfin.Gameyfin
+        /app/share/applications/org.gameyfin.Gameyfin.desktop
+      - |
+        set -e
+        for src in usr/share/icons/hicolor/*/apps/gameyfin-app.png; do
+          [ -f "$src" ] || continue
+          size=$(basename "$(dirname "$(dirname "$src")")")
+          # Tauri emits "256x256@2", but icon lookup only finds hicolor's "@2x".
+          case "$size" in *@2) size="${size}x";; esac
+          install -Dm644 "$src" \
+            "/app/share/icons/hicolor/${size}/apps/org.gameyfin.Gameyfin.png"
+        done
+      - install -Dm644 org.gameyfin.Gameyfin.metainfo.xml
+        /app/share/metainfo/org.gameyfin.Gameyfin.metainfo.xml
+    sources:
+      - type: file
+        path: ../build/gameyfin.deb
+      - type: file
+        path: org.gameyfin.Gameyfin.metainfo.xml

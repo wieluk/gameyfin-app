@@ -1,0 +1,5 @@
+[env]
+# Where ts-rs writes the TypeScript bindings that `cargo test` regenerates.
+TS_RS_EXPORT_DIR = { value = "src/bindings", relative = true }
+# Tauri sends JSON numbers, so a 64-bit integer arrives as a number, not a bigint.
+TS_RS_LARGE_INT = "number"

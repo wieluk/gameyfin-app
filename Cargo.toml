@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = ["crates/gameyfin-api", "crates/gameyfin-core", "crates/gameyfin-saves", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+repository = "https://github.com/wieluk/gameyfin-app"
+
+[workspace.dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "sync", "time", "io-util"] }
+tracing = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls", "cookies"] }
+url = "2"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+# Generates the TypeScript the webview uses, so the two sides cannot drift.
+ts-rs = "12"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 16
+strip = true
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.build-override]
+opt-level = 0
+
+[profile.test]
+debug = "line-tables-only"

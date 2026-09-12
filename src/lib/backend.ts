@@ -1,0 +1,249 @@
+/**
+ * The single seam between the UI and the Rust core. In a plain browser (`vite dev`) calls
+ * answer from fixtures, so the UI works without a server or GUI toolchain.
+ */
+
+import type { ConflictChoice } from "@/bindings/ConflictChoice";
+import type { ConnectionStatus } from "@/bindings/ConnectionStatus";
+import type { GameOptions } from "@/bindings/GameOptions";
+import type { GameOptionsPatch } from "@/bindings/GameOptionsPatch";
+import type { GraphicsStatus } from "@/bindings/GraphicsStatus";
+import type { InstalledGraphics } from "@/bindings/InstalledGraphics";
+import type { InstalledProton } from "@/bindings/InstalledProton";
+import type { InstalledSaveTool } from "@/bindings/InstalledSaveTool";
+import type { InstalledWine } from "@/bindings/InstalledWine";
+import type { InstallPlan } from "@/bindings/InstallPlan";
+import type { Library } from "@/bindings/Library";
+import type { LibraryEntry } from "@/bindings/LibraryEntry";
+import type { LibraryFolder } from "@/bindings/LibraryFolder";
+import type { LibraryRoot } from "@/bindings/LibraryRoot";
+import type { Location as ShortcutLocation } from "@/bindings/Location";
+import type { LoginPoll } from "@/bindings/LoginPoll";
+import type { ManifestInfo } from "@/bindings/ManifestInfo";
+import type { MemoryInfo } from "@/bindings/MemoryInfo";
+import type { MigrationSummary } from "@/bindings/MigrationSummary";
+import type { PrefixEntry } from "@/bindings/PrefixEntry";
+import type { PrefixTool } from "@/bindings/PrefixTool";
+import type { ProtonFamily } from "@/bindings/ProtonFamily";
+import type { ProtonStatus } from "@/bindings/ProtonStatus";
+import type { ProviderChoice } from "@/bindings/ProviderChoice";
+import type { PublicSettings } from "@/bindings/PublicSettings";
+import type { SaveBackend } from "@/bindings/SaveBackend";
+import type { SavePathSettings } from "@/bindings/SavePathSettings";
+import type { SaveSyncState } from "@/bindings/SaveSyncState";
+import type { SaveToolStatus } from "@/bindings/SaveToolStatus";
+import type { SaveVersion } from "@/bindings/SaveVersion";
+import type { ServerProbe } from "@/bindings/ServerProbe";
+import type { SettingsPatch } from "@/bindings/SettingsPatch";
+import type { ShortcutStatus } from "@/bindings/ShortcutStatus";
+import type { UmuStatus } from "@/bindings/UmuStatus";
+import type { UpdateStatus } from "@/bindings/UpdateStatus";
+import type { WineStatus } from "@/bindings/WineStatus";
+
+export type {
+  LibraryFolder,
+  LibraryRoot,
+  PrefixEntry,
+  ProviderChoice,
+  ShortcutLocation,
+  UpdateStatus,
+};
+
+/** Tauri injects this before any app code runs. */
+export const isMockBackend = typeof window === "undefined" || !("__TAURI_INTERNALS__" in window);
+
+async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (isMockBackend) {
+    const { mockInvoke } = await import("./mock");
+    return mockInvoke<T>(command, args);
+  }
+  const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+  return tauriInvoke<T>(command, args);
+}
+
+export const backend = {
+  listLibraries: () => invoke<Library[]>("list_libraries"),
+  listEntries: () => invoke<LibraryEntry[]>("list_entries"),
+  /** `root` must be one of the configured games folders; omitted means the default. */
+  startDownload: (gameId: number, root?: string) =>
+    invoke<void>("start_download", { gameId, root: root ?? null }),
+  cancelDownload: (gameId: number) => invoke<void>("cancel_download", { gameId }),
+  installOptions: (gameId: number) => invoke<InstallPlan>("install_options", { gameId }),
+  install: (gameId: number, method?: string, deleteArchive?: boolean) =>
+    invoke<void>("install_game", {
+      gameId,
+      method: method ?? null,
+      deleteArchive: deleteArchive ?? null,
+    }),
+  rescanLibrary: () => invoke<number>("rescan_library"),
+  locateInstall: (gameId: number, path: string) => invoke<void>("locate_install", { gameId, path }),
+  /** `uninstaller` overrides detection, for a game whose uninstaller is oddly named. */
+  uninstall: (gameId: number, runUninstaller?: boolean, uninstaller?: string | null) =>
+    invoke<void>("uninstall_game", {
+      gameId,
+      runUninstaller: runUninstaller ?? true,
+      uninstaller: uninstaller ?? null,
+    }),
+  findUninstaller: (gameId: number) => invoke<string | null>("find_game_uninstaller", { gameId }),
+  deleteStaging: (gameId: number) => invoke<void>("delete_staging", { gameId }),
+  deleteDownload: (gameId: number) => invoke<void>("delete_download", { gameId }),
+  runSetup: (gameId: number, relative: string) => invoke<void>("run_setup", { gameId, relative }),
+  runSetupPath: (gameId: number, path: string) => invoke<void>("run_setup_path", { gameId, path }),
+  /** Retry the setup program Windows refused to start, as administrator. */
+  runSetupElevated: (gameId: number) => invoke<void>("run_setup_elevated", { gameId }),
+  launch: (gameId: number) => invoke<void>("launch_game", { gameId }),
+  /** Stop whatever the game is running, an installer or the game itself. */
+  stopGame: (gameId: number) => invoke<void>("stop_game", { gameId }),
+  listExecutables: (gameId: number) => invoke<string[]>("list_executables", { gameId }),
+  setExecutable: (gameId: number, executable: string) =>
+    invoke<void>("set_game_executable", { gameId, executable }),
+  gameOptions: (gameId: number) => invoke<GameOptions>("game_options", { gameId }),
+  setGameOptions: (gameId: number, options: GameOptionsPatch) =>
+    invoke<void>("set_game_options", { gameId, options }),
+
+  /** Reveal one of a game's folders; Downloads unless told otherwise. */
+  openGameFolder: (gameId: number, folder?: LibraryFolder) =>
+    invoke<void>("open_game_folder", { gameId, folder: folder ?? null }),
+  /** Reveal the Downloads or Installations folder itself. */
+  openLibraryFolder: (folder: LibraryFolder, root?: string) =>
+    invoke<void>("open_library_folder", { folder, root: root ?? null }),
+  openFolder: (path: string) => invoke<void>("open_folder", { path }),
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
+
+  connectionStatus: () => invoke<ConnectionStatus>("connection_status"),
+  probeServer: (url: string) => invoke<ServerProbe>("probe_server", { url }),
+  setServerUrl: (url: string) => invoke<string>("set_server_url", { url }),
+  /** `direct` forces the password form on a server that also has SSO. */
+  beginLogin: (direct?: boolean) => invoke<void>("begin_login", { direct: direct ?? false }),
+  pollLogin: () => invoke<LoginPoll>("poll_login"),
+  cancelLogin: () => invoke<void>("cancel_login"),
+  resetLogin: () => invoke<void>("reset_login"),
+  signOut: () => invoke<void>("sign_out"),
+  /** Quit for real. The close button may be set to hide the window instead. */
+  quitApp: () => invoke<void>("quit_app"),
+
+  getSettings: () => invoke<PublicSettings>("get_settings"),
+  /** Change some settings. Rejects a value it does not know. */
+  updateSettings: (patch: SettingsPatch) => invoke<void>("update_settings", { patch }),
+  suggestLibraryRoot: () => invoke<string>("suggest_library_root"),
+  listLibraryRoots: () => invoke<LibraryRoot[]>("list_library_roots"),
+  addLibraryRoot: (path: string) => invoke<void>("add_library_root", { path }),
+  /** Forgets the folder. Nothing on disk is touched. */
+  removeLibraryRoot: (path: string) => invoke<void>("remove_library_root", { path }),
+  setDefaultLibraryRoot: (path: string) => invoke<void>("set_default_library_root", { path }),
+  /** What the server can download from, and which one is in use. */
+  downloadProviders: () => invoke<ProviderChoice[]>("download_providers"),
+  /** Null restores the server's own preference order. */
+  setDownloadProvider: (key: string | null) => invoke<void>("set_download_provider", { key }),
+  configDirectory: () => invoke<string>("config_directory"),
+  logDirectory: () => invoke<string>("log_directory"),
+  imageCacheSize: () => invoke<number>("image_cache_size"),
+  clearImageCache: () => invoke<void>("clear_image_cache"),
+  memoryInfo: () => invoke<MemoryInfo>("memory_info"),
+  /** Put an interface crash in the log file, which is all a packaged build leaves. */
+  reportCrash: (details: string) => invoke<void>("report_crash", { details }),
+
+  wineStatus: () => invoke<WineStatus>("wine_status"),
+  /** Download and install Wine, replacing any existing build. Also used to update. */
+  installWine: (version?: string) => invoke<InstalledWine>("install_wine", { version }),
+  removeWine: () => invoke<void>("remove_wine"),
+  graphicsStatus: () => invoke<GraphicsStatus>("graphics_status"),
+  installGraphics: (component: "dxvk" | "vkd3d", version?: string) =>
+    invoke<InstalledGraphics>("install_graphics", { component, version }),
+  removeGraphics: () => invoke<void>("remove_graphics"),
+  protonStatus: () => invoke<ProtonStatus>("proton_status"),
+  /** Download a Proton build: the newest of a family, or one named tag. */
+  installProton: (family: ProtonFamily, tag?: string) =>
+    invoke<InstalledProton>("install_proton", { family, tag }),
+  removeProton: (name: string) => invoke<void>("remove_proton", { name }),
+
+  shortcutStatus: (gameId: number) => invoke<ShortcutStatus>("shortcut_status", { gameId }),
+  setShortcut: (gameId: number, location: ShortcutLocation, enabled: boolean) =>
+    invoke<void>("set_shortcut", { gameId, location, enabled }),
+  /** Returns a sentence to show, because Steam has to be restarted to see the change. */
+  setSteamShortcut: (gameId: number, enabled: boolean) =>
+    invoke<string>("set_steam_shortcut", { gameId, enabled }),
+  listPrefixes: () => invoke<PrefixEntry[]>("list_prefixes"),
+  deletePrefix: (gameId: number) => invoke<void>("delete_prefix", { gameId }),
+  openPrefixTool: (gameId: number, tool: PrefixTool) =>
+    invoke<void>("open_prefix_tool", { gameId, tool }),
+  umuStatus: (gameId?: number) => invoke<UmuStatus>("umu_status", { gameId: gameId ?? null }),
+  refreshUmuDatabase: () => invoke<number>("refresh_umu_database"),
+
+  /** Where one game's saves stand, without changing anything. */
+  saveState: (gameId: number) => invoke<SaveSyncState>("save_state", { gameId }),
+  listSaveVersions: (gameId: number) => invoke<SaveVersion[]>("list_save_versions", { gameId }),
+  /** Back up and upload. `force` accepts a stale base, keeping the losing version. */
+  backupSaves: (gameId: number, force: boolean) =>
+    invoke<SaveSyncState>("backup_saves", { gameId, force }),
+  /** Restore a version, newest if none is named. */
+  restoreSaves: (gameId: number, saveId?: string) =>
+    invoke<SaveSyncState>("restore_saves", { gameId, saveId }),
+  /** Answers the first-play offer to download existing saves. */
+  answerSavePullOffer: (gameId: number, download: boolean) =>
+    invoke<void>("answer_save_pull_offer", { gameId, download }),
+  resolveSaveConflict: (gameId: number, choice: ConflictChoice) =>
+    invoke<SaveSyncState>("resolve_save_conflict", { gameId, choice }),
+  /** Search the save manifest for what the user typed. Best match first. */
+  searchSaveTitles: (gameId: number, query: string) =>
+    invoke<string[]>("search_save_titles", { gameId, query }),
+  /** Name the title Ludusavi should use, for a game it could not identify. */
+  setSaveTitle: (gameId: number, title: string | null) =>
+    invoke<SaveSyncState>("set_save_title", { gameId, title }),
+  savePaths: (gameId: number) => invoke<SavePathSettings>("save_paths", { gameId }),
+  /** Turn Windows/Linux path translation on for one game, leaving its paths alone. */
+  setSaveCrossOs: (gameId: number, crossOs: boolean) =>
+    invoke<SaveSyncState>("set_save_cross_os", { gameId, crossOs }),
+  setSaveMapping: (
+    gameId: number,
+    crossOs: boolean,
+    redirects: Array<[string, string]>,
+    customPaths: string[],
+  ) => invoke<SaveSyncState>("set_save_mapping", { gameId, crossOs, redirects, customPaths }),
+  /** Copy saves between two locations. The source is left alone. */
+  migrateSaves: (from: SaveBackend, to: SaveBackend, allVersions: boolean) =>
+    invoke<MigrationSummary>("migrate_saves", { from, to, allVersions }),
+  saveToolStatus: () => invoke<SaveToolStatus>("save_tool_status"),
+  /** Refresh the game database. It changes far more often than the helper itself. */
+  updateSaveManifest: () => invoke<ManifestInfo>("update_save_manifest"),
+  /** The host name, for the placeholder when no name has been chosen. */
+  detectedDeviceName: () => invoke<string | null>("detected_device_name"),
+  /** Install a version of the backup helper, or the newest when none is named. */
+  installSaveTool: (version?: string) =>
+    invoke<InstalledSaveTool>("install_save_tool", { version }),
+  removeSaveTool: () => invoke<void>("remove_save_tool"),
+  /** Checks the configured location answers. Returns a sentence to show the user. */
+  testSaveStore: () => invoke<string>("test_save_store"),
+
+  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  /** Returns what to tell the user; what happens next differs by package format. */
+  installUpdate: () => invoke<string>("install_update"),
+
+  async copyToClipboard(text: string): Promise<void> {
+    if (isMockBackend) return;
+    const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+    await writeText(text);
+  },
+  /** Native folder picker; null when the user cancels. */
+  async pickFolder(current?: string): Promise<string | null> {
+    return pick({ directory: true, defaultPath: current });
+  },
+  /** Native file picker; null when the user cancels. */
+  async pickFile(startIn?: string): Promise<string | null> {
+    return pick({
+      directory: false,
+      defaultPath: startIn,
+      filters: [
+        { name: "Programs", extensions: ["exe", "msi", "sh", "AppImage", "x86_64"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+  },
+};
+
+async function pick(options: Record<string, unknown>): Promise<string | null> {
+  if (isMockBackend) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const chosen = await open({ multiple: false, ...options });
+  return typeof chosen === "string" ? chosen : null;
+}
