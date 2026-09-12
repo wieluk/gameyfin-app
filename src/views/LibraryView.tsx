@@ -16,9 +16,10 @@ import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { RootChooser, useLibraryRoots } from "@/components/RootChooser";
 import {
+  CARD_SIZES,
   useLibraryView,
+  type CardSize,
   type FacetKey,
-  type PresenceFilter,
   type SortDirection,
   type SortKey,
 } from "@/state/libraryView";
@@ -35,12 +36,14 @@ export function LibraryView() {
     sort,
     direction,
     libraryId,
-    presence,
+    installedOnly,
+    cardSize,
     setSearch,
     setSort,
     toggleDirection,
     setLibraryId,
-    setPresence,
+    setInstalledOnly,
+    setCardSize,
     advanced,
     toggleAdvanced,
     minRating,
@@ -104,7 +107,7 @@ export function LibraryView() {
       // so without this the list offers games that cannot be downloaded right now.
       if (offline && !isLocal(e)) return false;
       if (libraryId !== null && e.game.libraryId !== libraryId) return false;
-      if (presence !== "all" && (presence === "installed") !== isInstalled(e)) return false;
+      if (installedOnly && !isInstalled(e)) return false;
       if (!matchesFacets(e, facets)) return false;
       if (minRating !== null && (ratingOf(e.game) ?? -1) < minRating) return false;
       if (!needle) return true;
@@ -114,7 +117,17 @@ export function LibraryView() {
       );
     });
     return sortEntries(filtered, sort, direction);
-  }, [entries.data, search, sort, direction, libraryId, presence, facets, minRating, offline]);
+  }, [
+    entries.data,
+    search,
+    sort,
+    direction,
+    libraryId,
+    installedOnly,
+    facets,
+    minRating,
+    offline,
+  ]);
 
   // Built from the current library, and narrowed by the other filters, so no option ever matches nothing.
   const options = useMemo(() => {
@@ -123,7 +136,7 @@ export function LibraryView() {
       (e) =>
         (!offline || isLocal(e)) &&
         (libraryId === null || e.game.libraryId === libraryId) &&
-        (presence === "all" || (presence === "installed") === isInstalled(e)),
+        (!installedOnly || isInstalled(e)),
     );
     // Each list ignores its own filter, so choosing a value never empties the box it
     // came from, and respects the others, so no option is offered that matches nothing.
@@ -137,7 +150,7 @@ export function LibraryView() {
       FacetKey,
       string[]
     >;
-  }, [entries.data, libraryId, presence, facets, offline]);
+  }, [entries.data, libraryId, installedOnly, facets, offline]);
 
   const hiddenOffline = useMemo(
     () => (offline ? (entries.data ?? []).filter((e) => !isLocal(e)).length : 0),
@@ -148,7 +161,7 @@ export function LibraryView() {
   const activeFacets =
     Object.values(facets).filter(Boolean).length + (minRating === null ? 0 : 1);
   const filtered =
-    search.trim() !== "" || libraryId !== null || presence !== "all" || activeFacets > 0;
+    search.trim() !== "" || libraryId !== null || installedOnly || activeFacets > 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -174,15 +187,15 @@ export function LibraryView() {
           ))}
         </select>
 
-        <select
-          value={presence}
-          onChange={(e) => setPresence(e.target.value as PresenceFilter)}
-          className={INPUT}
-        >
-          <option value="all">All games</option>
-          <option value="installed">Installed</option>
-          <option value="not-installed">Not installed</option>
-        </select>
+        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-foreground/70 transition-colors hover:text-foreground">
+          <input
+            type="checkbox"
+            checked={installedOnly}
+            onChange={(e) => setInstalledOnly(e.target.checked)}
+            className="h-4 w-4 accent-primary"
+          />
+          Installed only
+        </label>
 
         <button
           type="button"
@@ -211,11 +224,13 @@ export function LibraryView() {
           <Icon name="reset" className="h-4 w-4" />
         </button>
 
+        <CardSizes value={cardSize} onChange={setCardSize} />
+
         {/* A pill rather than another boxed select, so ordering does not read as a filter. */}
         <div
           role="group"
           aria-label="Sort"
-          className="ml-auto flex shrink-0 items-center rounded-full border border-default-200 text-xs text-foreground/50"
+          className="flex shrink-0 items-center rounded-full border border-default-200 text-xs text-foreground/50"
         >
           <Icon name="sort" className="ml-3 h-3.5 w-3.5 shrink-0" />
           <span className="pl-1.5">Sort</span>
@@ -223,7 +238,7 @@ export function LibraryView() {
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
             aria-label="Sort by"
-            className="cursor-pointer appearance-none bg-transparent py-2 pl-1.5 pr-2.5 text-xs font-medium text-foreground outline-none focus-visible:underline [&>option]:bg-content1"
+            className="cursor-pointer appearance-none bg-transparent py-2 pl-1.5 pr-2.5 text-xs font-medium text-foreground outline-none focus-visible:underline"
           >
             <option value="title">Title</option>
             <option value="recent">Last played</option>
@@ -280,7 +295,7 @@ export function LibraryView() {
         ) : visible.length === 0 ? (
           <EmptyState search={search} hiddenOffline={hiddenOffline} />
         ) : (
-          <div data-library-grid className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
+          <div data-library-grid data-card-size={cardSize} className="grid gap-5">
             {visible.map((entry) => (
               <GameCard
                 key={entry.game.id}
@@ -332,6 +347,50 @@ export function LibraryView() {
 }
 
 
+
+/** How large the covers are, drawn as three squares: the tiles are art, not text. */
+function CardSizes({
+  value,
+  onChange,
+}: {
+  value: CardSize;
+  onChange: (size: CardSize) => void;
+}) {
+  const square: Record<CardSize, string> = {
+    small: "h-2 w-2",
+    medium: "h-3 w-3",
+    large: "h-4 w-4",
+  };
+  const label: Record<CardSize, string> = {
+    small: "Small covers",
+    medium: "Medium covers",
+    large: "Large covers",
+  };
+
+  return (
+    <div
+      role="group"
+      aria-label="Cover size"
+      className="ml-auto flex shrink-0 items-center gap-0.5 rounded-full border border-default-200 px-1.5 py-1"
+    >
+      {CARD_SIZES.map((size) => (
+        <button
+          key={size}
+          type="button"
+          onClick={() => onChange(size)}
+          title={label[size]}
+          aria-label={label[size]}
+          aria-pressed={value === size}
+          className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
+            value === size ? "text-primary" : "text-foreground/40 hover:text-foreground"
+          }`}
+        >
+          <span className={`${square[size]} rounded-[3px] border-2 border-current`} />
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /** One of the value filters. Hidden when there is nothing to choose from. */
 function Facet({
@@ -408,7 +467,7 @@ function directionLabel(sort: SortKey, direction: SortDirection): string {
 
 function SkeletonGrid() {
   return (
-    <div data-library-grid className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
+    <div data-library-grid className="grid gap-5">
       {Array.from({ length: 12 }).map((_, i) => (
         <div key={i} className="flex flex-col gap-2">
           <div className="aspect-[2/3] animate-pulse rounded-xl bg-default-200" />

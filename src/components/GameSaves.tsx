@@ -7,6 +7,16 @@ import { describe, isSaveState, outcomeOf } from "@/lib/saveState";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { LibraryEntry, SaveSyncState, SaveVersion } from "@/types";
 
+/** The states that mean this game has saves worth a section of its own. */
+const SHOWN_STATES: SaveSyncState["kind"][] = [
+  "in-sync",
+  "local-newer",
+  "remote-newer",
+  "conflict",
+  "platform-mismatch",
+  "failed",
+];
+
 /**
  * A game's synced saves, inside its detail popup.
  *
@@ -64,8 +74,10 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
     }
   }
 
-  // Nothing to say when saves cannot be synced at all, either here or by the server.
-  if (!state || state.kind === "unsupported" || state.kind === "off") return null;
+  // Nothing to say when saves cannot be synced at all, either here or by the server, or
+  // when this game has none stored: the Saves tab is where a first backup is started, and
+  // a line about a game with nothing to back up on every page is noise.
+  if (!state || !SHOWN_STATES.includes(state.kind)) return null;
 
   const summary = describe(state);
 
@@ -78,16 +90,14 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
       <div className="rounded-xl border border-default-200/60 bg-content1 px-4 py-3">
         <div className="flex items-center gap-3">
           <p className={`min-w-0 flex-1 text-xs ${summary.tone}`}>{summary.text}</p>
-          {state.kind !== "disabled" && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => act(() => backend.backupSaves(gameId, false))}
-              className="shrink-0 rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
-            >
-              {busy ? "Working..." : "Back up now"}
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act(() => backend.backupSaves(gameId, false))}
+            className="shrink-0 rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
+          >
+            {busy ? "Working..." : "Back up now"}
+          </button>
         </div>
 
         {error && <p className="mt-2 text-xs text-danger">{error}</p>}

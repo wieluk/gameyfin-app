@@ -4,6 +4,7 @@ import { GameSaves } from "./GameSaves";
 import { Icon } from "./Icon";
 import { primaryAction } from "@/lib/actions";
 import { formatBytes, formatPlaytime } from "@/lib/format";
+import { useLibraryView, type FacetKey } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
 import { PANEL_BODY } from "@/lib/ui";
 import { useDismissOnEscape } from "@/lib/useDismiss";
@@ -48,7 +49,7 @@ export function GameDetail({
       onClick={onClose}
     >
       <div
-        className="flex h-[min(88vh,860px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl"
+        className="flex h-[min(92vh,1000px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <Header entry={entry} onClose={onClose} />
@@ -72,38 +73,29 @@ export function GameDetail({
             </p>
           )}
 
-          {game.summary && (
-            <p className="mb-5 whitespace-pre-line text-sm leading-relaxed text-foreground/75">
-              {game.summary}
-            </p>
-          )}
+          {/* Side by side where there is room, as on the web interface; stacked when narrow. */}
+          <div className="mb-5 flex flex-col gap-5 lg:flex-row lg:gap-8">
+            {game.summary && (
+              <p className="min-w-0 flex-1 whitespace-pre-line text-sm leading-relaxed text-foreground/75">
+                {game.summary}
+              </p>
+            )}
 
-          <dl className="mb-5 grid grid-cols-[auto,1fr] gap-x-6 gap-y-2 text-sm">
-            {facts.map(([label, value]) => (
-              <div key={label} className="contents">
-                <dt className="text-foreground/45">{label}</dt>
-                <dd className="text-foreground/80">{value}</dd>
-              </div>
-            ))}
-          </dl>
-
-          {game.genres.length > 0 && (
-            <div className="mb-5 flex flex-wrap gap-1.5">
-              {game.genres.map((genre) => (
-                <span
-                  key={genre}
-                  className="rounded-full bg-default-100 px-2.5 py-0.5 text-[11px] text-foreground/65"
-                >
-                  {genre}
-                </span>
+            <dl className="grid shrink-0 grid-cols-[auto,1fr] gap-x-6 gap-y-2 text-sm lg:max-w-xs">
+              {facts.map(([label, value]) => (
+                <div key={label} className="contents">
+                  <dt className="text-foreground/45">{label}</dt>
+                  <dd className="text-foreground/80">{value}</dd>
+                </div>
               ))}
-            </div>
-          )}
+            </dl>
+          </div>
+
+          <Tags game={game} onFilter={onClose} />
 
           <GameSaves entry={entry} />
 
-          <Trailers urls={entry.videoUrls ?? []} title={game.title} />
-          <Screenshots urls={entry.screenshotUrls ?? []} title={game.title} />
+          <Media entry={entry} />
         </div>
       </div>
     </div>
@@ -156,7 +148,65 @@ function PrimaryButton({
   );
 }
 
-function Screenshots({ urls, title }: { urls: string[]; title: string }) {
+/**
+ * Genres, themes and features, each a filter: pressing one narrows the library to it, the
+ * way the same tags do on the web interface.
+ */
+function Tags({ game, onFilter }: { game: LibraryEntry["game"]; onFilter: () => void }) {
+  const { setFacet, setAdvanced } = useLibraryView();
+
+  const groups: [FacetKey, string[]][] = [
+    ["genre", game.genres],
+    ["theme", game.themes],
+    ["feature", game.features],
+  ];
+  const tags = groups.flatMap(([key, values]) =>
+    values.map((value) => [key, value] as [FacetKey, string]),
+  );
+  if (tags.length === 0) return null;
+
+  return (
+    <div className="mb-5 flex flex-wrap gap-1.5">
+      {tags.map(([key, value]) => (
+        <button
+          key={`${key}:${value}`}
+          type="button"
+          title={`Show every game with this ${key}`}
+          onClick={() => {
+            setFacet(key, value);
+            // The row the filter lands in, so the user can see and undo what just happened.
+            setAdvanced(true);
+            onFilter();
+          }}
+          className="rounded-full bg-default-100 px-2.5 py-0.5 text-[11px] text-foreground/65 transition-colors hover:bg-primary/15 hover:text-primary"
+        >
+          {value}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Photos and videos under one heading, as the web interface groups them. */
+function Media({ entry }: { entry: LibraryEntry }) {
+  const videos = entry.videoUrls ?? [];
+  const screenshots = entry.screenshotUrls ?? [];
+  if (videos.length === 0 && screenshots.length === 0) return null;
+
+  return (
+    <section className="mt-6">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-foreground/45">
+        Media
+      </h3>
+      <div className="flex flex-col gap-5">
+        <Photos urls={screenshots} title={entry.game.title} />
+        <Trailers urls={videos} title={entry.game.title} />
+      </div>
+    </section>
+  );
+}
+
+function Photos({ urls, title }: { urls: string[]; title: string }) {
   const strip = useRef<HTMLDivElement>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
 
@@ -172,12 +222,12 @@ function Screenshots({ urls, title }: { urls: string[]; title: string }) {
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground/45">
-          Screenshots
+        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-foreground/40">
+          Photos
           <span className="ml-2 font-normal normal-case tracking-normal text-foreground/30">
             {urls.length}
           </span>
-        </h3>
+        </h4>
         <div className="flex gap-1">
           <ScrollButton label="Scroll left" onClick={() => scrollBy(-1)} flip />
           <ScrollButton label="Scroll right" onClick={() => scrollBy(1)} />
@@ -188,7 +238,7 @@ function Screenshots({ urls, title }: { urls: string[]; title: string }) {
         ref={strip}
         tabIndex={0}
         role="group"
-        aria-label={`${title} screenshots`}
+        aria-label={`${title} photos`}
         onKeyDown={(e) => {
           if (e.key === "ArrowRight") scrollBy(1);
           if (e.key === "ArrowLeft") scrollBy(-1);
@@ -204,7 +254,7 @@ function Screenshots({ urls, title }: { urls: string[]; title: string }) {
           >
             <img
               src={url}
-              alt={`${title} screenshot`}
+              alt={`${title} photo`}
               loading="lazy"
               className="h-44 w-auto object-cover"
             />
@@ -217,7 +267,7 @@ function Screenshots({ urls, title }: { urls: string[]; title: string }) {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-8"
           role="dialog"
           aria-modal="true"
-          aria-label="Screenshot"
+          aria-label="Photo"
           onClick={() => setLightbox(null)}
         >
           <img src={lightbox} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
