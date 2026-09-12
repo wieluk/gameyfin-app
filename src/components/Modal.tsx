@@ -9,6 +9,8 @@ import { useDismissOnEscape } from "@/lib/useDismiss";
 const LAYER = {
   50: "z-50",
   60: "z-[60]",
+  /** For a dialog opened from inside another one, which must sit above it. */
+  70: "z-[70]",
 } as const;
 
 const WIDTH = {

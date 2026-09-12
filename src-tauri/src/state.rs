@@ -120,6 +120,9 @@ pub struct AppState {
     library: crate::library_state::SharedLibraryState,
     /// Every Ludusavi run shares one config dir (the manifest is 17 MB), so runs are serial.
     ludusavi_lock: Arc<tokio::sync::Mutex<()>>,
+    /// A scan of the whole machine runs for minutes, in a config directory of its own, so
+    /// it never stands between a game and the save it is waiting for at launch.
+    save_scan_lock: Arc<tokio::sync::Mutex<()>>,
     /// Stops two launches downloading the same runtime into the same directory.
     runtime_lock: tokio::sync::Mutex<()>,
     /// Freshness cache: `list_entries` runs several times a second during a transfer.
@@ -411,6 +414,10 @@ impl AppState {
 
     pub fn ludusavi_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
         self.ludusavi_lock.clone()
+    }
+
+    pub fn save_scan_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.save_scan_lock.clone()
     }
 
     pub async fn runtime_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {

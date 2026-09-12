@@ -14,3 +14,4 @@ pub use error::{SaveError, SaveResult};
 pub use ludusavi::{BackupFormat, GameQuery, Ludusavi};
 pub use platform::SavePlatform;
 pub use resolve::{resolve, Candidate, GameIdentity, TitleMatch};
+pub use runner::ProcessRunner;

@@ -325,7 +325,7 @@ export function SaveToolSection() {
       await backend.updateSaveManifest();
       await status.refetch();
       // A game that was unrecognised may be in the new database, so the verdicts are stale.
-      await invalidate(keys.saveStates);
+      await invalidate(keys.saveOverviewAll);
     });
   }
 

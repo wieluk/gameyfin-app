@@ -1,7 +1,10 @@
 //! Save synchronisation: Ludusavi locally, a store (server, folder or WebDAV) remotely. The
 //! decisions live in `gameyfin_core::save_sync`; this resolves paths and runs the helper.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use gameyfin_api::saves::{SaveVersion, UploadOutcome};
 use gameyfin_core::save_store::{FolderStore, SaveStore, ServerStore, WebDavStore};
@@ -514,6 +517,181 @@ pub async fn state_of(
     ))
 }
 
+/// Which games the Saves tab is asking about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum SaveScope {
+    /// Games installed on this PC, which is the only place a backup can be made.
+    Installed,
+    /// Every game in the library, so a save left behind by an uninstalled one is visible.
+    All,
+}
+
+/// One game's line in the Saves tab.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SaveOverviewRow {
+    pub game_id: i64,
+    pub title: String,
+    pub installed: bool,
+    pub state: SaveSyncState,
+    pub versions: u32,
+    pub newest_at: Option<String>,
+    pub newest_device: Option<String>,
+    /// The newest version's size, which is what the user recognises a save by.
+    pub size_bytes: u64,
+    pub remote_platform: Option<SavePlatform>,
+    /// Whether anything has ever identified this game, so a row can offer to look.
+    pub identified: bool,
+}
+
+/// How many games are asked about at once. The store is a server or a share, so this is
+/// about not opening a hundred connections rather than about local work.
+const OVERVIEW_CONCURRENCY: usize = 8;
+
+/// Every game's save status in one pass.
+///
+/// Never runs the helper: identifying a game costs subprocesses and is only needed to back
+/// one up, so a list of a hundred games is a hundred cheap store listings, asked in
+/// parallel, rather than the sequential probe this replaces.
+#[tauri::command]
+pub async fn save_overview(
+    state: State<'_, AppState>,
+    scope: SaveScope,
+) -> CommandResult<Vec<SaveOverviewRow>> {
+    let settings = state.settings();
+    let library = state.library();
+
+    let mut rows = Vec::new();
+    let mut wanted = Vec::new();
+    for game in state.games().await? {
+        let installed = library.record(game.id).is_installed();
+        if scope == SaveScope::Installed && !installed {
+            continue;
+        }
+        wanted.push((game.id, game.title.clone(), installed));
+    }
+
+    if !settings.save_sync_enabled {
+        return Ok(wanted
+            .into_iter()
+            .map(|(game_id, title, installed)| SaveOverviewRow {
+                game_id,
+                title,
+                installed,
+                state: SaveSyncState::Off,
+                versions: 0,
+                newest_at: None,
+                newest_device: None,
+                size_bytes: 0,
+                remote_platform: None,
+                identified: false,
+            })
+            .collect());
+    }
+
+    let store: Arc<dyn SaveStore> = Arc::from(store_for(&state, &settings).await?);
+    // A folder or a share can say which games it holds anything for in one listing, so most
+    // of the library needs no request at all. The server has no such route and answers
+    // with nothing, which this reads as "ask about all of them".
+    let held: Option<HashSet<i64>> = match store.games().await {
+        Ok(games) if !games.is_empty() => Some(games.into_iter().collect()),
+        _ => None,
+    };
+
+    let mut listings: HashMap<i64, Vec<SaveVersion>> = HashMap::new();
+    let mut unavailable: Option<SaveSyncState> = None;
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(OVERVIEW_CONCURRENCY));
+    let mut tasks = tokio::task::JoinSet::new();
+    for (game_id, ..) in &wanted {
+        let game_id = *game_id;
+        if held.as_ref().is_some_and(|held| !held.contains(&game_id)) {
+            continue;
+        }
+        let (store, semaphore) = (store.clone(), semaphore.clone());
+        tasks.spawn(async move {
+            let _permit = semaphore.acquire_owned().await;
+            (game_id, store.list(game_id).await)
+        });
+    }
+    while let Some(finished) = tasks.join_next().await {
+        let Ok((game_id, listed)) = finished else {
+            continue;
+        };
+        match listed {
+            Ok(versions) => {
+                listings.insert(game_id, versions);
+            }
+            // Both mean the whole store cannot answer, so the rest of the sweep is pointless.
+            Err(gameyfin_api::ApiError::SaveSyncDisabled) => {
+                unavailable = Some(SaveSyncState::Disabled);
+                tasks.abort_all();
+            }
+            Err(gameyfin_api::ApiError::SaveSyncUnsupported { .. }) => {
+                unavailable = Some(SaveSyncState::Unsupported);
+                tasks.abort_all();
+            }
+            Err(e) => {
+                tracing::debug!(game_id, error = %e, "could not list saves");
+                listings.remove(&game_id);
+            }
+        }
+    }
+
+    for (game_id, title, installed) in wanted {
+        if let Some(state) = unavailable.clone() {
+            rows.push(SaveOverviewRow {
+                game_id,
+                title,
+                installed,
+                state,
+                versions: 0,
+                newest_at: None,
+                newest_device: None,
+                size_bytes: 0,
+                remote_platform: None,
+                identified: false,
+            });
+            continue;
+        }
+        let versions = listings.remove(&game_id).unwrap_or_default();
+        let newest = versions.first();
+        let context = context(&state, game_id).await?;
+        let staged = staged_hash(&context).await;
+        let local_changed = match (&staged, &context.record_saves.last_backup_hash) {
+            (Some(current), Some(synced)) => current != synced,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        rows.push(SaveOverviewRow {
+            state: save_sync::decide(
+                &context.record_saves,
+                newest,
+                local_changed,
+                context.platform(),
+                settings.installation_id.as_deref(),
+            ),
+            versions: versions.len() as u32,
+            newest_at: newest.and_then(|v| v.created_at.clone()),
+            newest_device: newest.and_then(|v| v.device_name.clone()),
+            size_bytes: newest.map_or(0, |v| v.size_bytes),
+            remote_platform: newest.map(|v| {
+                v.platform
+                    .parse::<SavePlatform>()
+                    .unwrap_or(SavePlatform::Unknown)
+            }),
+            identified: context.record_saves.ludusavi_title.is_some()
+                || !context.record_saves.custom_paths.is_empty(),
+            game_id,
+            title,
+            installed,
+        });
+    }
+    Ok(rows)
+}
+
 #[tauri::command]
 pub async fn save_state(
     app: AppHandle,
@@ -806,6 +984,245 @@ pub async fn save_paths(
         redirects: record.save_redirects,
         cross_os: record.save_restore_strategy == SaveRestoreStrategy::CrossOs,
     })
+}
+
+/// Folders worth offering to open or to browse for one game's saves.
+#[derive(Debug, Default, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SaveLocations {
+    /// Holds every game's staging directory and the packed archives beside them.
+    pub saves_root: Option<String>,
+    /// What the helper backs this game up into.
+    pub staging: Option<String>,
+    /// The Windows-side home inside the prefix, where a Proton game keeps its saves.
+    pub prefix_home: Option<String>,
+    /// The prefix's drive C, for a game that keeps saves beside itself instead.
+    pub prefix_drive_c: Option<String>,
+    pub install_dir: Option<String>,
+    pub home: Option<String>,
+    /// Where the helper actually found files. Only filled when asked for: it runs a scan.
+    pub detected: Vec<String>,
+}
+
+/// Only folders that exist: opening one that does not is refused, and offering to browse
+/// into nothing is worse than not offering.
+fn existing(path: PathBuf) -> Option<String> {
+    path.is_dir().then(|| path.to_string_lossy().into_owned())
+}
+
+/// Where a game's saves are, for opening a folder and for browsing to one by hand.
+///
+/// `probe` runs a scan to find where the saves actually are, which takes the helper's lock
+/// and a moment, so the list asks without it and the dialog asks with it.
+#[tauri::command]
+pub async fn save_locations(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_id: i64,
+    probe: bool,
+) -> CommandResult<SaveLocations> {
+    let context = context(&state, game_id).await?;
+    let wine_root = gameyfin_core::prefix::wine_root(&context.prefix_dir);
+
+    let mut locations = SaveLocations {
+        saves_root: existing(context.saves_root.clone()),
+        staging: existing(context.staging.clone()),
+        prefix_home: gameyfin_core::prefix::prefix_home(&context.prefix_dir).and_then(existing),
+        prefix_drive_c: existing(wine_root.join("drive_c")),
+        install_dir: existing(context.install_dir.clone()),
+        home: home().and_then(existing),
+        detected: Vec::new(),
+    };
+    if !probe {
+        return Ok(locations);
+    }
+
+    let Ok(title) = resolve_saves(&app, &state, &context).await?.require_title() else {
+        return Ok(locations);
+    };
+    let ludusavi = ludusavi_for(&app, &state, &context).await?;
+    match ludusavi.preview(&title, &context.staging).await {
+        Ok(scan) => {
+            let mut folders: Vec<String> = Vec::new();
+            for file in scan.games.values().flat_map(|game| game.files.keys()) {
+                // The folder, not the file: it is what a file manager can be pointed at.
+                let Some(folder) = Path::new(file).parent().map(Path::to_path_buf) else {
+                    continue;
+                };
+                if let Some(folder) = existing(folder) {
+                    if !folders.contains(&folder) {
+                        folders.push(folder);
+                    }
+                }
+            }
+            locations.detected = folders;
+        }
+        Err(e) => tracing::debug!(game_id, error = %e, "could not scan for save folders"),
+    }
+    Ok(locations)
+}
+
+/// How a find was matched to a game in the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum SaveFindMatch {
+    /// This game was already backed up under that title.
+    Recorded,
+    /// The titles are the same, give or take capitals and punctuation.
+    Title,
+    /// Nothing in the library answers to it.
+    None,
+}
+
+/// Saves the helper found on this PC for one game.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SaveFind {
+    /// The title the save database knows it by, which is what a backup is filed under.
+    pub ludusavi_title: String,
+    pub files: u32,
+    pub bytes: u64,
+    /// Where the files are, so the user can look before deciding.
+    pub folder: Option<String>,
+    pub game_id: Option<i64>,
+    pub game_title: Option<String>,
+    pub matched: SaveFindMatch,
+    /// Whether the store already holds something for the game this was matched to.
+    pub already_backed_up: bool,
+}
+
+/// A scan of the whole machine can take minutes, where one game takes seconds.
+const SCAN_TIMEOUT: Duration = Duration::from_secs(3600);
+
+/// Compares titles the way a person would: case, spacing and punctuation are not the point.
+fn comparable(title: &str) -> String {
+    title
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Everything on this PC the save database recognises, whether or not Gameyfin installed it.
+///
+/// Runs in a config directory of its own, under its own lock, so a scan of the whole
+/// machine cannot stand between a game and the save it is waiting for at launch.
+#[tauri::command]
+pub async fn scan_this_pc(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<SaveFind>> {
+    let app_config = state.config_dir();
+    let binary = ludusavi_binary(&app, &app_config)?;
+    let settings = state.settings();
+    let _guard = state.save_scan_lock().lock_owned().await;
+
+    let scan_config = app_config.join("ludusavi-scan");
+    let staging = scan_config.join("preview");
+    let mut builder = ConfigBuilder::new(&staging);
+    // No redirects: a preview reports where files are, and a rewritten path would name a
+    // folder that does not exist on this machine.
+    if let Some(steam) = home().and_then(|home| gameyfin_core::steam::root(&home)) {
+        builder = builder.root(
+            gameyfin_saves::config::RootStore::Steam,
+            steam.to_string_lossy(),
+        );
+    }
+    // Every prefix Gameyfin has made, which is where a Windows game's saves are.
+    for root in settings.library_roots() {
+        let prefixes = InstallLayout::new(PathBuf::from(root)).prefixes_root();
+        let Ok(entries) = std::fs::read_dir(&prefixes) else {
+            continue;
+        };
+        for prefix in entries.flatten().map(|e| e.path()) {
+            if gameyfin_core::prefix::wine_root(&prefix)
+                .join("drive_c")
+                .is_dir()
+            {
+                builder = builder.wine_prefix(&prefix);
+            }
+        }
+    }
+    // The manifest is 17 MB and already downloaded; copying beats fetching it twice.
+    tokio::fs::create_dir_all(&scan_config)
+        .await
+        .context("could not prepare the scan")?;
+    let manifest = ludusavi_config_dir(&app_config).join("manifest.yaml");
+    if manifest.is_file() && !scan_config.join("manifest.yaml").is_file() {
+        let _ = tokio::fs::copy(&manifest, scan_config.join("manifest.yaml")).await;
+    }
+    builder
+        .write(&scan_config)
+        .await
+        .context("could not configure the scan")?;
+
+    let ludusavi = Ludusavi::with_runner(
+        binary,
+        &scan_config,
+        Box::new(gameyfin_saves::ProcessRunner::with_timeout(SCAN_TIMEOUT)),
+    )
+    .auto_update_manifest(settings.save_manifest_auto_update);
+
+    tracing::info!("scanning this PC for saves");
+    let scan = ludusavi
+        .preview_all(&staging)
+        .await
+        .map_err(|e| CommandError::msg(format!("could not scan for saves: {e}")))?;
+
+    // What the library can be matched against, without asking the helper again.
+    let games = state.games().await.unwrap_or_default();
+    let library = state.library();
+    let mut by_recorded_title: HashMap<String, i64> = HashMap::new();
+    let mut by_title: HashMap<String, i64> = HashMap::new();
+    for game in &games {
+        if let Some(title) = library.record(game.id).saves.ludusavi_title {
+            by_recorded_title.insert(title, game.id);
+        }
+        by_title.entry(comparable(&game.title)).or_insert(game.id);
+    }
+
+    let mut finds: Vec<SaveFind> = Vec::new();
+    for (title, found) in scan.games {
+        if !found.produced_data() {
+            continue;
+        }
+        let (game_id, matched) = match by_recorded_title.get(&title) {
+            Some(id) => (Some(*id), SaveFindMatch::Recorded),
+            None => match by_title.get(&comparable(&title)) {
+                Some(id) => (Some(*id), SaveFindMatch::Title),
+                None => (None, SaveFindMatch::None),
+            },
+        };
+        let folder = found
+            .files
+            .keys()
+            .next()
+            .and_then(|file| Path::new(file).parent())
+            .map(|folder| folder.to_string_lossy().into_owned());
+        finds.push(SaveFind {
+            game_title: game_id
+                .and_then(|id| games.iter().find(|g| g.id == id))
+                .map(|game| game.title.clone()),
+            already_backed_up: game_id
+                .is_some_and(|id| library.record(id).saves.last_backup_hash.is_some()),
+            files: found.files.len() as u32,
+            bytes: found.bytes(),
+            folder,
+            game_id,
+            matched,
+            ludusavi_title: title,
+        });
+    }
+    // The ones that can be acted on first, then alphabetically.
+    finds.sort_by(|a, b| {
+        (a.game_id.is_none(), comparable(&a.ludusavi_title))
+            .cmp(&(b.game_id.is_none(), comparable(&b.ludusavi_title)))
+    });
+    tracing::info!(found = finds.len(), "scan finished");
+    Ok(finds)
 }
 
 /// The name this machine would use, for the field's placeholder.

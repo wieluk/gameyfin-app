@@ -18,7 +18,7 @@ import type { LibraryEntry } from "@/types";
 import { DownloadsView } from "@/views/DownloadsView";
 import { InstalledView } from "@/views/InstalledView";
 import { LibraryView } from "@/views/LibraryView";
-import { SavesView, countNeedingAttention, useSaveStates } from "@/views/SavesView";
+import { SavesView, countNeedingAttention, useSaveOverview } from "@/views/SavesView";
 import { SettingsView } from "@/views/SettingsView";
 import { WelcomeView } from "@/views/WelcomeView";
 import { keys, useAppSettings, useEntries, useInvalidate, useStatus } from "@/lib/queries";
@@ -107,13 +107,9 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     ["downloading", "extracting", "extracted", "installing"].includes(e.state.kind),
   ).length;
 
-  // Saves that need a decision get the same badge treatment as pending downloads, so a
-  // conflict is visible without opening the tab.
-  const installedEntries = (entries.data ?? []).filter((e) =>
-    ["installed", "running"].includes(e.state.kind),
-  );
-  const saveStates = useSaveStates(installedEntries);
-  const conflicts = countNeedingAttention(saveStates.data);
+  // Saves needing a decision badge their tab too. One request covers the whole library.
+  const saves = useSaveOverview("installed");
+  const conflicts = countNeedingAttention(saves.data);
 
   // `game-state` is patched into the cache, since refetching that often freezes progress bars.
   // `library-changed` is structural, so it does refetch.
@@ -127,7 +123,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   useTauriEvent("wine-changed", () => void invalidate(keys.wine));
   useTauriEvent("proton-changed", () => void invalidate(keys.proton));
   useTauriEvent("graphics-changed", () => void invalidate(keys.graphics));
-  useTauriEvent("save-tool-changed", () => void invalidate(keys.saveTool, keys.saveStates));
+  useTauriEvent("save-tool-changed", () => void invalidate(keys.saveTool, keys.saveOverviewAll));
 
   return (
     <div className="flex min-h-0 flex-1">

@@ -39,7 +39,7 @@ export function SavePullPrompt() {
   async function answer(download: boolean) {
     const answered = await action.run(async () => {
       await backend.answerSavePullOffer(offer.gameId, download);
-      await invalidate(keys.saveStates);
+      await invalidate(keys.saveOverviewAll);
       // The launch stopped to ask, so it has to be started again either way.
       await backend.launch(offer.gameId);
       return true;

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
+import { SaveVersionList } from "@/components/SaveVersionList";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
-import { formatBytes, formatRelative } from "@/lib/format";
+import { keys } from "@/lib/queries";
 import { describe, isSaveState, outcomeOf } from "@/lib/saveState";
 import { useTauriEvent } from "@/lib/useTauriEvent";
-import type { LibraryEntry, SaveSyncState, SaveVersion } from "@/types";
+import type { LibraryEntry, SaveSyncState } from "@/types";
 
 /** The states that mean this game has saves worth a section of its own. */
 const SHOWN_STATES: SaveSyncState["kind"][] = [
@@ -25,8 +27,8 @@ const SHOWN_STATES: SaveSyncState["kind"][] = [
  */
 export function GameSaves({ entry }: { entry: LibraryEntry }) {
   const gameId = entry.game.id;
+  const queryClient = useQueryClient();
   const [state, setState] = useState<SaveSyncState | null>(null);
-  const [versions, setVersions] = useState<SaveVersion[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null);
@@ -37,17 +39,13 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
     const mine = ++request.current;
     try {
       const next = await backend.saveState(gameId);
-      // Only the states that imply something is actually stored are worth listing for.
-      const versions = ["in-sync", "local-newer", "remote-newer", "conflict"].includes(next.kind)
-        ? await backend.listSaveVersions(gameId)
-        : [];
       if (mine !== request.current) return;
       setState(next);
-      setVersions(versions);
+      await queryClient.invalidateQueries({ queryKey: keys.saveVersions(gameId) });
     } catch (e) {
       if (mine === request.current) setState({ kind: "failed", message: messageOf(e) });
     }
-  }, [gameId]);
+  }, [gameId, queryClient]);
 
   useEffect(() => {
     void load();
@@ -112,34 +110,13 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
           </p>
         )}
 
-        {versions.length > 0 && (
-          <ul className="mt-3 flex flex-col gap-1 border-t border-default-200/60 pt-3">
-            {versions.map((version) => (
-              <li key={version.id} className="flex items-center gap-3 text-[11px]">
-                <span className="min-w-0 flex-1 truncate text-foreground/70">
-                  {formatRelative(version.createdAt)}
-                  {version.deviceName ? ` from ${version.deviceName}` : ""}
-                </span>
-                <span className="shrink-0 text-foreground/40">
-                  {formatBytes(version.sizeBytes)}
-                </span>
-                {version.locked && (
-                  <span className="shrink-0 text-foreground/40" title="Kept forever">
-                    kept
-                  </span>
-                )}
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => act(() => backend.restoreSaves(gameId, version.id))}
-                  className="shrink-0 rounded px-2 py-0.5 text-foreground/60 hover:bg-default-100 disabled:opacity-50"
-                >
-                  Restore
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="mt-3 border-t border-default-200/60 pt-3">
+          <SaveVersionList
+            gameId={gameId}
+            busy={busy}
+            onRestore={(saveId) => act(() => backend.restoreSaves(gameId, saveId))}
+          />
+        </div>
       </div>
     </section>
   );

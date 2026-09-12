@@ -29,7 +29,11 @@ import type { ProtonStatus } from "@/bindings/ProtonStatus";
 import type { ProviderChoice } from "@/bindings/ProviderChoice";
 import type { PublicSettings } from "@/bindings/PublicSettings";
 import type { SaveBackend } from "@/bindings/SaveBackend";
+import type { SaveFind } from "@/bindings/SaveFind";
+import type { SaveLocations } from "@/bindings/SaveLocations";
+import type { SaveOverviewRow } from "@/bindings/SaveOverviewRow";
 import type { SavePathSettings } from "@/bindings/SavePathSettings";
+import type { SaveScope } from "@/bindings/SaveScope";
 import type { SaveSyncState } from "@/bindings/SaveSyncState";
 import type { SaveToolStatus } from "@/bindings/SaveToolStatus";
 import type { SaveVersion } from "@/bindings/SaveVersion";
@@ -174,6 +178,8 @@ export const backend = {
 
   /** Where one game's saves stand, without changing anything. */
   saveState: (gameId: number) => invoke<SaveSyncState>("save_state", { gameId }),
+  /** Every game's save status in one call. Never runs the backup helper. */
+  saveOverview: (scope: SaveScope) => invoke<SaveOverviewRow[]>("save_overview", { scope }),
   listSaveVersions: (gameId: number) => invoke<SaveVersion[]>("list_save_versions", { gameId }),
   /** Back up and upload. `force` accepts a stale base, keeping the losing version. */
   backupSaves: (gameId: number, force: boolean) =>
@@ -193,6 +199,11 @@ export const backend = {
   setSaveTitle: (gameId: number, title: string | null) =>
     invoke<SaveSyncState>("set_save_title", { gameId, title }),
   savePaths: (gameId: number) => invoke<SavePathSettings>("save_paths", { gameId }),
+  /** Folders worth opening or browsing for a game. `probe` scans for where saves really are. */
+  saveLocations: (gameId: number, probe = false) =>
+    invoke<SaveLocations>("save_locations", { gameId, probe }),
+  /** Every save the helper can find on this PC, whether or not Gameyfin installed the game. */
+  scanThisPc: () => invoke<SaveFind[]>("scan_this_pc"),
   /** Turn Windows/Linux path translation on for one game, leaving its paths alone. */
   setSaveCrossOs: (gameId: number, crossOs: boolean) =>
     invoke<SaveSyncState>("set_save_cross_os", { gameId, crossOs }),

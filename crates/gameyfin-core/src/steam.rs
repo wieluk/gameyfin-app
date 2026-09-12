@@ -382,6 +382,15 @@ pub fn shortcut_files(home: &Path) -> Vec<PathBuf> {
 }
 
 /// Whether Steam appears to be installed for this user at all.
+/// Steam's own folder, the one holding `steamapps` and `userdata`. A save scanner wants it
+/// because Proton keeps each game's prefix under `steamapps/compatdata`.
+pub fn root(home: &Path) -> Option<PathBuf> {
+    STEAM_ROOTS
+        .iter()
+        .map(|root| home.join(root))
+        .find(|root| root.join("userdata").is_dir())
+}
+
 pub fn is_installed(home: &Path) -> bool {
     STEAM_ROOTS
         .iter()
