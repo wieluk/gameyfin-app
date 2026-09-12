@@ -1,7 +1,7 @@
 //! Shared application state. Locks are std, never held across an await, so progress
 //! callbacks and drop guards can update state synchronously.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -123,6 +123,9 @@ pub struct AppState {
     /// A scan of the whole machine runs for minutes, in a config directory of its own, so
     /// it never stands between a game and the save it is waiting for at launch.
     save_scan_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Games whose automatic sync the user has asked to stop. Read between steps, never
+    /// mid-write, so skipping can never leave half a save behind.
+    save_skips: Arc<Mutex<HashSet<i64>>>,
     /// Stops two launches downloading the same runtime into the same directory.
     runtime_lock: tokio::sync::Mutex<()>,
     /// Freshness cache: `list_entries` runs several times a second during a transfer.
@@ -418,6 +421,10 @@ impl AppState {
 
     pub fn save_scan_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
         self.save_scan_lock.clone()
+    }
+
+    pub fn save_skips(&self) -> Arc<Mutex<HashSet<i64>>> {
+        self.save_skips.clone()
     }
 
     pub async fn runtime_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {

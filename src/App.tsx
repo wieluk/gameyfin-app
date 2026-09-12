@@ -8,6 +8,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { TitleBar } from "@/components/TitleBar";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { SavePullPrompt } from "@/components/SavePullPrompt";
+import { SaveSyncStatus } from "@/components/SaveSyncStatus";
 import { SetupWizard } from "@/components/SetupWizard";
 import { isMockBackend } from "@/lib/backend";
 import { useTauriEvent } from "@/lib/useTauriEvent";
@@ -129,6 +130,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     <div className="flex min-h-0 flex-1">
       <SetupWizard />
       <SavePullPrompt />
+      <SaveSyncStatus />
       <Sidebar downloadCount={pending} conflictCount={conflicts} />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <GamepadOverlay />

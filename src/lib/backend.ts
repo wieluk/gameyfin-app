@@ -204,6 +204,8 @@ export const backend = {
     invoke<SaveLocations>("save_locations", { gameId, probe }),
   /** Every save the helper can find on this PC, whether or not Gameyfin installed the game. */
   scanThisPc: () => invoke<SaveFind[]>("scan_this_pc"),
+  /** Stops the automatic sync a game is waiting on, if it has not passed the point of no return. */
+  skipSaveSync: (gameId: number) => invoke<void>("skip_save_sync", { gameId }),
   /** Turn Windows/Linux path translation on for one game, leaving its paths alone. */
   setSaveCrossOs: (gameId: number, crossOs: boolean) =>
     invoke<SaveSyncState>("set_save_cross_os", { gameId, crossOs }),

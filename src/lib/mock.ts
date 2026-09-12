@@ -109,6 +109,7 @@ const answers: Record<string, unknown> = {
   list_save_versions: [],
   save_overview: [],
   scan_this_pc: [],
+  skip_save_sync: null,
   save_locations: { savesRoot: null, staging: null, prefixHome: null, prefixDriveC: null, installDir: null, home: null, detected: [] },
   list_prefixes: [],
   rescan_library: 0,

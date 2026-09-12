@@ -334,6 +334,7 @@ pub fn run() {
             saves::save_paths,
             saves::save_locations,
             saves::scan_this_pc,
+            saves::skip_save_sync,
             saves::set_save_cross_os,
             saves::set_save_mapping,
             saves::migrate_saves,

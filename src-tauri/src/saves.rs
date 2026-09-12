@@ -517,6 +517,140 @@ pub async fn state_of(
     ))
 }
 
+/// Which side of a play session a sync belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum SyncMoment {
+    Launch,
+    Exit,
+}
+
+/// What an automatic sync is doing right now.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export)]
+pub enum SaveSyncPhase {
+    /// Asking the store what it holds, which is the moment skipping is free.
+    Checking,
+    Downloading,
+    /// Files are being written into the game's folders; stopping here would leave half a save.
+    Restoring,
+    Scanning,
+    Uploading,
+    Done {
+        state: SaveSyncState,
+    },
+    Skipped,
+    NothingToDo,
+    Failed {
+        message: String,
+    },
+}
+
+impl SaveSyncPhase {
+    /// Whether this is the end of it, so the window knows to close itself.
+    fn is_final(&self) -> bool {
+        matches!(
+            self,
+            SaveSyncPhase::Done { .. }
+                | SaveSyncPhase::Skipped
+                | SaveSyncPhase::NothingToDo
+                | SaveSyncPhase::Failed { .. }
+        )
+    }
+}
+
+/// What the window around a launch or an exit is told.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SaveSyncProgress {
+    pub game_id: i64,
+    pub title: String,
+    pub moment: SyncMoment,
+    pub phase: SaveSyncPhase,
+    /// False once stopping would leave the save half written, so the button can say so.
+    pub skippable: bool,
+}
+
+/// Reports what an automatic sync is doing, and carries the user's answer if they skip it.
+///
+/// Skipping never interrupts anything: it is read between steps, so the worst it costs is a
+/// download nobody used.
+pub struct SyncWatch {
+    app: AppHandle,
+    game_id: i64,
+    title: String,
+    moment: SyncMoment,
+    skips: Arc<std::sync::Mutex<HashSet<i64>>>,
+}
+
+impl SyncWatch {
+    pub fn new(
+        app: &AppHandle,
+        state: &AppState,
+        game_id: i64,
+        title: String,
+        moment: SyncMoment,
+    ) -> Self {
+        Self {
+            app: app.clone(),
+            game_id,
+            title,
+            moment,
+            skips: state.save_skips(),
+        }
+    }
+
+    fn say(&self, phase: SaveSyncPhase, skippable: bool) {
+        if phase.is_final() {
+            // Cleared here rather than at the next launch: a skip left behind would stop a
+            // sync the user never asked to stop.
+            crate::state::lock(&self.skips).remove(&self.game_id);
+        }
+        let _ = self.app.emit(
+            "save-sync-progress",
+            SaveSyncProgress {
+                game_id: self.game_id,
+                title: self.title.clone(),
+                moment: self.moment,
+                phase,
+                skippable,
+            },
+        );
+    }
+
+    /// A step that can still be abandoned without consequence.
+    fn step(&self, phase: SaveSyncPhase) {
+        self.say(phase, true);
+    }
+
+    /// A step that has to finish now it has started.
+    fn committed(&self, phase: SaveSyncPhase) {
+        self.say(phase, false);
+    }
+
+    fn finish(&self, phase: SaveSyncPhase) {
+        self.say(phase, false);
+    }
+
+    fn skipped(&self) -> bool {
+        crate::state::lock(&self.skips).contains(&self.game_id)
+    }
+}
+
+/// Stops the sync a game is waiting on, if it has not reached the point of no return.
+#[tauri::command]
+pub async fn skip_save_sync(state: State<'_, AppState>, game_id: i64) -> CommandResult<()> {
+    crate::state::lock(&state.save_skips()).insert(game_id);
+    Ok(())
+}
+
 /// Which games the Saves tab is asking about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, ts_rs::TS)]
 #[serde(rename_all = "kebab-case")]
@@ -718,7 +852,7 @@ pub async fn backup_saves(
     game_id: i64,
     force: bool,
 ) -> CommandResult<SaveSyncState> {
-    do_backup(&app, &state, game_id, force)
+    do_backup(&app, &state, game_id, force, None)
         .await
         .inspect_err(|e| tracing::error!(game_id, error = %e, "backing up saves failed"))
 }
@@ -728,6 +862,7 @@ async fn do_backup(
     state: &AppState,
     game_id: i64,
     force: bool,
+    watch: Option<&SyncWatch>,
 ) -> CommandResult<SaveSyncState> {
     ensure_installation_id(state).await?;
     let settings = state.settings();
@@ -737,6 +872,9 @@ async fn do_backup(
         Err(unmatched) => return Ok(unmatched),
     };
 
+    if let Some(watch) = watch {
+        watch.step(SaveSyncPhase::Scanning);
+    }
     let scan = back_up(app, state, &context, &title).await?;
     if scan.files == 0 {
         // Not an error, but the user pressed a button and deserves to hear it found nothing.
@@ -754,6 +892,18 @@ async fn do_backup(
         return Ok(next);
     }
 
+    if watch.is_some_and(SyncWatch::skipped) {
+        tracing::info!(
+            game_id,
+            "the upload was skipped; the backup stays on this PC"
+        );
+        return Ok(SaveSyncState::LocalNewer {
+            local_at: context.record_saves.last_backup_at.clone(),
+        });
+    }
+    if let Some(watch) = watch {
+        watch.committed(SaveSyncPhase::Uploading);
+    }
     let sync = sync_for(state, &context, &settings).await?;
     let outcome = sync
         .upload(
@@ -796,7 +946,7 @@ pub async fn restore_saves(
     game_id: i64,
     save_id: Option<String>,
 ) -> CommandResult<SaveSyncState> {
-    do_restore(&app, &state, game_id, save_id)
+    do_restore(&app, &state, game_id, save_id, None)
         .await
         .inspect_err(|e| tracing::error!(game_id, error = %e, "restoring saves failed"))
 }
@@ -806,6 +956,7 @@ async fn do_restore(
     state: &AppState,
     game_id: i64,
     save_id: Option<String>,
+    watch: Option<&SyncWatch>,
 ) -> CommandResult<SaveSyncState> {
     let settings = state.settings();
     let context = context(state, game_id).await?;
@@ -827,8 +978,23 @@ async fn do_restore(
             .await?
             .ok_or_else(|| CommandError::msg("There is no save on the server yet."))?,
     };
+    if let Some(watch) = watch {
+        watch.step(SaveSyncPhase::Downloading);
+    }
     sync.fetch(game_id, &version.id).await?;
 
+    // The last moment stopping costs nothing: the archive is downloaded but no file of the
+    // game's has been touched.
+    if watch.is_some_and(SyncWatch::skipped) {
+        tracing::info!(game_id, "the restore was skipped before it started");
+        return Ok(SaveSyncState::RemoteNewer {
+            remote_at: version.created_at,
+            device: version.device_name,
+        });
+    }
+    if let Some(watch) = watch {
+        watch.committed(SaveSyncPhase::Restoring);
+    }
     let ludusavi = ludusavi_for(app, state, &context).await?;
     ludusavi
         .restore(&title, &context.staging)
@@ -855,9 +1021,9 @@ pub async fn resolve_save_conflict(
     match choice {
         // Keeping both is what the store does anyway: the remote version stays in the history.
         ConflictChoice::KeepLocal | ConflictChoice::KeepBoth => {
-            do_backup(&app, &state, game_id, true).await
+            do_backup(&app, &state, game_id, true, None).await
         }
-        ConflictChoice::KeepRemote => do_restore(&app, &state, game_id, None).await,
+        ConflictChoice::KeepRemote => do_restore(&app, &state, game_id, None, None).await,
     }
 }
 
@@ -1498,6 +1664,15 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
     if !settings.save_sync_enabled || !settings.sync_saves_on_launch {
         return LaunchGate::Proceed;
     }
+    let watch = SyncWatch::new(
+        app,
+        state,
+        game_id,
+        state.title(game_id).await,
+        SyncMoment::Launch,
+    );
+    watch.step(SaveSyncPhase::Checking);
+
     match state_of(app, state, game_id).await {
         Ok(SaveSyncState::RemoteNewer { remote_at, device }) => {
             let local = state.library().record(game_id).saves;
@@ -1507,24 +1682,44 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
             if save_sync::never_synced(&local) {
                 if local.pull_offer_answered {
                     tracing::info!(game_id, "keeping the local saves the user chose to keep");
+                    watch.finish(SaveSyncPhase::NothingToDo);
                     return LaunchGate::Proceed;
                 }
                 if let Some(offer) = pull_offer(state, game_id, remote_at, device).await {
                     tracing::info!(game_id, "offering to download saves before the first play");
+                    // Closes this window before the prompt opens: two dialogs about the same
+                    // save at once is one too many.
+                    watch.finish(SaveSyncPhase::Skipped);
                     let _ = app.emit("save-pull-offer", offer);
                     return LaunchGate::AwaitingSaveDecision;
                 }
             }
-            if let Err(e) = do_restore(app, state, game_id, None).await {
-                tracing::warn!(game_id, error = %e, "could not restore the save before launch");
+            if watch.skipped() {
+                watch.finish(SaveSyncPhase::Skipped);
+                return LaunchGate::Proceed;
+            }
+            match do_restore(app, state, game_id, None, Some(&watch)).await {
+                Ok(next) => watch.finish(SaveSyncPhase::Done { state: next }),
+                Err(e) => {
+                    tracing::warn!(game_id, error = %e, "could not restore the save before launch");
+                    watch.finish(SaveSyncPhase::Failed {
+                        message: e.to_string(),
+                    });
+                }
             }
         }
         Ok(other) if save_sync::needs_attention(&other) => {
             tracing::info!(game_id, "save needs a decision before it can be restored");
             emit_state(app, game_id, &other);
+            watch.finish(SaveSyncPhase::Done { state: other });
         }
-        Ok(_) => {}
-        Err(e) => tracing::warn!(game_id, error = %e, "could not check saves before launch"),
+        Ok(_) => watch.finish(SaveSyncPhase::NothingToDo),
+        Err(e) => {
+            tracing::warn!(game_id, error = %e, "could not check saves before launch");
+            watch.finish(SaveSyncPhase::Failed {
+                message: e.to_string(),
+            });
+        }
     }
     LaunchGate::Proceed
 }
@@ -1565,7 +1760,7 @@ pub async fn answer_save_pull_offer(
     download: bool,
 ) -> CommandResult<()> {
     if download {
-        let restored = do_restore(&app, &state, game_id, None).await?;
+        let restored = do_restore(&app, &state, game_id, None, None).await?;
         emit_state(&app, game_id, &restored);
     }
     state
@@ -1581,6 +1776,15 @@ pub async fn after_exit(app: &AppHandle, state: &AppState, game_id: i64) {
     if !settings.save_sync_enabled || !settings.sync_saves_on_exit {
         return;
     }
+    let watch = SyncWatch::new(
+        app,
+        state,
+        game_id,
+        state.title(game_id).await,
+        SyncMoment::Exit,
+    );
+    watch.step(SaveSyncPhase::Checking);
+
     // Sync is on by default and many servers predate it, so one request here spares a
     // backup the upload would only discard.
     if settings.save_backend == SaveBackend::Server {
@@ -1590,16 +1794,24 @@ pub async fn after_exit(app: &AppHandle, state: &AppState, game_id: i64) {
                 Err(gameyfin_api::ApiError::SaveSyncUnsupported { .. }
                     | gameyfin_api::ApiError::SaveSyncDisabled)
             ) {
+                watch.finish(SaveSyncPhase::NothingToDo);
                 return;
             }
         }
     }
-    match do_backup(app, state, game_id, false).await {
-        Ok(state) if save_sync::needs_attention(&state) => {
-            tracing::info!(game_id, "save upload needs a decision");
+    match do_backup(app, state, game_id, false, Some(&watch)).await {
+        Ok(next) => {
+            if save_sync::needs_attention(&next) {
+                tracing::info!(game_id, "save upload needs a decision");
+            }
+            watch.finish(SaveSyncPhase::Done { state: next });
         }
-        Ok(_) => {}
-        Err(e) => tracing::warn!(game_id, error = %e, "could not back up the save after playing"),
+        Err(e) => {
+            tracing::warn!(game_id, error = %e, "could not back up the save after playing");
+            watch.finish(SaveSyncPhase::Failed {
+                message: e.to_string(),
+            });
+        }
     }
 }
 
