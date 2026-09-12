@@ -32,8 +32,6 @@
     "targets": [
       "deb",
       "rpm",
-      "appimage",
-      "msi",
       "nsis"
     ],
     "externalBin": [

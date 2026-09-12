@@ -39,12 +39,15 @@ Installers land in `build/`.
 
 | Platform | Produces | Needs |
 |---|---|---|
-| Linux | `.deb`, `.rpm`, `.AppImage` | `dpkg-deb`, `rpmbuild`, `xdg-utils` |
+| Linux | `.deb`, `.rpm` | `dpkg-deb`, `rpmbuild` |
 | Linux | `.flatpak` | `flatpak`, `flatpak-builder`, GNOME 50 runtime + SDK |
-| Windows | `.msi`, `.exe` | WiX and NSIS, installed by the Tauri CLI on first run |
+| Windows | `.exe` | NSIS, installed by the Tauri CLI on first run |
 
 Installers cannot be cross-built; `.github/workflows/release.yml` builds each platform on
-its own runner.
+its own runner. The Linux packages are built in an Ubuntu 22.04 container: a binary needs
+the glibc it was built against or newer, and the runner's own 24.04 would leave them
+unable to start on anything older. The Flatpak, which carries its own runtime, is the
+answer for distributions the deb and the rpm cannot reach.
 
 ## Installing
 

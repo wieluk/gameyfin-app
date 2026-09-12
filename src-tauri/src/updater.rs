@@ -1,6 +1,5 @@
-//! Keeping the app up to date. What a package may do depends on who owns its files: an
-//! AppImage or Windows install replaces itself, a Flatpak asks the host, deb and rpm can
-//! only report that a release exists, and a build tree is left alone.
+//! Keeping the app up to date. What a package may do depends on who owns its files: Windows
+//! replaces itself, a Flatpak asks the host, deb and rpm only report a release.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +16,7 @@ const RELEASES_PAGE: &str = "https://github.com/wieluk/gameyfin-app/releases/lat
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
 pub enum Channel {
-    /// Tauri's signed updater replaces the bundle in place. AppImage, MSI, NSIS.
+    /// Tauri's signed updater replaces the bundle in place. NSIS.
     SelfInstall,
     /// `flatpak update`, run on the host because we are inside the sandbox.
     Flatpak,
@@ -42,14 +41,10 @@ pub fn detect_channel() -> Channel {
     if std::env::var_os("FLATPAK_ID").is_some() {
         return Channel::Flatpak;
     }
-    if std::env::var_os("APPIMAGE").is_some() {
-        return Channel::SelfInstall;
-    }
     if cfg!(windows) {
         return Channel::SelfInstall;
     }
-    // A release build on Linux that is neither AppImage nor Flatpak came from the deb or
-    // the rpm, both of which are owned by the system package manager.
+    // Any other Linux release build is owned by apt or dnf, so it can only report a release.
     Channel::SystemPackage
 }
 

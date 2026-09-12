@@ -9,14 +9,12 @@ permissions:
   contents: read
 
 jobs:
-  # A tag can point at any commit, so re-run CI before building the release.
   test:
     uses: ./.github/workflows/ci.yml
 
   bundle:
     name: bundle (${{ matrix.os }})
     needs: test
-    # Creates the draft release and uploads to it.
     permissions:
       contents: write
     runs-on: ${{ matrix.os }}
@@ -26,9 +24,16 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
     steps:
+      - name: Install build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev patchelf libudev-dev
+
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          # Every build step below runs third-party code; none of it needs the token.
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
@@ -37,19 +42,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-      # Tauri's Linux build needs the system WebKit/GTK development packages.
-      - name: Install Linux GUI dependencies
-        if: matrix.os == 'ubuntu-24.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev libsoup-3.0-dev patchelf libudev-dev xdg-utils
-
-      # The tag is the only source of truth for the version. Through the environment, so
-      # a tag name cannot become part of the command.
       - name: Set the version from the tag
         if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         env:
           TAG: ${{ github.ref_name }}
         run: node scripts/set-version.mjs "$TAG"
@@ -59,8 +54,6 @@ jobs:
       # Declared as sidecars, so the bundle cannot be built without them on disk.
       - run: npm run fetch-sidecars
 
-      # Tauri signs last, so a missing key wasted the whole build and then failed with a
-      # message that named neither the variable nor the fix.
       - name: Check the updater signing setup
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -69,18 +62,14 @@ jobs:
       - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signs the updater artifacts, and `createUpdaterArtifacts` makes that mandatory:
-          # without a key the build fails at the end rather than skipping them.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          # A manual run builds the bundles and stops there: only a tag makes a release.
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: Gameyfin Desktop ${{ github.ref_name }}
           releaseDraft: true
 
-      # The Flatpak is assembled from this deb. Handing it over is what keeps the flatpak
-      # job from building the whole app a second time.
+      # The flatpak job repackages this deb rather than building the app again.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: matrix.os == 'ubuntu-24.04'
         with:
@@ -92,8 +81,6 @@ jobs:
     name: flatpak
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # The draft release must exist before the bundle can be attached to it, and the deb
-    # this repackages comes from that job.
     needs: bundle
     permissions:
       contents: write
@@ -117,9 +104,6 @@ jobs:
             https://flathub.org/repo/flathub.flatpakrepo
           flatpak install -y --user flathub org.gnome.Platform//50 org.gnome.Sdk//50
 
-      # Repackaged from the deb the bundle job already built, rather than compiling the
-      # whole app a second time. The version is read from the deb's filename, so this
-      # needs no toolchain, no sidecar and no version step of its own.
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: deb-bundle
@@ -159,21 +143,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p pages/repo
-          # An empty directory is not an ostree repo, and importing into one fails with
-          # "opendir(objects): No such file or directory". That is every first release,
-          # and any release after the gh-pages checkout above could not find the branch.
+
           if [ ! -d pages/repo/objects ]; then
             ostree init --mode=archive-z2 --repo=pages/repo
           fi
-          # Git keeps no empty directories, so the repo fetched from gh-pages lost these and
-          # `--generate-static-deltas` fails with "opendir(refs/remotes)". `ostree init` skips them.
+
           mkdir -p pages/repo/{extensions,objects,state,tmp/cache} pages/repo/refs/{heads,mirrors,remotes}
           flatpak build-import-bundle pages/repo build/*.flatpak
           flatpak build-update-repo --generate-static-deltas --prune pages/repo
 
-          # The file a user opens to add the remote. Unsigned: HTTPS from a fixed origin.
-          # Addresses come from the repository running this, so a fork publishes its own
-          # Pages site rather than pointing everyone it reaches at somebody else's.
           cat > pages/repo/gameyfin.flatpakrepo <<EOF
           [Flatpak Repo]
           Title=Gameyfin

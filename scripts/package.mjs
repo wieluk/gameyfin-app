@@ -25,10 +25,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "build");
 const BUNDLE_DIR = join(ROOT, "target", "release", "bundle");
 
-/** Bundle types worth attempting per platform. */
+/** Bundle types worth attempting per platform. Must match `bundle.targets` in tauri.conf.json. */
 const BUNDLES = {
-  linux: ["deb", "rpm", "appimage"],
-  win32: ["msi", "nsis"],
+  linux: ["deb", "rpm"],
+  win32: ["nsis"],
 };
 
 const platform = process.platform;
@@ -96,7 +96,7 @@ if (!existsSync(BUNDLE_DIR)) {
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
-const INSTALLER = /\.(deb|rpm|AppImage|msi|exe)$/i;
+const INSTALLER = /\.(deb|rpm|exe)$/i;
 const collected = [];
 const stale = [];
 
@@ -141,8 +141,7 @@ if (buildFailed) {
   if (platform === "linux") {
     console.error(
       "Read the error above: it usually names what is missing. Common ones are libudev-dev\n" +
-        "(systemd-devel on Fedora), the WebKit and GTK dev packages, and xdg-utils, which the\n" +
-        "AppImage bundler needs at /usr/bin/xdg-open.",
+        "(systemd-devel on Fedora) and the WebKit and GTK dev packages.",
     );
   }
   process.exit(1);
