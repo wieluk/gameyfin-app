@@ -28,8 +28,13 @@ import type { ProtonFamily } from "@/bindings/ProtonFamily";
 import type { ProtonStatus } from "@/bindings/ProtonStatus";
 import type { ProviderChoice } from "@/bindings/ProviderChoice";
 import type { PublicSettings } from "@/bindings/PublicSettings";
+import type { RestoreReport } from "@/bindings/RestoreReport";
 import type { SaveBackend } from "@/bindings/SaveBackend";
+import type { SaveFind } from "@/bindings/SaveFind";
+import type { SaveLocations } from "@/bindings/SaveLocations";
+import type { SaveOverviewRow } from "@/bindings/SaveOverviewRow";
 import type { SavePathSettings } from "@/bindings/SavePathSettings";
+import type { SaveScope } from "@/bindings/SaveScope";
 import type { SaveSyncState } from "@/bindings/SaveSyncState";
 import type { SaveToolStatus } from "@/bindings/SaveToolStatus";
 import type { SaveVersion } from "@/bindings/SaveVersion";
@@ -156,6 +161,8 @@ export const backend = {
   installProton: (family: ProtonFamily, tag?: string) =>
     invoke<InstalledProton>("install_proton", { family, tag }),
   removeProton: (name: string) => invoke<void>("remove_proton", { name }),
+  /** Flatpak only: installs the runtime's 32-bit libraries on the host. */
+  install32bitSupport: () => invoke<string>("install_32bit_support"),
 
   shortcutStatus: (gameId: number) => invoke<ShortcutStatus>("shortcut_status", { gameId }),
   setShortcut: (gameId: number, location: ShortcutLocation, enabled: boolean) =>
@@ -172,16 +179,26 @@ export const backend = {
 
   /** Where one game's saves stand, without changing anything. */
   saveState: (gameId: number) => invoke<SaveSyncState>("save_state", { gameId }),
+  /** Every game's save status in one call. Never runs the backup helper. */
+  saveOverview: (scope: SaveScope) => invoke<SaveOverviewRow[]>("save_overview", { scope }),
   listSaveVersions: (gameId: number) => invoke<SaveVersion[]>("list_save_versions", { gameId }),
   /** Back up and upload. `force` accepts a stale base, keeping the losing version. */
   backupSaves: (gameId: number, force: boolean) =>
     invoke<SaveSyncState>("backup_saves", { gameId, force }),
-  /** Restore a version, newest if none is named. */
+  /** Restore a version, newest if none is named. Says where the files went. */
   restoreSaves: (gameId: number, saveId?: string) =>
-    invoke<SaveSyncState>("restore_saves", { gameId, saveId }),
-  /** Answers the first-play offer to download existing saves. */
-  answerSavePullOffer: (gameId: number, download: boolean) =>
-    invoke<void>("answer_save_pull_offer", { gameId, download }),
+    invoke<RestoreReport>("restore_saves", { gameId, saveId }),
+  /** Delete stored versions for good. */
+  deleteSaveVersions: (gameId: number, saveIds: string[]) =>
+    invoke<void>("delete_save_versions", { gameId, saveIds }),
+  /** Keep a version safe from pruning, or let it be pruned again. */
+  setSaveLocked: (gameId: number, saveId: string, locked: boolean) =>
+    invoke<void>("set_save_locked", { gameId, saveId, locked }),
+  /** Every stored save, for every game. Answers how many were deleted. */
+  deleteAllSaves: () => invoke<number>("delete_all_saves"),
+  /** Answers the first-start offer: the version to restore, or null to keep this PC's save. */
+  answerSavePullOffer: (gameId: number, saveId: string | null) =>
+    invoke<void>("answer_save_pull_offer", { gameId, saveId }),
   resolveSaveConflict: (gameId: number, choice: ConflictChoice) =>
     invoke<SaveSyncState>("resolve_save_conflict", { gameId, choice }),
   /** Search the save manifest for what the user typed. Best match first. */
@@ -191,6 +208,13 @@ export const backend = {
   setSaveTitle: (gameId: number, title: string | null) =>
     invoke<SaveSyncState>("set_save_title", { gameId, title }),
   savePaths: (gameId: number) => invoke<SavePathSettings>("save_paths", { gameId }),
+  /** Folders worth opening or browsing for a game. `probe` scans for where saves really are. */
+  saveLocations: (gameId: number, probe = false) =>
+    invoke<SaveLocations>("save_locations", { gameId, probe }),
+  /** Every save the helper can find on this PC, whether or not Gameyfin installed the game. */
+  scanThisPc: () => invoke<SaveFind[]>("scan_this_pc"),
+  /** Stops the automatic sync a game is waiting on, if it has not passed the point of no return. */
+  skipSaveSync: (gameId: number) => invoke<void>("skip_save_sync", { gameId }),
   /** Turn Windows/Linux path translation on for one game, leaving its paths alone. */
   setSaveCrossOs: (gameId: number, crossOs: boolean) =>
     invoke<SaveSyncState>("set_save_cross_os", { gameId, crossOs }),
@@ -200,9 +224,9 @@ export const backend = {
     redirects: Array<[string, string]>,
     customPaths: string[],
   ) => invoke<SaveSyncState>("set_save_mapping", { gameId, crossOs, redirects, customPaths }),
-  /** Copy saves between two locations. The source is left alone. */
-  migrateSaves: (from: SaveBackend, to: SaveBackend, allVersions: boolean) =>
-    invoke<MigrationSummary>("migrate_saves", { from, to, allVersions }),
+  /** Copy saves from another location into the one in use. The source is left alone. */
+  migrateSaves: (from: SaveBackend, allVersions: boolean) =>
+    invoke<MigrationSummary>("migrate_saves", { from, allVersions }),
   saveToolStatus: () => invoke<SaveToolStatus>("save_tool_status"),
   /** Refresh the game database. It changes far more often than the helper itself. */
   updateSaveManifest: () => invoke<ManifestInfo>("update_save_manifest"),

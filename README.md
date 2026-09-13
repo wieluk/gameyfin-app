@@ -39,18 +39,33 @@ Installers land in `build/`.
 
 | Platform | Produces | Needs |
 |---|---|---|
-| Linux | `.deb`, `.rpm`, `.AppImage` | `dpkg-deb`, `rpmbuild`, `xdg-utils` |
+| Linux | `.deb`, `.rpm` | `dpkg-deb`, `rpmbuild` |
 | Linux | `.flatpak` | `flatpak`, `flatpak-builder`, GNOME 50 runtime + SDK |
-| Windows | `.msi`, `.exe` | WiX and NSIS, installed by the Tauri CLI on first run |
+| Windows | `.exe` | NSIS, installed by the Tauri CLI on first run |
 
 Installers cannot be cross-built; `.github/workflows/release.yml` builds each platform on
-its own runner.
+its own runner. The Linux packages are built in an Ubuntu 22.04 container: a binary needs
+the glibc it was built against or newer, and the runner's own 24.04 would leave them
+unable to start on anything older. The Flatpak, which carries its own runtime, is the
+answer for distributions the deb and the rpm cannot reach.
 
 ## Installing
 
 Grab a build from the [releases](https://github.com/wieluk/gameyfin-app/releases) page.
 The Windows installers are not code signed, so SmartScreen warns on first run: choose
 "More info" then "Run anyway".
+
+On the Flatpak, 32-bit support is a separate download. Flatpak only pulls an app's
+extensions from the remote the app came from, and a freedesktop runtime extension is not
+something Gameyfin's own repository carries, so it never arrives with the app. Installers
+and older games are 32-bit and need it to run in the Proton container rather than on Wine:
+
+```bash
+flatpak install --user flathub org.freedesktop.Platform.Compat.i386//25.08
+```
+
+Settings, Compatibility offers a button that runs exactly that, and first-time setup offers
+it as a step. Restart Gameyfin afterwards: extensions are mounted when the sandbox starts.
 
 ## Licence
 

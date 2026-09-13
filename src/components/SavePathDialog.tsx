@@ -2,6 +2,41 @@ import { useEffect, useState } from "react";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { Modal } from "./Modal";
+import type { SaveLocations } from "@/bindings/SaveLocations";
+
+/** Where browsing starts: the game's own Windows folder if it has one, else this PC's. */
+function saveHome(locations: SaveLocations | null): string | undefined {
+  return (
+    locations?.detected[0] ??
+    locations?.prefixHome ??
+    locations?.prefixDriveC ??
+    locations?.installDir ??
+    locations?.home ??
+    undefined
+  );
+}
+
+/** A folder picker for a path field, so nobody has to type one out. */
+function Browse({
+  startIn,
+  onPick,
+}: {
+  startIn?: string;
+  onPick: (path: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        const picked = await backend.pickFolder(startIn);
+        if (picked) onPick(picked);
+      }}
+      className="shrink-0 rounded-lg border border-default-200 px-2.5 py-1.5 text-[11px] text-foreground/70 hover:bg-default-100"
+    >
+      Browse…
+    </button>
+  );
+}
 
 /** One rewrite: where the save actually is, and what it should be recorded as. */
 interface Mapping {
@@ -21,7 +56,7 @@ export function SavePathDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-
+  const [locations, setLocations] = useState<SaveLocations | null>(null);
   const [folders, setFolders] = useState<string[]>([""]);
   const [mappings, setMappings] = useState<Mapping[]>([{ source: "", target: "" }]);
   const [translate, setTranslate] = useState(false);
@@ -46,6 +81,14 @@ export function SavePathDialog({
         setLoaded(true);
       } catch (e) {
         if (!cancelled) setError(messageOf(e));
+      }
+      try {
+        // Asked with a scan: this is the one place worth waiting a moment to be told
+        // where the game's saves actually turned out to be.
+        const found = await backend.saveLocations(gameId, true);
+        if (!cancelled) setLocations(found);
+      } catch {
+        // Only the browse buttons' starting folder; typing a path still works.
       }
     })();
     return () => {
@@ -105,6 +148,12 @@ export function SavePathDialog({
                 setFolders((c) => c.map((v, i) => (i === index ? e.target.value : v)))
               }
             />
+            <Browse
+              startIn={folder || saveHome(locations)}
+              onPick={(picked) =>
+                setFolders((c) => c.map((v, i) => (i === index ? picked : v)))
+              }
+            />
             <button
               type="button"
               aria-label="Remove this folder"
@@ -115,6 +164,13 @@ export function SavePathDialog({
             </button>
           </div>
         ))}
+        {locations?.prefixHome && (
+          <p className="mb-2 text-[11px] leading-relaxed text-foreground/50">
+            Browse starts inside this game&rsquo;s Windows folder. A folder picked in there
+            is stored by its place in it, not by its path on this PC, so the save still
+            lands in the right place on a Windows machine.
+          </p>
+        )}
         <button
           type="button"
           onClick={() => setFolders((c) => [...c, ""])}
@@ -174,8 +230,11 @@ export function SavePathDialog({
           <span>
             <span className="text-xs">Translate between Windows and Linux paths</span>
             <span className="block text-[11px] text-foreground/50">
-              For a Windows game played through a compatibility layer. Best effort, and it
-              does not carry registry settings.
+              Only for a save that crossed between a Windows machine and a native Linux
+              build. A Windows game played here through Proton needs nothing: its saves
+              already travel by way of its Windows folder. Turning this on replaces that
+              with Ludusavi&rsquo;s own translation, which is best effort and does not
+              carry registry settings.
             </span>
           </span>
         </label>

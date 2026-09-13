@@ -193,6 +193,9 @@ pub struct ProtonStatus {
     pub launcher_problem: Option<String>,
     /// Whether 32-bit programs can run in the container at all.
     pub supports_32bit: bool,
+    /// Whether the missing 32-bit support is the Flatpak extension, which the app can
+    /// install for the user. False everywhere else, where it is the distribution's job.
+    pub missing_i386_extension: bool,
 }
 
 #[tauri::command]
@@ -244,7 +247,173 @@ pub async fn proton_status(state: State<'_, AppState>) -> CommandResult<ProtonSt
         launcher_version: launcher.as_ref().ok().and_then(|l| l.version.clone()),
         launcher_problem: launcher.err(),
         supports_32bit: gameyfin_core::runtime::has_32bit_support(),
+        missing_i386_extension: missing_i386_extension(),
     })
+}
+
+/// The Flatpak ref with the runtime's 32-bit libraries. Its version must match the manifest's
+/// freedesktop base, which a test checks.
+const I386_EXTENSION: &str = "org.freedesktop.Platform.Compat.i386//25.08";
+
+/// Whether this is a Flatpak missing its 32-bit extension. Flatpak never installs it with the
+/// app, since neither the bundle nor our repository carries freedesktop extensions.
+fn missing_i386_extension() -> bool {
+    gameyfin_core::runtime::in_flatpak() && !gameyfin_core::runtime::has_32bit_support()
+}
+
+/// Where a flatpak installation lives. An extension has to be installed into one that has
+/// a remote carrying it, and `--user` is not it when flathub was added system-wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    User,
+    System,
+}
+
+impl Scope {
+    fn flag(self) -> &'static str {
+        match self {
+            Scope::User => "--user",
+            Scope::System => "--system",
+        }
+    }
+
+    fn other(self) -> Self {
+        match self {
+            Scope::User => Scope::System,
+            Scope::System => Scope::User,
+        }
+    }
+}
+
+/// Which installation this app came from: a user install lives under home, a system one under `/var`.
+fn scope_of(flatpak_info: &str) -> Option<Scope> {
+    let path = flatpak_info
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("app-path="))?;
+    Some(
+        if path.contains("/.local/share/flatpak/") || path.starts_with("/home/") {
+            Scope::User
+        } else {
+            Scope::System
+        },
+    )
+}
+
+fn runtime_of(flatpak_info: &str) -> Option<String> {
+    flatpak_info
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("runtime="))
+        .map(|runtime| runtime.trim().to_string())
+}
+
+async fn holds(scope: Scope, reference: &str) -> bool {
+    host_flatpak(&["info", scope.flag(), reference])
+        .await
+        .is_ok_and(|output| output.status.success())
+}
+
+/// Runs a flatpak command on the host, since it cannot run inside the sandbox.
+async fn host_flatpak(args: &[&str]) -> Result<std::process::Output, String> {
+    tokio::process::Command::new(gameyfin_core::runtime::FLATPAK_SPAWN)
+        .arg("--host")
+        .arg("flatpak")
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| format!("could not ask the host: {e}"))
+}
+
+async fn has_remote(scope: Scope, name: &str) -> bool {
+    let Ok(output) = host_flatpak(&["remotes", scope.flag(), "--columns=name"]).await else {
+        return false;
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim() == name)
+}
+
+const FLATHUB: &str = "flathub";
+const FLATHUB_URL: &str = "https://flathub.org/repo/flathub.flatpakrepo";
+
+/// Installs the runtime's 32-bit libraries, on the host, since flatpak cannot run inside
+/// the sandbox. Returns what to tell the user.
+#[tauri::command]
+pub async fn install_32bit_support() -> CommandResult<String> {
+    if !gameyfin_core::runtime::in_flatpak() {
+        return Err(CommandError::msg(
+            "32-bit support comes from your distribution here, not from Gameyfin.",
+        ));
+    }
+
+    // Where the runtime is, since this extends the runtime rather than Gameyfin; then
+    // where Gameyfin is; then wherever flathub happens to be.
+    let info = std::fs::read_to_string("/.flatpak-info").unwrap_or_default();
+    let app_scope = scope_of(&info).unwrap_or(Scope::System);
+    let mut preferred = app_scope;
+    if let Some(runtime) = runtime_of(&info) {
+        for candidate in [Scope::User, Scope::System] {
+            if holds(candidate, &runtime).await {
+                preferred = candidate;
+                break;
+            }
+        }
+    }
+    let mut scope = None;
+    for candidate in [preferred, preferred.other()] {
+        if has_remote(candidate, FLATHUB).await {
+            scope = Some(candidate);
+            break;
+        }
+    }
+    let Some(scope) = scope else {
+        return Err(CommandError::Message(format!(
+            "Flathub is not set up on this system, and that is where the 32-bit libraries \
+             come from. Run `flatpak remote-add --if-not-exists --user {FLATHUB} {FLATHUB_URL}` \
+             and then `flatpak install --user {FLATHUB} {I386_EXTENSION}`."
+        )));
+    };
+
+    let manually = format!(
+        "Run `flatpak install {} {FLATHUB} {I386_EXTENSION}` yourself.",
+        scope.flag()
+    );
+    tracing::info!(scope = ?scope, "installing the 32-bit compatibility extension");
+    let output = host_flatpak(&[
+        "install",
+        scope.flag(),
+        "--noninteractive",
+        FLATHUB,
+        I386_EXTENSION,
+    ])
+    .await
+    .map_err(|e| CommandError::Message(format!("{e}. {manually}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        // A system install asks for a password through polkit, which a session with no agent
+        // cannot answer.
+        let refused = [
+            "not allowed for user",
+            "polkit",
+            "authoriz",
+            "permission denied",
+        ]
+        .iter()
+        .any(|needle| detail.to_ascii_lowercase().contains(needle));
+        let hint = if scope == Scope::System && refused {
+            " Flathub is set up for the whole system here, so installing into it needs \
+             administrator rights."
+        } else {
+            ""
+        };
+        return Err(CommandError::Message(format!(
+            "the install did not finish: {detail}.{hint} {manually}"
+        )));
+    }
+    tracing::info!("installed the 32-bit compatibility extension");
+    Ok("Installed. Restart Gameyfin to use it.".to_string())
 }
 
 /// The newest release of a family, or one named tag.
@@ -286,4 +455,58 @@ pub async fn remove_proton(
     }
     let _ = app.emit("proton-changed", ());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_installation_is_read_from_the_sandbox_description() {
+        // Which one it is decides the flag an install needs: "--user" against a system
+        // installation finds no flathub and fails with "no remote refs found".
+        let user = "[Instance]\napp-path=/home/ana/.local/share/flatpak/app/org.gameyfin.Gameyfin/x86_64/stable/abc/files\n";
+        assert_eq!(Some(Scope::User), scope_of(user));
+
+        let system = "[Instance]\napp-path=/var/lib/flatpak/app/org.gameyfin.Gameyfin/x86_64/stable/abc/files\n";
+        assert_eq!(Some(Scope::System), scope_of(system));
+
+        assert_eq!(
+            None,
+            scope_of("[Application]\nname=org.gameyfin.Gameyfin\n")
+        );
+    }
+
+    #[test]
+    fn the_runtime_is_read_from_the_sandbox_description() {
+        // The extension extends the runtime, so the runtime's installation is the one to
+        // put it in.
+        let info = "[Application]\nname=org.gameyfin.Gameyfin\nruntime=runtime/org.gnome.Platform/x86_64/50\n";
+        assert_eq!(
+            Some("runtime/org.gnome.Platform/x86_64/50".to_string()),
+            runtime_of(info)
+        );
+        assert_eq!(None, runtime_of("[Application]\nname=x\n"));
+    }
+
+    #[test]
+    fn the_i386_extension_matches_the_flatpak_manifest() {
+        // The manifest mounts the extension and the command installs it, so the versions must agree.
+        let manifest = include_str!("../../flatpak/org.gameyfin.Gameyfin.yml");
+        let (name, version) = I386_EXTENSION
+            .split_once("//")
+            .expect("the ref carries its version");
+
+        let declared = manifest
+            .split_once(&format!("{name}:"))
+            .map(|(_, rest)| rest)
+            .expect("the manifest mounts the extension");
+        let mounted_version = declared
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("version: "))
+            .map(|value| value.trim().trim_matches('\''))
+            .expect("the mount names a version");
+
+        assert_eq!(mounted_version, version);
+    }
 }

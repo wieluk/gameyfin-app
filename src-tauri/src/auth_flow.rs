@@ -2,6 +2,8 @@
 //! cookies are read back out; SSO then needs no handling of its own.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -179,8 +181,8 @@ pub fn open_login_window(app: &AppHandle, base_url: &str, direct: bool) -> Resul
 
     // Persist the login profile (separate from the main app's store) so "remember this
     // device" can be honoured.
-    if let Ok(dir) = app.path().app_data_dir() {
-        builder = builder.data_directory(dir.join("login-profile"));
+    if let Ok(root) = app.path().app_data_dir() {
+        builder = builder.data_directory(profile_dir(&root));
     }
 
     let handle = app.clone();
@@ -240,21 +242,110 @@ pub fn login_window_open(app: &AppHandle) -> bool {
     app.get_webview_window(LOGIN_WINDOW).is_some()
 }
 
-/// Deletes the stored profile, which is also what stops the next sign-in reusing a session.
+/// Directory names for the sign-in webview's own browser profile, the first unnumbered.
+const PROFILE_PREFIX: &str = "login-profile";
+/// Holds the number of the profile in use, absent meaning the first.
+const GENERATION_FILE: &str = "login-profile.generation";
+
+fn profile_name(generation: u32) -> String {
+    match generation {
+        0 => PROFILE_PREFIX.to_string(),
+        n => format!("{PROFILE_PREFIX}-{n}"),
+    }
+}
+
+fn generation(root: &Path) -> u32 {
+    std::fs::read_to_string(root.join(GENERATION_FILE))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// The profile the next sign-in window will use.
+fn profile_dir(root: &Path) -> PathBuf {
+    root.join(profile_name(generation(root)))
+}
+
+/// Deletes every profile except the one in use. Windows holds the previous one open for a
+/// while after a reset, so the sweep runs again at startup.
+pub async fn sweep_stale_profiles(app: &AppHandle) {
+    let Ok(root) = app.path().app_data_dir() else {
+        return;
+    };
+    let keep = profile_dir(&root);
+    let Ok(mut entries) = tokio::fs::read_dir(&root).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let named_like_a_profile = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(PROFILE_PREFIX));
+        let is_dir = entry.file_type().await.is_ok_and(|kind| kind.is_dir());
+        if named_like_a_profile && is_dir && path != keep {
+            if let Err(e) = tokio::fs::remove_dir_all(&path).await {
+                tracing::debug!("a stale sign-in profile is still in use: {e}");
+            }
+        }
+    }
+}
+
+/// Clears saved sign-in data so the next sign-in cannot reuse the provider's session. What Windows
+/// keeps locked is left behind, and the next sign-in starts on a fresh profile.
 pub async fn reset_login_profile(app: &AppHandle) -> Result<(), String> {
-    close_login_window(app);
-    let dir = app
+    let root = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("could not locate the app data directory: {e}"))?
-        .join("login-profile");
+        .map_err(|e| format!("could not locate the app data directory: {e}"))?;
 
-    match tokio::fs::remove_dir_all(&dir).await {
-        Ok(()) => Ok(()),
-        // Nothing to clear is a success.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("could not clear the sign-in profile: {e}")),
+    destroy_login_window(app).await;
+
+    let current = generation(&root);
+    let deleted = delete_with_retries(&root.join(profile_name(current))).await;
+    if !deleted {
+        // The next number is never in use, so the next sign-in has nothing saved either way.
+        let next = current.wrapping_add(1);
+        tracing::info!(next, "the sign-in profile is locked; moving to a fresh one");
+        tokio::fs::write(root.join(GENERATION_FILE), next.to_string())
+            .await
+            .map_err(|e| format!("could not clear the saved sign-in data: {e}"))?;
     }
+    sweep_stale_profiles(app).await;
+    Ok(())
+}
+
+/// True once the directory is gone. Retried: the webview releases its files a moment after
+/// the window does.
+async fn delete_with_retries(dir: &Path) -> bool {
+    const ATTEMPTS: u32 = 10;
+    for attempt in 0..ATTEMPTS {
+        match tokio::fs::remove_dir_all(dir).await {
+            Ok(()) => return true,
+            // Nothing to clear is a success.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(e) if attempt + 1 == ATTEMPTS => {
+                tracing::warn!("could not delete the sign-in profile {dir:?}: {e}");
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
+        }
+    }
+    false
+}
+
+/// Force-closes the sign-in window and waits for it to be gone, so its profile is not still
+/// being written to when the caller deletes it.
+async fn destroy_login_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(LOGIN_WINDOW) {
+        let _ = window.destroy();
+    }
+    for _ in 0..20 {
+        if !login_window_open(app) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tracing::warn!("the sign-in window did not close");
 }
 
 pub fn close_login_window(app: &AppHandle) {
@@ -266,6 +357,39 @@ pub fn close_login_window(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_locked_profile_is_replaced_rather_than_reused() {
+        let root = std::env::temp_dir().join(format!("gameyfin-profile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(profile_dir(&root), root.join("login-profile"));
+        // What a reset writes when the old directory could not be deleted.
+        std::fs::write(root.join(GENERATION_FILE), "2").unwrap();
+        assert_eq!(profile_dir(&root), root.join("login-profile-2"));
+
+        // An unreadable number must not send the next sign-in into a directory that is
+        // already in use.
+        std::fs::write(root.join(GENERATION_FILE), "later").unwrap();
+        assert_eq!(profile_dir(&root), root.join("login-profile"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn deleting_a_profile_reports_a_missing_one_as_cleared() {
+        let root = std::env::temp_dir().join(format!("gameyfin-delete-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("login-profile");
+        std::fs::create_dir_all(dir.join("Default")).unwrap();
+        std::fs::write(dir.join("Default").join("Cookies"), b"session").unwrap();
+
+        assert!(delete_with_retries(&dir).await);
+        assert!(!dir.exists());
+        // Nothing left to delete is still success, not an error the user has to read.
+        assert!(delete_with_retries(&dir).await);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn normalize_url_reduces_an_address_to_scheme_and_host() {

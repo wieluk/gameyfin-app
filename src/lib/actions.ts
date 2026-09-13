@@ -32,10 +32,10 @@ export function primaryAction(state: GameState): PrimaryAction {
       return { label: "Play", icon: "play", disabled: false, run: backend.launch };
     case "running":
       return { label: "Running", icon: "play", disabled: true, run: async () => {} };
-    // These need a decision from the user, so the caller opens the chooser rather than
-    // running anything. `run` is never reached for them, see `needsChooser`.
+    // These need a decision, so the caller opens the chooser (see `needsChooser`). Not
+    // labelled "Extract": what the download holds decides that.
     case "downloaded":
-      return { label: "Extract", icon: "installed", disabled: false, run: noop };
+      return { label: "Install", icon: "installed", disabled: false, run: noop };
     case "extracted":
       return { label: "Install", icon: "installed", disabled: false, run: noop };
     case "downloading":

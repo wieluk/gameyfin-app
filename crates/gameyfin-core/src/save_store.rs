@@ -35,6 +35,18 @@ pub trait SaveStore: Send + Sync {
     /// Which games this store holds anything for. Used by migration.
     async fn games(&self) -> StoreResult<Vec<i64>>;
 
+    /// Deletes every version the store holds, for every game, and returns what went.
+    async fn delete_all(&self) -> StoreResult<Vec<SaveVersion>> {
+        let mut deleted = Vec::new();
+        for game_id in self.games().await? {
+            for version in self.list(game_id).await? {
+                self.delete(game_id, &version.id).await?;
+                deleted.push(version);
+            }
+        }
+        Ok(deleted)
+    }
+
     /// Shown in the UI, so the user can tell which target they are looking at.
     fn describe(&self) -> String;
 }
@@ -128,10 +140,28 @@ impl SaveStore for ServerStore {
         self.client.set_save_locked(version_id, locked).await
     }
 
+    async fn delete_all(&self) -> StoreResult<Vec<SaveVersion>> {
+        // The user's whole list, so games no longer in the library go too.
+        let saves = self.client.my_saves().await?;
+        let ids: Vec<&str> = saves.iter().map(|save| save.id.as_str()).collect();
+        if !ids.is_empty() {
+            self.client.delete_saves(&ids).await?;
+        }
+        Ok(saves)
+    }
+
     async fn games(&self) -> StoreResult<Vec<i64>> {
-        // The server has no "which games have saves" route; the caller already knows the
-        // library, so migration off a server iterates that instead.
-        Ok(Vec::new())
+        // From the user's own save list: without it a move off the server found nothing.
+        let mut games: Vec<i64> = self
+            .client
+            .my_saves()
+            .await?
+            .into_iter()
+            .map(|save| save.game_id)
+            .collect();
+        games.sort_unstable();
+        games.dedup();
+        Ok(games)
     }
 
     fn describe(&self) -> String {

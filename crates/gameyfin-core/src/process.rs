@@ -470,7 +470,7 @@ pub async fn run_elevated(command: &ResolvedCommand) -> CoreResult<CapturedRun> 
 
 /// Windows' flag for "start this process without a console window".
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(any(windows, test))]
 /// What the elevation script exits with when consent was refused. From a range Windows

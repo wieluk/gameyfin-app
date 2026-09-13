@@ -407,6 +407,21 @@ impl Settings {
         self.username = None;
     }
 
+    /// Which store saves go to. Version ids from one store mean nothing to another.
+    pub fn save_store_identity(&self) -> (SaveBackend, Option<String>) {
+        let location = match self.save_backend {
+            SaveBackend::Server => &self.server_url,
+            SaveBackend::Folder => &self.save_folder,
+            SaveBackend::WebDav => &self.webdav_url,
+        };
+        let location = location
+            .as_deref()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string);
+        (self.save_backend, location)
+    }
+
     pub fn default_library_root(home: &Path) -> PathBuf {
         home.join("Games")
     }
@@ -471,6 +486,32 @@ mod tests {
         assert!(s.is_configured() && !s.has_session());
         s.cookies.insert("JSESSIONID".into(), "abc".into());
         assert!(s.has_session());
+    }
+
+    #[test]
+    fn the_save_store_changes_with_the_backend_or_its_location_only() {
+        let mut s = Settings {
+            server_url: Some("https://games.example".into()),
+            ..Default::default()
+        };
+        let server = s.save_store_identity();
+
+        s.save_folder = Some("/saves".into());
+        s.webdav_url = Some("https://dav.example".into());
+        assert_eq!(
+            server,
+            s.save_store_identity(),
+            "an inactive location is not the store"
+        );
+
+        s.save_backend = SaveBackend::Folder;
+        let folder = s.save_store_identity();
+        assert_ne!(server, folder);
+
+        s.save_folder = Some(" /saves ".into());
+        assert_eq!(folder, s.save_store_identity());
+        s.save_folder = Some("/elsewhere".into());
+        assert_ne!(folder, s.save_store_identity());
     }
 
     #[test]

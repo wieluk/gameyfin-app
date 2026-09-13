@@ -1,7 +1,7 @@
 //! Shared application state. Locks are std, never held across an await, so progress
 //! callbacks and drop guards can update state synchronously.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -23,6 +23,42 @@ const USER_AGENT: &str = concat!("Gameyfin-Desktop/", env!("CARGO_PKG_VERSION"))
 pub struct CachedCatalog {
     pub games: Vec<Game>,
     pub libraries: Vec<Library>,
+}
+
+/// A one-way flag that tasks can wait on, for "startup has read the settings file".
+#[derive(Debug)]
+struct ReadyFlag {
+    tx: tokio::sync::watch::Sender<bool>,
+    rx: tokio::sync::watch::Receiver<bool>,
+}
+
+impl Default for ReadyFlag {
+    fn default() -> Self {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        Self { tx, rx }
+    }
+}
+
+impl ReadyFlag {
+    fn set(&self) {
+        let _ = self.tx.send(true);
+    }
+
+    fn get(&self) -> bool {
+        *self.rx.borrow()
+    }
+
+    async fn wait(&self) {
+        let mut rx = self.rx.clone();
+        loop {
+            if *rx.borrow_and_update() {
+                return;
+            }
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
 }
 
 /// Per-game handles for work that can be stopped: download cancels, process stoppers.
@@ -75,12 +111,24 @@ pub struct AppState {
     settings: RwLock<Settings>,
     /// Serialises read-modify-write of settings, so concurrent changes are not lost.
     settings_writer: tokio::sync::Mutex<()>,
+    /// Set once the settings file has been read. Until then every field holds its default,
+    /// which would read as "no server, no session".
+    restored: ReadyFlag,
     config_dir: OnceLock<PathBuf>,
     http: OnceLock<reqwest::Client>,
     transfer_http: OnceLock<reqwest::Client>,
     library: crate::library_state::SharedLibraryState,
     /// Every Ludusavi run shares one config dir (the manifest is 17 MB), so runs are serial.
     ludusavi_lock: Arc<tokio::sync::Mutex<()>>,
+    /// A scan of the whole machine runs for minutes, in a config directory of its own, so
+    /// it never stands between a game and the save it is waiting for at launch.
+    save_scan_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Games whose automatic sync the user has asked to stop. Read between steps, never
+    /// mid-write, so skipping can never leave half a save behind.
+    save_skips: Arc<Mutex<HashSet<i64>>>,
+    /// Games started without the newer save they were waiting for. Their exit upload waits
+    /// for the user, or it would bury that save under whatever this session wrote.
+    unsynced_sessions: Arc<Mutex<HashSet<i64>>>,
     /// Stops two launches downloading the same runtime into the same directory.
     runtime_lock: tokio::sync::Mutex<()>,
     /// Freshness cache: `list_entries` runs several times a second during a transfer.
@@ -374,6 +422,18 @@ impl AppState {
         self.ludusavi_lock.clone()
     }
 
+    pub fn save_scan_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.save_scan_lock.clone()
+    }
+
+    pub fn save_skips(&self) -> Arc<Mutex<HashSet<i64>>> {
+        self.save_skips.clone()
+    }
+
+    pub fn unsynced_sessions(&self) -> Arc<Mutex<HashSet<i64>>> {
+        self.unsynced_sessions.clone()
+    }
+
     pub async fn runtime_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.runtime_lock.lock().await
     }
@@ -401,9 +461,12 @@ impl AppState {
         change: impl FnOnce(&mut Settings) -> Result<R, String>,
     ) -> CommandResult<R> {
         let _writer = self.settings_writer.lock().await;
+        // Writing before the file has been read would persist the defaults over whatever it
+        // holds, which for a stored session means signing the user out.
         let dir = self
             .config_dir
             .get()
+            .filter(|_| self.restored.get())
             .ok_or_else(|| CommandError::msg("Gameyfin is still starting. Try again."))?;
         let mut next = self.settings();
         let result = change(&mut next).map_err(CommandError::Message)?;
@@ -420,6 +483,23 @@ impl AppState {
             Ok(())
         })
         .await
+    }
+
+    #[cfg(test)]
+    pub fn is_restored(&self) -> bool {
+        self.restored.get()
+    }
+
+    /// Waits for startup to have read the settings file, so a command cannot answer from
+    /// defaults. Bounded: a startup that never finishes must not hang the window forever.
+    pub async fn wait_until_restored(&self) -> bool {
+        const GIVE_UP_AFTER: Duration = Duration::from_secs(20);
+        if self.restored.get() {
+            return true;
+        }
+        tokio::time::timeout(GIVE_UP_AFTER, self.restored.wait())
+            .await
+            .is_ok()
     }
 
     /// Loads everything from disk and reconnects a stored session. True when it authenticated.
@@ -450,21 +530,23 @@ impl AppState {
         *write(&self.settings) = settings.clone();
 
         let (Some(url), true) = (settings.server_url.clone(), settings.has_session()) else {
+            self.restored.set();
             return false;
         };
-        if self
+        let connected = self
             .connect_with_cookies(&url, settings.cookies.clone())
             .await
-            .is_err()
-        {
-            return false;
-        }
-        self.check_session(true).await.0
+            .is_ok();
+        // Before the session check, which talks to the server: callers wait for the stored
+        // answer, not for a round trip that a slow or absent network can stretch out.
+        self.restored.set();
+        connected && self.check_session(true).await.0
     }
 
     #[cfg(test)]
     pub fn set_config_dir(&self, dir: PathBuf) {
         let _ = self.config_dir.set(dir);
+        self.restored.set();
     }
 }
 
@@ -576,6 +658,36 @@ mod tests {
             .await
             .is_err());
         assert!(!state.settings().auto_install);
+    }
+
+    #[tokio::test]
+    async fn a_write_racing_startup_cannot_persist_defaults_over_the_stored_session() {
+        let dir = scratch("settings-startup-race");
+        let stored = AppState::default();
+        stored.set_config_dir(dir.clone());
+        stored
+            .set_settings(|s| {
+                s.server_url = Some("https://games.example".into());
+                s.cookies = HashMap::from([("JSESSIONID".to_string(), "abc".to_string())]);
+            })
+            .await
+            .unwrap();
+
+        // The window is up and firing commands while startup is still reading the file.
+        let state = AppState::default();
+        assert!(!state.is_restored());
+        assert!(state
+            .update_settings(|s| {
+                s.auto_install = true;
+                Ok(())
+            })
+            .await
+            .is_err());
+
+        state.restore(dir.clone()).await;
+        assert!(state.settings().has_session());
+        assert!(state.is_restored());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test]

@@ -190,3 +190,68 @@ async fn listing_backups_of_an_empty_directory_is_empty_not_an_error() {
     let out = lud.backups(staging.path()).await.unwrap();
     assert!(out.games.is_empty());
 }
+
+/// On ostree `/home` links to `/var/home`, and Ludusavi only applies a redirect to a file's real
+/// path. Pinned against the binary, since the app works around this behaviour.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_redirect_only_applies_to_the_path_a_file_really_has() {
+    let (Some(binary), Some(shared)) = (binary(), shared_config_dir()) else {
+        eprintln!("skipping: bundled ludusavi not present");
+        return;
+    };
+    let _guard = exclusive().await;
+
+    let root = std::env::temp_dir().join(format!("gameyfin-real-path-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let saves = root
+        .join("var/home/u/prefix/drive_c/users/steamuser/AppData/LocalLow/TeamSoda/Duckov/Saves");
+    std::fs::create_dir_all(&saves).unwrap();
+    std::fs::write(saves.join("Save_1.sav"), b"duck").unwrap();
+    std::os::unix::fs::symlink(root.join("var/home"), root.join("home")).unwrap();
+
+    let prefix_through_link = root.join("home/u/prefix");
+    let home_through_link = prefix_through_link.join("drive_c/users/steamuser");
+    let home_as_resolved = std::fs::canonicalize(&home_through_link).unwrap();
+
+    for (name, source, travels) in [
+        ("through-link", home_through_link, false),
+        ("as-resolved", home_as_resolved, true),
+    ] {
+        let config = root.join(format!("config-{name}"));
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::copy(shared.join("manifest.yaml"), config.join("manifest.yaml")).unwrap();
+        let staging = Staging::new(name);
+        gameyfin_saves::ConfigBuilder::new(staging.path())
+            .wine_prefix(&prefix_through_link)
+            .portable_home(&source)
+            .write(&config)
+            .await
+            .unwrap();
+
+        let lud = Ludusavi::with_runner(
+            &binary,
+            &config,
+            Box::new(ProcessRunner::with_timeout(std::time::Duration::from_secs(
+                60,
+            ))),
+        )
+        .auto_update_manifest(false);
+        let scan = lud
+            .preview("Escape From Duckov", staging.path())
+            .await
+            .unwrap();
+
+        let redirected = scan
+            .games
+            .values()
+            .flat_map(|game| game.files.values())
+            .any(|file| {
+                file.redirected_path
+                    .as_deref()
+                    .is_some_and(|path| path.starts_with("/gameyfin/home/"))
+            });
+        assert_eq!(redirected, travels, "redirect written {name}");
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}

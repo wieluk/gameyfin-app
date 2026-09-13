@@ -4,32 +4,34 @@ import { Icon } from "@/components/Icon";
 import { backend } from "@/lib/backend";
 
 /**
- * Gameplay videos on a game's page. Nothing contacts YouTube until the user clicks a
- * placeholder, and the embed uses `youtube-nocookie.com`.
+ * Gameplay videos: IGDB gives YouTube links, Steam gives video files, so both play. Nothing
+ * loads until play is pressed, and embeds use `youtube-nocookie.com`.
  */
 export function Trailers({ urls, title }: { urls: string[]; title: string }) {
   const [playing, setPlaying] = useState<string | null>(null);
 
   const videos = urls
-    .map((url) => ({ url, id: youtubeId(url) }))
+    .map((url) => ({ url, id: youtubeId(url), file: videoFile(url) }))
     .filter((video, index, all) => all.findIndex((v) => v.url === video.url) === index);
 
   if (videos.length === 0) return null;
 
   return (
     <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground/45">
+      <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-foreground/40">
         Videos
         <span className="ml-2 font-normal normal-case tracking-normal text-foreground/30">
           {videos.length}
         </span>
-      </h3>
+      </h4>
 
       <div className="flex gap-2 overflow-x-auto pb-2">
-        {videos.map(({ url, id }) => (
+        {videos.map(({ url, id, file }) => (
           <div
             key={url}
-            className="aspect-video h-40 shrink-0 overflow-hidden rounded-lg border border-default-200 bg-black"
+            className={`aspect-video shrink-0 overflow-hidden rounded-lg border border-default-200 bg-black ${
+              playing === url ? "h-56" : "h-40"
+            }`}
           >
             {playing === url && id ? (
               <iframe
@@ -39,14 +41,21 @@ export function Trailers({ urls, title }: { urls: string[]; title: string }) {
                 allowFullScreen
                 className="h-full w-full"
               />
+            ) : playing === url && file ? (
+              <video
+                src={url}
+                title={`${title} video`}
+                controls
+                autoPlay
+                className="h-full w-full bg-black"
+              />
             ) : (
               <button
                 type="button"
                 onClick={() => {
-                  // Anything that is not a recognisable YouTube link goes to the browser:
-                  // there is no embed URL to build, and a dead frame explains nothing. The
-                  // backend takes only http and https, since these links come from the server.
-                  if (id) setPlaying(url);
+                  // Anything else opens in the browser: there is nothing to play, and a dead
+                  // frame explains nothing. The backend accepts only http and https.
+                  if (id || file) setPlaying(url);
                   else void backend.openUrl(url);
                 }}
                 title={url}
@@ -70,7 +79,7 @@ export function Trailers({ urls, title }: { urls: string[]; title: string }) {
                   <Icon name="play" className="h-4 w-4" filled />
                 </span>
                 <span className="relative px-2 text-[11px] text-foreground/45">
-                  {id ? "Play trailer" : "Open in browser"}
+                  {id || file ? "Play trailer" : "Open in browser"}
                 </span>
               </button>
             )}
@@ -79,6 +88,21 @@ export function Trailers({ urls, title }: { urls: string[]; title: string }) {
       </div>
     </section>
   );
+}
+
+/**
+ * Whether a URL names a video file the player can take directly, as the Steam metadata
+ * plugin's trailers are. Only https, so nothing local or unencrypted is ever loaded.
+ */
+export function videoFile(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  return /\.(mp4|webm|ogv|ogg|m4v|mov)$/i.test(url.pathname);
 }
 
 /**

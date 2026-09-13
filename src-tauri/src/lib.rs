@@ -148,6 +148,10 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     let restored = state.restore(config_dir.clone()).await;
     tracing::info!(restored, "stored session restored");
 
+    // A sign-in profile that was locked when it was cleared can be deleted now, before
+    // anything has it open.
+    auth_flow::sweep_stale_profiles(&app).await;
+
     // From cache first, so an early launch is not delayed by a fetch.
     state.load_umu_database(&config_dir);
     tauri::async_runtime::spawn(keep_umu_database_fresh(app.clone()));
@@ -308,6 +312,7 @@ pub fn run() {
             graphics::remove_graphics,
             proton::proton_status,
             proton::install_proton,
+            proton::install_32bit_support,
             proton::remove_proton,
             integrations::shortcut_status,
             integrations::set_shortcut,
@@ -318,14 +323,21 @@ pub fn run() {
             integrations::umu_status,
             integrations::refresh_umu_database,
             saves::save_state,
+            saves::save_overview,
             saves::list_save_versions,
             saves::backup_saves,
             saves::restore_saves,
+            saves::delete_save_versions,
+            saves::set_save_locked,
+            saves::delete_all_saves,
             saves::resolve_save_conflict,
             saves::search_save_titles,
             saves::set_save_title,
             saves::detected_device_name,
             saves::save_paths,
+            saves::save_locations,
+            saves::scan_this_pc,
+            saves::skip_save_sync,
             saves::set_save_cross_os,
             saves::set_save_mapping,
             saves::migrate_saves,

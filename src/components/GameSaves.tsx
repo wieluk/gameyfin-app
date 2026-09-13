@@ -1,22 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
+import { SaveVersionList } from "@/components/SaveVersionList";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
-import { formatBytes, formatRelative } from "@/lib/format";
-import { describe, isSaveState, outcomeOf } from "@/lib/saveState";
+import { keys } from "@/lib/queries";
+import {
+  describe,
+  isRestoreReport,
+  isSaveState,
+  outcomeOf,
+  restoredOutcome,
+} from "@/lib/saveState";
 import { useTauriEvent } from "@/lib/useTauriEvent";
-import type { LibraryEntry, SaveSyncState, SaveVersion } from "@/types";
+import type { LibraryEntry, SaveSyncState } from "@/types";
 
-/**
- * A game's synced saves, inside its detail popup.
- *
- * Works against whichever location is configured, so it is just as useful when the server
- * has no save support and the user syncs to a folder or a WebDAV share instead.
- */
+/** The states that mean this game has saves worth a section of its own. */
+const SHOWN_STATES: SaveSyncState["kind"][] = [
+  "in-sync",
+  "local-newer",
+  "remote-newer",
+  "conflict",
+  "platform-mismatch",
+  "failed",
+];
+
+/** A game's synced saves in its detail popup, against whichever location is configured. */
 export function GameSaves({ entry }: { entry: LibraryEntry }) {
   const gameId = entry.game.id;
+  const queryClient = useQueryClient();
   const [state, setState] = useState<SaveSyncState | null>(null);
-  const [versions, setVersions] = useState<SaveVersion[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null);
@@ -27,17 +40,13 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
     const mine = ++request.current;
     try {
       const next = await backend.saveState(gameId);
-      // Only the states that imply something is actually stored are worth listing for.
-      const versions = ["in-sync", "local-newer", "remote-newer", "conflict"].includes(next.kind)
-        ? await backend.listSaveVersions(gameId)
-        : [];
       if (mine !== request.current) return;
       setState(next);
-      setVersions(versions);
+      await queryClient.invalidateQueries({ queryKey: keys.saveVersions(gameId) });
     } catch (e) {
       if (mine === request.current) setState({ kind: "failed", message: messageOf(e) });
     }
-  }, [gameId]);
+  }, [gameId, queryClient]);
 
   useEffect(() => {
     void load();
@@ -55,7 +64,8 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
       const next = await action();
       // Say what the press achieved: the row's own state does not distinguish "backed up"
       // from "looked and found nothing".
-      if (isSaveState(next)) setOutcome(outcomeOf(next));
+      if (isRestoreReport(next)) setOutcome(restoredOutcome(next));
+      else if (isSaveState(next)) setOutcome(outcomeOf(next));
       await load();
     } catch (e) {
       setError(messageOf(e));
@@ -64,8 +74,9 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
     }
   }
 
-  // Nothing to say when saves cannot be synced at all, either here or by the server.
-  if (!state || state.kind === "unsupported" || state.kind === "off") return null;
+  // Nothing to say when saves cannot sync or none are stored: a first backup starts in the
+  // Saves tab, and a line on every page would be noise.
+  if (!state || !SHOWN_STATES.includes(state.kind)) return null;
 
   const summary = describe(state);
 
@@ -78,16 +89,14 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
       <div className="rounded-xl border border-default-200/60 bg-content1 px-4 py-3">
         <div className="flex items-center gap-3">
           <p className={`min-w-0 flex-1 text-xs ${summary.tone}`}>{summary.text}</p>
-          {state.kind !== "disabled" && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => act(() => backend.backupSaves(gameId, false))}
-              className="shrink-0 rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
-            >
-              {busy ? "Working..." : "Back up now"}
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act(() => backend.backupSaves(gameId, false))}
+            className="shrink-0 rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
+          >
+            {busy ? "Working..." : "Back up now"}
+          </button>
         </div>
 
         {error && <p className="mt-2 text-xs text-danger">{error}</p>}
@@ -102,34 +111,14 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
           </p>
         )}
 
-        {versions.length > 0 && (
-          <ul className="mt-3 flex flex-col gap-1 border-t border-default-200/60 pt-3">
-            {versions.map((version) => (
-              <li key={version.id} className="flex items-center gap-3 text-[11px]">
-                <span className="min-w-0 flex-1 truncate text-foreground/70">
-                  {formatRelative(version.createdAt)}
-                  {version.deviceName ? ` from ${version.deviceName}` : ""}
-                </span>
-                <span className="shrink-0 text-foreground/40">
-                  {formatBytes(version.sizeBytes)}
-                </span>
-                {version.locked && (
-                  <span className="shrink-0 text-foreground/40" title="Kept forever">
-                    kept
-                  </span>
-                )}
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => act(() => backend.restoreSaves(gameId, version.id))}
-                  className="shrink-0 rounded px-2 py-0.5 text-foreground/60 hover:bg-default-100 disabled:opacity-50"
-                >
-                  Restore
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="mt-3 border-t border-default-200/60 pt-3">
+          <SaveVersionList
+            gameId={gameId}
+            busy={busy}
+            onRestore={(saveId) => act(() => backend.restoreSaves(gameId, saveId))}
+            onChanged={() => void load()}
+          />
+        </div>
       </div>
     </section>
   );

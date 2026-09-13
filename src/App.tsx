@@ -8,16 +8,18 @@ import { Sidebar } from "@/components/Sidebar";
 import { TitleBar } from "@/components/TitleBar";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { SavePullPrompt } from "@/components/SavePullPrompt";
+import { SaveSyncStatus } from "@/components/SaveSyncStatus";
 import { SetupWizard } from "@/components/SetupWizard";
 import { isMockBackend } from "@/lib/backend";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import { useGamepad } from "@/lib/useGamepad";
+import { useSetupGate } from "@/lib/useSetupGate";
 import { useCouch } from "@/state/couch";
 import type { LibraryEntry } from "@/types";
 import { DownloadsView } from "@/views/DownloadsView";
 import { InstalledView } from "@/views/InstalledView";
 import { LibraryView } from "@/views/LibraryView";
-import { SavesView, countNeedingAttention, useSaveStates } from "@/views/SavesView";
+import { SavesView, countNeedingAttention, useSaveOverview } from "@/views/SavesView";
 import { SettingsView } from "@/views/SettingsView";
 import { WelcomeView } from "@/views/WelcomeView";
 import { keys, useAppSettings, useEntries, useInvalidate, useStatus } from "@/lib/queries";
@@ -42,17 +44,20 @@ export function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  const onConnected = useCallback(async () => {
-    await queryClient.invalidateQueries();
-    navigate("/");
-  }, [queryClient, navigate]);
-
   const ready = restoreSettled && !status.isLoading;
   const offline = Boolean(status.data?.offline);
   // Never while offline: signing in is impossible then, and the wizard's first step offers
   // to switch servers, discarding the session and cached library.
   const needsSetup =
     ready && !offline && !(status.data?.configured && status.data?.authenticated);
+  // The wizard runs to its last step, not to the moment the session becomes valid.
+  const setup = useSetupGate(needsSetup);
+
+  const onConnected = useCallback(async () => {
+    setup.close();
+    await queryClient.invalidateQueries();
+    navigate("/");
+  }, [setup, queryClient, navigate]);
 
   // Once the server answers again, everything fetched from cache while it was down is worth re-reading.
   const wasOffline = useRef(offline);
@@ -71,8 +76,8 @@ export function App() {
 
       {!ready ? (
         <Splash />
-      ) : needsSetup ? (
-        <WelcomeView onComplete={onConnected} />
+      ) : setup.open ? (
+        <WelcomeView onStarted={setup.engage} onComplete={onConnected} />
       ) : (
         <Shell onSignedOut={() => void queryClient.invalidateQueries({ queryKey: keys.status })} />
       )}
@@ -103,13 +108,9 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     ["downloading", "extracting", "extracted", "installing"].includes(e.state.kind),
   ).length;
 
-  // Saves that need a decision get the same badge treatment as pending downloads, so a
-  // conflict is visible without opening the tab.
-  const installedEntries = (entries.data ?? []).filter((e) =>
-    ["installed", "running"].includes(e.state.kind),
-  );
-  const saveStates = useSaveStates(installedEntries);
-  const conflicts = countNeedingAttention(saveStates.data);
+  // Saves needing a decision badge their tab too. One request covers the whole library.
+  const saves = useSaveOverview("installed");
+  const conflicts = countNeedingAttention(saves.data);
 
   // `game-state` is patched into the cache, since refetching that often freezes progress bars.
   // `library-changed` is structural, so it does refetch.
@@ -123,12 +124,13 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   useTauriEvent("wine-changed", () => void invalidate(keys.wine));
   useTauriEvent("proton-changed", () => void invalidate(keys.proton));
   useTauriEvent("graphics-changed", () => void invalidate(keys.graphics));
-  useTauriEvent("save-tool-changed", () => void invalidate(keys.saveTool, keys.saveStates));
+  useTauriEvent("save-tool-changed", () => void invalidate(keys.saveTool, keys.saveOverviewAll));
 
   return (
     <div className="flex min-h-0 flex-1">
       <SetupWizard />
       <SavePullPrompt />
+      <SaveSyncStatus />
       <Sidebar downloadCount={pending} conflictCount={conflicts} />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <GamepadOverlay />

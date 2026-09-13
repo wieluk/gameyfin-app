@@ -1,10 +1,8 @@
-//! Desktop and menu shortcuts, `.desktop` on Linux and a PowerShell-written `.lnk` on
-//! Windows. Each runs the app with `--launch <id>`, not the game, so the prefix, runtime
-//! choice and playtime supervision still apply.
+//! Desktop and menu shortcuts. Each runs the app with `--launch <id>`, not the game, so the
+//! prefix, runtime choice and playtime tracking still apply.
 
 use std::path::{Path, PathBuf};
 
-/// Where a shortcut should be placed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
@@ -15,7 +13,6 @@ pub enum Location {
     Menu,
 }
 
-/// What a shortcut needs to know to start a game.
 #[derive(Debug, Clone)]
 pub struct Target {
     pub game_id: i64,
@@ -29,8 +26,8 @@ pub struct Target {
     pub icon: Option<PathBuf>,
 }
 
-/// A shortcut's file name, without the extension. The id is in it so two games with one
-/// title do not collide, and so a renamed game's shortcut can still be found.
+/// A shortcut's file name. Windows shows it, so it is the title alone; elsewhere `Name=` is
+/// shown and the id goes in the file name, where it survives a rename.
 pub fn stem(game_id: i64, title: &str) -> String {
     let cleaned: String = title
         .chars()
@@ -45,6 +42,8 @@ pub fn stem(game_id: i64, title: &str) -> String {
     let trimmed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     if trimmed.is_empty() {
         format!("gameyfin-{game_id}")
+    } else if cfg!(windows) {
+        trimmed
     } else {
         format!("gameyfin-{game_id} {trimmed}")
     }
@@ -129,9 +128,8 @@ fn exec_argument(text: &str) -> String {
     out
 }
 
-/// The PowerShell that creates a Windows `.lnk` (a `.url` cannot carry the `--launch <id>`
-/// argument). Drives `WScript.Shell` rather than marshalling `IShellLink` by hand.
-/// Returned as a script, not run here, so its quoting can be tested.
+/// PowerShell that writes a `.lnk`, since a `.url` cannot carry arguments. Returned, not run,
+/// so its quoting can be tested.
 pub fn windows_shortcut_script(target: &Target, destination: &Path) -> String {
     let icon = target
         .icon
@@ -167,7 +165,10 @@ fn powershell_string(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
-/// The file extension shortcuts use on this platform.
+/// Windows' flag for "start this process without a console window".
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 pub fn extension() -> &'static str {
     if cfg!(windows) {
         "lnk"
@@ -256,7 +257,6 @@ fn parse_user_dir(contents: &str, key: &str, home: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Write a shortcut for one game, returning where it went.
 pub fn create(home: &Path, location: Location, target: &Target) -> std::io::Result<PathBuf> {
     let directory = directory_for(home, location).ok_or_else(|| {
         std::io::Error::new(
@@ -266,17 +266,25 @@ pub fn create(home: &Path, location: Location, target: &Target) -> std::io::Resu
     })?;
     std::fs::create_dir_all(&directory)?;
 
-    let path = directory.join(format!(
-        "{}.{}",
-        stem(target.game_id, &target.title),
-        extension()
-    ));
+    // A renamed game gets a renamed shortcut, so the one under the old name goes.
+    if let Some(previous) = existing_shortcut(&directory, target.game_id) {
+        let _ = std::fs::remove_file(previous);
+    }
+    let path = destination(
+        &directory,
+        &stem(target.game_id, &target.title),
+        target.game_id,
+    );
 
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+
         let script = windows_shortcut_script(target, &path);
         let output = std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            // Without this a console window flashes up while the shortcut is written.
+            .creation_flags(CREATE_NO_WINDOW)
             .output()?;
         if !output.status.success() {
             return Err(std::io::Error::other(format!(
@@ -288,9 +296,7 @@ pub fn create(home: &Path, location: Location, target: &Target) -> std::io::Resu
     #[cfg(not(windows))]
     std::fs::write(&path, desktop_entry(target))?;
 
-    // A desktop entry the user double-clicks has to be executable, and since GNOME 42 it
-    // must also be marked trusted; without the executable bit the file opens in a text
-    // editor instead of starting the game.
+    // Without the executable bit a desktop entry opens in a text editor instead of starting.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -302,36 +308,88 @@ pub fn create(home: &Path, location: Location, target: &Target) -> std::io::Resu
     Ok(path)
 }
 
-/// Remove a game's shortcut from one location. True when there was one.
-pub fn remove(home: &Path, location: Location, game_id: i64, title: &str) -> bool {
-    let Some(directory) = directory_for(home, location) else {
-        return false;
-    };
-    let path = directory.join(format!("{}.{}", stem(game_id, title), extension()));
-    std::fs::remove_file(path).is_ok()
+/// Where to write, never over a file that belongs to something else: a game the user
+/// already has their own shortcut for keeps it, and ours goes beside it.
+fn destination(directory: &Path, stem: &str, game_id: i64) -> PathBuf {
+    let plain = directory.join(format!("{stem}.{}", extension()));
+    if !plain.exists() || is_shortcut_for(&plain, game_id) {
+        return plain;
+    }
+    directory.join(format!("{stem} (Gameyfin).{}", extension()))
 }
 
-/// Which locations already hold a shortcut, matched by the id in the file name so a game
-/// renamed on the server is still recognised.
-pub fn installed_for(home: &Path, game_id: i64) -> Vec<Location> {
-    let prefix = format!("gameyfin-{game_id} ");
-    let exact = format!("gameyfin-{game_id}.");
+/// This game's shortcut in a directory, if it has one. Found by id, so a game renamed on
+/// the server is still recognised.
+fn existing_shortcut(directory: &Path, game_id: i64) -> Option<PathBuf> {
+    std::fs::read_dir(directory)
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            let path = entry.path();
+            let ours = path.extension().and_then(|e| e.to_str()) == Some(extension())
+                && is_shortcut_for(&path, game_id);
+            ours.then_some(path)
+        })
+}
 
+/// Whether one file is this game's shortcut: on Windows from the `--launch` argument inside
+/// it, since its name is only the title; elsewhere from the id its name carries.
+fn is_shortcut_for(path: &Path, game_id: i64) -> bool {
+    #[cfg(windows)]
+    {
+        std::fs::read(path).is_ok_and(|bytes| carries_launch_id(&bytes, game_id))
+    }
+    #[cfg(not(windows))]
+    {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        name.starts_with(&format!("gameyfin-{game_id} "))
+            || name.starts_with(&format!("gameyfin-{game_id}."))
+    }
+}
+
+/// Whether a `.lnk`'s bytes carry `--launch <id>`, searched as UTF-16 and plain text rather
+/// than parsing the format.
+// Windows-only in use, compiled everywhere so its tests run on every platform.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn carries_launch_id(bytes: &[u8], game_id: i64) -> bool {
+    let needle = format!("--launch {game_id}");
+    let utf16: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    whole_match(bytes, needle.as_bytes(), 1) || whole_match(bytes, &utf16, 2)
+}
+
+/// Finds `needle` where the next character is not another digit, so the shortcut for game 1
+/// is not found in the one for game 12. `stride` is one character's width in the encoding.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn whole_match(haystack: &[u8], needle: &[u8], stride: usize) -> bool {
+    haystack
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, window)| *window == needle)
+        .any(|(at, _)| {
+            let next = at + needle.len();
+            match haystack.get(next..next + stride) {
+                Some(character) => {
+                    !(character[0].is_ascii_digit() && character[1..].iter().all(|b| *b == 0))
+                }
+                None => true,
+            }
+        })
+}
+
+/// Remove a game's shortcut from one location. True when there was one.
+pub fn remove(home: &Path, location: Location, game_id: i64) -> bool {
+    directory_for(home, location)
+        .and_then(|directory| existing_shortcut(&directory, game_id))
+        .is_some_and(|path| std::fs::remove_file(path).is_ok())
+}
+
+pub fn installed_for(home: &Path, game_id: i64) -> Vec<Location> {
     [Location::Desktop, Location::Menu]
         .into_iter()
         .filter(|&location| {
-            let Some(directory) = directory_for(home, location) else {
-                return false;
-            };
-            let Ok(entries) = std::fs::read_dir(&directory) else {
-                return false;
-            };
-            entries.flatten().any(|entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                name.ends_with(extension())
-                    && (name.starts_with(&prefix) || name.starts_with(&exact))
-            })
+            directory_for(home, location)
+                .and_then(|directory| existing_shortcut(&directory, game_id))
+                .is_some()
         })
         .collect()
 }
@@ -359,10 +417,18 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn the_stem_carries_the_id_so_two_titles_cannot_collide() {
         assert_eq!(stem(12, "Celeste"), "gameyfin-12 Celeste");
         assert_ne!(stem(12, "Celeste"), stem(13, "Celeste"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_shortcut_is_named_after_the_game_alone() {
+        // The file name is what the desktop and the Start menu show.
+        assert_eq!(stem(12, "Celeste"), "Celeste");
     }
 
     #[test]
@@ -379,6 +445,30 @@ mod tests {
     fn an_unnameable_title_still_produces_a_stem() {
         assert_eq!(stem(9, "///"), "gameyfin-9");
         assert_eq!(stem(9, "   "), "gameyfin-9");
+    }
+
+    #[test]
+    fn a_shortcut_is_recognised_by_the_game_it_launches() {
+        let lnk = |arguments: &str| -> Vec<u8> {
+            // How a .lnk holds its arguments: UTF-16, in amongst the rest of the structure.
+            let mut bytes = vec![0x4c, 0x00, 0x00, 0x00];
+            bytes.extend(arguments.encode_utf16().flat_map(u16::to_le_bytes));
+            bytes.extend([0x00, 0x00]);
+            bytes
+        };
+
+        assert!(carries_launch_id(&lnk("--launch 12"), 12));
+        // The shortcut for game 1 must not answer for game 12, nor the other way round.
+        assert!(!carries_launch_id(&lnk("--launch 12"), 1));
+        assert!(!carries_launch_id(&lnk("--launch 1"), 12));
+        assert!(carries_launch_id(
+            &lnk("run org.gameyfin.Gameyfin --launch 7"),
+            7
+        ));
+        // Some shells write the arguments a second time as plain bytes.
+        assert!(carries_launch_id(b"...--launch 3", 3));
+        assert!(!carries_launch_id(b"...--launch 33", 3));
+        assert!(!carries_launch_id(&lnk("--launch 4"), 5));
     }
 
     #[test]
@@ -497,9 +587,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
 
-        // Only the menu location is exercised here. The desktop folder is resolved from
-        // the real environment, so a test that wrote there could land a file on the
-        // machine's actual desktop; `parse_user_dir` covers that resolution instead.
+        // Menu only: the desktop resolves from the real environment and a test could write there.
         assert!(!installed_for(&home, 12).contains(&Location::Menu));
 
         let path = create(&home, Location::Menu, &a_local_target()).unwrap();
@@ -508,9 +596,9 @@ mod tests {
         // A different game is not confused for this one.
         assert!(!installed_for(&home, 13).contains(&Location::Menu));
 
-        assert!(remove(&home, Location::Menu, 12, "Celeste"));
+        assert!(remove(&home, Location::Menu, 12));
         assert!(!installed_for(&home, 12).contains(&Location::Menu));
-        assert!(!remove(&home, Location::Menu, 12, "Celeste"));
+        assert!(!remove(&home, Location::Menu, 12));
 
         std::fs::remove_dir_all(&home).unwrap();
     }

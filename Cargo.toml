@@ -20,8 +20,7 @@ url = "2"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
-# Generates the TypeScript the webview uses, so the two sides cannot drift.
-ts-rs = "12"
+ts-rs = { version = "12", features = ["no-serde-warnings"] }
 
 [profile.release]
 opt-level = "s"

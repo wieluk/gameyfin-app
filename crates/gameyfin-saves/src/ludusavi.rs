@@ -1,6 +1,5 @@
-//! The Ludusavi driver: a subprocess speaking `--api` JSON, which is versioned where the
-//! library crate is not. Every call carries our own `--config <dir>` and `--force`, without
-//! which it waits on a confirmation prompt.
+//! The Ludusavi driver: a subprocess speaking `--api` JSON, which is versioned where the library
+//! crate is not. Every call passes `--force`, or it waits on a confirmation prompt.
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +9,6 @@ use crate::api::{ApiOutput, BackupsGame, FoundGame, ScanGame};
 use crate::error::{SaveError, SaveResult};
 use crate::runner::{CommandRunner, ProcessRunner};
 
-/// Archive format for a backup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackupFormat {
     /// One zip per backup, the sensible unit to upload to a server.
@@ -27,7 +25,6 @@ impl BackupFormat {
     }
 }
 
-/// How a game was identified to Ludusavi.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameQuery {
     /// Exact and deterministic. Preferred whenever the Steam AppID is known.
@@ -115,9 +112,8 @@ impl Ludusavi {
         // A non-zero exit still carries a full JSON payload (e.g. an unrecognised game),
         // so prefer the payload whenever it parses; the exit code only shapes the error.
         let stdout = output.stdout.trim();
-        // The answer is the only record of what Ludusavi actually did. Without it a scan
-        // that found nothing is indistinguishable from one that was never run, which is
-        // exactly the state a failed backup leaves the user staring at.
+        // The only record of what Ludusavi did: without it a scan that found nothing looks like one
+        // that never ran.
         tracing::debug!(
             command,
             status = output.status,
@@ -160,7 +156,6 @@ impl Ludusavi {
         })
     }
 
-    /// Look a game up in the manifest.
     pub async fn find(&self, query: &GameQuery) -> SaveResult<ApiOutput<FoundGame>> {
         let mut args = self.base_args();
         args.push("find".into());
@@ -231,7 +226,41 @@ impl Ludusavi {
         Ok(out)
     }
 
-    /// Restore a single game from a previously downloaded backup directory.
+    /// What a backup would capture, without writing. Reports live paths, which the manifest's
+    /// patterns cannot.
+    pub async fn preview(&self, title: &str, staging: &Path) -> SaveResult<ApiOutput<ScanGame>> {
+        let mut args = self.base_args();
+        args.extend([
+            "backup".into(),
+            "--api".into(),
+            "--preview".into(),
+            "--force".into(),
+            "--no-cloud-sync".into(),
+            "--path".into(),
+            staging.to_string_lossy().into_owned(),
+            title.to_string(),
+        ]);
+        let out: ApiOutput<ScanGame> = self.run_api("preview", args).await?;
+        reject_unknown_game("preview", title, &out)?;
+        Ok(out)
+    }
+
+    /// What a backup would capture for every known game on this machine, including ones Gameyfin
+    /// never installed.
+    pub async fn preview_all(&self, staging: &Path) -> SaveResult<ApiOutput<ScanGame>> {
+        let mut args = self.base_args();
+        args.extend([
+            "backup".into(),
+            "--api".into(),
+            "--preview".into(),
+            "--force".into(),
+            "--no-cloud-sync".into(),
+            "--path".into(),
+            staging.to_string_lossy().into_owned(),
+        ]);
+        self.run_api("preview-all", args).await
+    }
+
     pub async fn restore(&self, title: &str, source: &Path) -> SaveResult<ApiOutput<ScanGame>> {
         let mut args = self.base_args();
         args.extend([
@@ -280,7 +309,6 @@ impl Ludusavi {
         Ok(())
     }
 
-    /// List the backups present in a directory.
     pub async fn backups(&self, path: &Path) -> SaveResult<ApiOutput<BackupsGame>> {
         let mut args = self.base_args();
         args.extend([

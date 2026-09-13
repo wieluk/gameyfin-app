@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { youtubeId } from "./Trailers";
+import { videoFile, youtubeId } from "./Trailers";
 
 describe("youtubeId", () => {
   it("reads the id from every form the metadata uses", () => {
@@ -35,5 +35,25 @@ describe("youtubeId", () => {
     // Anything else would be pasted straight into the embed URL.
     expect(youtubeId("https://www.youtube.com/watch?v=../../evil")).toBeNull();
     expect(youtubeId("https://youtu.be/short")).toBeNull();
+  });
+});
+
+describe("videoFile", () => {
+  it("recognises the trailers the Steam plugin hands over", () => {
+    // What that plugin puts in `videoUrls`: the file itself, not a page about it.
+    expect(videoFile("https://video.akamai.steamstatic.com/store_trailers/1/movie_max.webm")).toBe(
+      true,
+    );
+    expect(videoFile("https://cdn.example.com/trailer.mp4")).toBe(true);
+    expect(videoFile("https://cdn.example.com/trailer.MP4")).toBe(true);
+  });
+
+  it("leaves anything that is not a playable file to the browser", () => {
+    expect(videoFile("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(false);
+    expect(videoFile("https://vimeo.com/12345")).toBe(false);
+    expect(videoFile("not a url")).toBe(false);
+    // Plain HTTP and local files have no business in the player.
+    expect(videoFile("http://cdn.example.com/trailer.mp4")).toBe(false);
+    expect(videoFile("file:///home/ana/trailer.mp4")).toBe(false);
   });
 });

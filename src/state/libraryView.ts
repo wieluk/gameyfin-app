@@ -5,8 +5,9 @@ import { create } from "zustand";
 
 export type SortKey = "title" | "recent" | "size" | "playtime";
 export type SortDirection = "asc" | "desc";
-/** Which games to show, by whether they are on this machine. */
-export type PresenceFilter = "all" | "installed" | "not-installed";
+/** How large the covers in the grid are. */
+export type CardSize = "small" | "medium" | "large";
+export const CARD_SIZES: CardSize[] = ["small", "medium", "large"];
 
 /** A filter on one of the game's list-valued fields. Null means "any". */
 export interface FacetFilters {
@@ -42,10 +43,12 @@ interface LibraryView {
   sort: SortKey;
   direction: SortDirection;
   libraryId: number | null;
-  presence: PresenceFilter;
+  installedOnly: boolean;
+  cardSize: CardSize;
   facets: FacetFilters;
   setSearch: (search: string) => void;
-  setPresence: (presence: PresenceFilter) => void;
+  setInstalledOnly: (installedOnly: boolean) => void;
+  setCardSize: (size: CardSize) => void;
   setSort: (sort: SortKey) => void;
   setDirection: (direction: SortDirection) => void;
   toggleDirection: () => void;
@@ -54,6 +57,7 @@ interface LibraryView {
   /** Every filter back to showing the whole library. Sorting is left as it is. */
   resetFilters: () => void;
   toggleAdvanced: () => void;
+  setAdvanced: (advanced: boolean) => void;
   setMinRating: (rating: number | null) => void;
 }
 
@@ -63,7 +67,8 @@ interface Persisted {
   sort: SortKey;
   direction: SortDirection;
   libraryId: number | null;
-  presence: PresenceFilter;
+  installedOnly: boolean;
+  cardSize: CardSize;
   facets: FacetFilters;
   advanced: boolean;
   minRating: number | null;
@@ -74,17 +79,20 @@ function load(): Persisted {
     sort: "title",
     direction: "asc",
     libraryId: null,
-    presence: "all",
+    installedOnly: false,
+    cardSize: "medium",
     facets: NO_FACETS,
     advanced: false,
     minRating: null,
   };
-  const parsed = readStored<Partial<Persisted>>(STORAGE_KEY, {});
+  // The legacy `presence` filter: only its "installed" value maps onto the checkbox.
+  const parsed = readStored<Partial<Persisted> & { presence?: string }>(STORAGE_KEY, {});
   return {
     sort: parsed.sort ?? fallback.sort,
     direction: parsed.direction ?? fallback.direction,
     libraryId: parsed.libraryId ?? fallback.libraryId,
-    presence: parsed.presence ?? fallback.presence,
+    installedOnly: parsed.installedOnly ?? parsed.presence === "installed",
+    cardSize: parsed.cardSize ?? fallback.cardSize,
     facets: { ...fallback.facets, ...(parsed.facets ?? {}) },
     advanced: parsed.advanced ?? fallback.advanced,
     minRating: parsed.minRating ?? fallback.minRating,
@@ -104,14 +112,16 @@ export const useLibraryView = create<LibraryView>((set, get) => ({
   sort: initial.sort,
   direction: initial.direction,
   libraryId: initial.libraryId,
-  presence: initial.presence,
+  installedOnly: initial.installedOnly,
+  cardSize: initial.cardSize,
   advanced: initial.advanced,
   minRating: initial.minRating,
 
   facets: initial.facets,
 
   setSearch: (search) => set({ search }),
-  setPresence: (presence) => set(persisting({ presence }, get)),
+  setInstalledOnly: (installedOnly) => set(persisting({ installedOnly }, get)),
+  setCardSize: (cardSize) => set(persisting({ cardSize }, get)),
   setSort: (sort) => set(persisting({ sort }, get)),
   setDirection: (direction) => set(persisting({ direction }, get)),
   toggleDirection: () => {
@@ -125,12 +135,13 @@ export const useLibraryView = create<LibraryView>((set, get) => ({
     set({
       search: "",
       ...persisting(
-        { libraryId: null, presence: "all", facets: NO_FACETS, minRating: null },
+        { libraryId: null, installedOnly: false, facets: NO_FACETS, minRating: null },
         get,
       ),
     }),
   setMinRating: (minRating) => set(persisting({ minRating }, get)),
-  toggleAdvanced: () => set(persisting({ advanced: !get().advanced }, get)),
+  toggleAdvanced: () => get().setAdvanced(!get().advanced),
+  setAdvanced: (advanced) => set(persisting({ advanced }, get)),
 }));
 
 /** Apply a change and persist the whole view, so a new field cannot be left unsaved. */
@@ -138,10 +149,19 @@ function persisting(
   change: Partial<Persisted>,
   get: () => LibraryView,
 ): Partial<LibraryView> {
-  const { sort, direction, libraryId, presence, facets, advanced, minRating } = {
+  const { sort, direction, libraryId, installedOnly, cardSize, facets, advanced, minRating } = {
     ...get(),
     ...change,
   };
-  save({ sort, direction, libraryId, presence, facets, advanced, minRating });
+  save({
+    sort,
+    direction,
+    libraryId,
+    installedOnly,
+    cardSize,
+    facets,
+    advanced,
+    minRating,
+  });
   return change;
 }

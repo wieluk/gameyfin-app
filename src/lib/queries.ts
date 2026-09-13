@@ -16,7 +16,9 @@ export const keys = {
   installPlans: ["install-plan"] as const,
   gameOptions: (gameId: number) => ["game-options", gameId] as const,
   gameOptionsAll: ["game-options"] as const,
-  saveStates: ["save-states"] as const,
+  /** Every game's save status for one scope; `saveOverviewAll` invalidates both scopes. */
+  saveOverview: (scope: string) => ["save-overview", scope] as const,
+  saveOverviewAll: ["save-overview"] as const,
   saveVersions: (gameId: number) => ["save-versions", gameId] as const,
   saveTool: ["save-tool-status"] as const,
   wine: ["wine-status"] as const,
@@ -57,7 +59,7 @@ export function useSettingsUpdate() {
     await settings.refetch();
     // A different save location makes every game's save state stale.
     if (patch.saveBackend || patch.saveFolder || patch.webdavUrl || patch.saveSyncEnabled !== undefined) {
-      await invalidate(keys.saveStates);
+      await invalidate(keys.saveOverviewAll);
     }
   };
 }

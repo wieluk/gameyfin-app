@@ -216,8 +216,12 @@ impl GameyfinClient {
         if let Some(title) = &metadata.ludusavi_title {
             req = req.header("X-Ludusavi-Title", title);
         }
-        if let Some(base) = &metadata.base_save_id {
-            req = req.header("X-Base-Save-Id", base);
+        // Server ids are numbers. One from a folder or WebDAV store fails to parse there and
+        // comes back as a bare 403, which reads as a dead session.
+        match metadata.base_save_id.as_deref() {
+            Some(base) if base.parse::<i64>().is_ok() => req = req.header("X-Base-Save-Id", base),
+            Some(base) => tracing::warn!(base, "dropping a base save id the server never issued"),
+            None => {}
         }
         if metadata.force {
             req = req.header("X-Force", "true");
@@ -261,6 +265,29 @@ impl GameyfinClient {
             "SaveSyncEndpoint",
             "setLocked",
             serde_json::json!({ "saveId": id, "locked": locked }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn my_saves(&self) -> ApiResult<Vec<SaveVersion>> {
+        self.call("SaveSyncEndpoint", "getMySaves", serde_json::json!({}))
+            .await
+    }
+
+    /// Deletes several versions at once. The server refuses the lot if one is not the user's.
+    pub async fn delete_saves(&self, save_ids: &[&str]) -> ApiResult<()> {
+        let ids = save_ids
+            .iter()
+            .map(|id| {
+                id.parse::<i64>()
+                    .map_err(|_| ApiError::Other(format!("not a server save id: {id}")))
+            })
+            .collect::<ApiResult<Vec<i64>>>()?;
+        self.call::<Option<serde_json::Value>>(
+            "SaveSyncEndpoint",
+            "deleteSaves",
+            serde_json::json!({ "saveIds": ids }),
         )
         .await?;
         Ok(())

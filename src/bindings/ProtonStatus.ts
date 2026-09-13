@@ -14,4 +14,9 @@ inUse: string | null, latestUmu: ProtonRelease | null, latestGe: ProtonRelease |
 /**
  * Whether 32-bit programs can run in the container at all.
  */
-supports32bit: boolean, };
+supports32bit: boolean, 
+/**
+ * Whether the missing 32-bit support is the Flatpak extension, which the app can
+ * install for the user. False everywhere else, where it is the distribution's job.
+ */
+missingI386Extension: boolean, };

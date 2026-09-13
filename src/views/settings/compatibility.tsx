@@ -34,6 +34,9 @@ export function ProtonSection() {
   const action = useAction();
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<Transfer | null>(null);
+  // Kept until the user leaves the page: it asks for a restart, which is not something to
+  // flash and take away.
+  const [i386Result, setI386Result] = useState<string | null>(null);
 
   const status = useProtonStatus();
   const proton = status.data;
@@ -76,6 +79,35 @@ export function ProtonSection() {
         value={status.isLoading ? "…" : (proton?.inUse ?? "Downloaded on first launch")}
         tone={proton?.inUse ? "good" : undefined}
       />
+      <Row
+        label="32-bit programs"
+        value={
+          status.isLoading ? "…" : proton?.supports32bit ? "Supported" : "Not supported"
+        }
+        tone={proton ? (proton.supports32bit ? "good" : "bad") : undefined}
+      />
+      {proton?.missingI386Extension && (
+        <div className="flex flex-col gap-1.5 pt-1">
+          <p className={HINT}>
+            The runtime&rsquo;s 32-bit libraries come from Flathub, not from Gameyfin, so
+            installing the app did not bring them. Without them, installers and 32-bit games
+            run on Wine instead of Proton.
+          </p>
+          <div>
+            <SmallButton
+              disabled={busy === "i386"}
+              onClick={() =>
+                void run("i386", async () => {
+                  setI386Result(await backend.install32bitSupport());
+                })
+              }
+            >
+              {busy === "i386" ? "Installing…" : "Install 32-bit support"}
+            </SmallButton>
+          </div>
+        </div>
+      )}
+      {i386Result && <p className="text-[11px] text-success-600">{i386Result}</p>}
       {proton?.launcherProblem && (
         <p role="alert" className="text-[11px] leading-relaxed text-danger">
           {proton.launcherProblem} Windows games fall back to Wine until this is fixed.

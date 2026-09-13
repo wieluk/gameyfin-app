@@ -1,9 +1,28 @@
 import { formatRelative } from "@/lib/format";
+import type { RestoreReport } from "@/bindings/RestoreReport";
 import type { SaveSyncState } from "@/types";
 
 /** Narrows the value a save command returned; the others answer with nothing useful. */
 export function isSaveState(value: unknown): value is SaveSyncState {
   return typeof value === "object" && value !== null && "kind" in value;
+}
+
+export function isRestoreReport(value: unknown): value is RestoreReport {
+  return typeof value === "object" && value !== null && "folders" in value && "state" in value;
+}
+
+/** One line on what a restore put back and where, so the save can be found afterwards. */
+export function restoredText(restored: Omit<RestoreReport, "state">): string {
+  const made = `made ${formatRelative(restored.savedAt)}${restored.device ? ` on ${restored.device}` : ""}`;
+  if (restored.files === 0) return `Restored the save ${made}, but it held no files.`;
+  const files = `${restored.files} ${restored.files === 1 ? "file" : "files"}`;
+  return `Restored the save ${made}: ${files} to ${restored.folders.join(", ")}.`;
+}
+
+/** What to tell the user after pressing Restore. A restore that wrote nothing says why. */
+export function restoredOutcome(report: RestoreReport): { text: string; ok: boolean } {
+  if (report.state.kind !== "in-sync") return outcomeOf(report.state);
+  return { text: restoredText(report), ok: report.files > 0 };
 }
 
 /** One line saying where a game stands, and how alarmed to look about it. */
