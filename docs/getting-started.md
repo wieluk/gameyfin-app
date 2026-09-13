@@ -14,6 +14,15 @@ Download a build from the [releases](https://github.com/wieluk/gameyfin-app/rele
 The `.deb` and `.rpm` need glibc 2.39 or newer and WebKitGTK 4.1. On anything older, use the
 Flatpak.
 
+### Flatpak: updates
+
+You can also install from the repository instead of a file:
+
+```bash
+flatpak remote-add --user --if-not-exists gameyfin https://wieluk.github.io/gameyfin-app/repo/gameyfin.flatpakrepo
+flatpak install --user gameyfin org.gameyfin.Gameyfin
+```
+
 ### Flatpak: 32-bit support
 
 Installers and older games are 32-bit, and the Flatpak needs Flathub's 32-bit libraries to

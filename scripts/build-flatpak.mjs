@@ -56,6 +56,15 @@ const repoDir = join(ROOT, "target", "flatpak-repo");
 rmSync(buildDir, { recursive: true, force: true });
 rmSync(repoDir, { recursive: true, force: true });
 
+// Set by the release workflow. A local build carries no key, so it still installs unsigned.
+const gpgKey = process.env.FLATPAK_GPG_KEY_ID;
+const repoUrl = process.env.FLATPAK_REPO_URL;
+const publicKey = join(FLATPAK_DIR, "gameyfin-repo.gpg");
+if (gpgKey && !existsSync(publicKey)) {
+  console.error(`FLATPAK_GPG_KEY_ID is set, but ${publicKey} is missing.`);
+  process.exit(1);
+}
+
 const installDirectly = process.argv.includes("--install");
 
 console.log(`Building ${APP_ID} ${version}...`);
@@ -70,15 +79,21 @@ if (installDirectly) {
   rmSync(join(BUILD, "gameyfin.deb"), { force: true });
   console.log(`\nInstalled ${APP_ID}. Run it with: flatpak run ${APP_ID}`);
 } else {
+  const signing = gpgKey ? [`--gpg-sign=${gpgKey}`] : [];
   execFileSync(
     "flatpak-builder",
-    ["--force-clean", "--repo", repoDir, buildDir, join(FLATPAK_DIR, `${APP_ID}.yml`)],
+    ["--force-clean", ...signing, "--repo", repoDir, buildDir, join(FLATPAK_DIR, `${APP_ID}.yml`)],
     { cwd: ROOT, stdio: "inherit" },
   );
 
   mkdirSync(BUILD, { recursive: true });
   const bundle = join(BUILD, `Gameyfin_${version}.flatpak`);
-  execFileSync("flatpak", ["build-bundle", repoDir, bundle, APP_ID], {
+  // An install keeps this URL and key, so it updates from the repo and rejects unsigned builds.
+  const origin = [
+    ...(repoUrl ? [`--repo-url=${repoUrl}`] : []),
+    ...(gpgKey ? [`--gpg-keys=${publicKey}`] : []),
+  ];
+  execFileSync("flatpak", ["build-bundle", ...origin, repoDir, bundle, APP_ID], {
     cwd: ROOT,
     stdio: "inherit",
   });

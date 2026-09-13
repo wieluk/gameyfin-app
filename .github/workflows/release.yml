@@ -92,6 +92,13 @@ jobs:
         with:
           node-version: 22
 
+      # A fresh checkout, so the metainfo release version needs setting again.
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/set-version.mjs "$TAG"
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -108,6 +115,32 @@ jobs:
         with:
           name: deb-bundle
           path: build
+
+      # Only tagged builds are published, so only they are signed and point at the repository.
+      - name: Import the Flatpak signing key
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$FLATPAK_GPG_PRIVATE_KEY" ]; then
+            echo "::error::The FLATPAK_GPG_PRIVATE_KEY secret is not set."
+            exit 1
+          fi
+          printf '%s\n' "$FLATPAK_GPG_PRIVATE_KEY" | gpg --batch --import
+
+          # A secret from another key pair fails here instead of on users' machines.
+          key=$(gpg --with-colons --import-options show-only --import flatpak/gameyfin-repo.gpg \
+            | awk -F: '/^fpr:/ {print $10; exit}')
+          if [ -z "$key" ] || ! gpg --list-secret-keys "$key" >/dev/null 2>&1; then
+            echo "::error::FLATPAK_GPG_PRIVATE_KEY does not match flatpak/gameyfin-repo.gpg."
+            exit 1
+          fi
+
+          echo "FLATPAK_GPG_KEY_ID=$key" >> "$GITHUB_ENV"
+          echo "FLATPAK_REPO_URL=https://${OWNER}.github.io/${REPO_NAME}/repo/" >> "$GITHUB_ENV"
 
       - run: npm run package:flatpak
 
@@ -136,8 +169,6 @@ jobs:
       - name: Export the build into the Flatpak repository
         if: startsWith(github.ref, 'refs/tags/')
         env:
-          OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
         run: |
@@ -149,16 +180,20 @@ jobs:
           fi
 
           mkdir -p pages/repo/{extensions,objects,state,tmp/cache} pages/repo/refs/{heads,mirrors,remotes}
+          # The commit is already signed inside the bundle. The summary is signed here.
           flatpak build-import-bundle pages/repo build/*.flatpak
-          flatpak build-update-repo --generate-static-deltas --prune pages/repo
+          # A few old versions per ref, so the repository does not grow with every release.
+          flatpak build-update-repo --gpg-sign="$FLATPAK_GPG_KEY_ID" \
+            --generate-static-deltas --prune --prune-depth=3 pages/repo
 
           cat > pages/repo/gameyfin.flatpakrepo <<EOF
           [Flatpak Repo]
           Title=Gameyfin
-          Url=https://${OWNER}.github.io/${REPO_NAME}/repo/
+          Url=${FLATPAK_REPO_URL}
           Homepage=${SERVER_URL}/${REPOSITORY}
           Comment=Gameyfin desktop client
           Description=Updates for the Gameyfin desktop client
+          GPGKey=$(base64 -w0 flatpak/gameyfin-repo.gpg)
           EOF
 
       - name: Publish the repository to GitHub Pages
@@ -169,3 +204,25 @@ jobs:
           publish_dir: pages/repo
           destination_dir: repo
           keep_files: true
+
+  publish:
+    name: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [bundle, flatpak]
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # A pre-release tag must not become "latest": the updaters read that release.
+          if [[ "$TAG" == *-* ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi

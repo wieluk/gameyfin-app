@@ -29,7 +29,7 @@ export function AboutSection() {
 
   return (
     <Section title="About">
-      <Row label="Version" value={status?.currentVersion ?? "0.1.0"} />
+      <Row label="Version" value={status?.currentVersion ?? "…"} />
       <Row
         label="Latest release"
         value={
