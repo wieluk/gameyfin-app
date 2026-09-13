@@ -162,6 +162,28 @@ async fn a_stale_base_reports_the_remote_version_rather_than_failing() {
 }
 
 #[tokio::test]
+async fn a_base_from_another_store_is_not_sent() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("POST", "/saves/game/42")
+        .match_header("x-base-save-id", mockito::Matcher::Missing)
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(version_json(11))
+        .create_async()
+        .await;
+    let (path, mut metadata) = archive("foreign-base");
+    metadata.base_save_id = Some("1788880138395_da8e4ec6-9d22-4d6b-92f1-f57d20773ab7".into());
+
+    client(&server.url())
+        .upload_save(42, &path, &metadata)
+        .await
+        .unwrap();
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
 async fn forcing_an_upload_sets_the_header() {
     let mut server = mockito::Server::new_async().await;
     let mock = server
@@ -287,4 +309,47 @@ async fn hashing_matches_a_known_digest() {
         "816af297f426f89f0779586c13ce225431c607e71a5499346a0bf8a760e00da0",
         digest
     );
+}
+
+#[tokio::test]
+async fn lists_every_save_the_user_has_over_hilla() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("POST", "/connect/SaveSyncEndpoint/getMySaves")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!("[{},{}]", version_json(2), version_json(1)))
+        .create_async()
+        .await;
+
+    let saves = client(&server.url()).my_saves().await.unwrap();
+
+    // A migration off the server starts here, so an empty answer copied nothing at all.
+    assert_eq!(
+        vec!["2", "1"],
+        saves.iter().map(|s| s.id.as_str()).collect::<Vec<_>>()
+    );
+    assert!(saves.iter().all(|s| s.game_id == 42));
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn deletes_several_saves_by_their_numeric_ids() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("POST", "/connect/SaveSyncEndpoint/deleteSaves")
+        .match_body(mockito::Matcher::Json(
+            serde_json::json!({ "saveIds": [7, 9] }),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("null")
+        .create_async()
+        .await;
+
+    client(&server.url())
+        .delete_saves(&["7", "9"])
+        .await
+        .unwrap();
+    mock.assert_async().await;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { backend } from "@/lib/backend";
@@ -37,11 +37,6 @@ export function SavesSection() {
   function update(patch: Parameters<typeof save>[0]) {
     setResult(null);
     return save(patch);
-  }
-
-  async function browse() {
-    const chosen = await backend.pickFolder(data?.saveFolder ?? undefined);
-    if (chosen) await update({ saveFolder: chosen });
   }
 
   return (
@@ -95,58 +90,8 @@ export function SavesSection() {
         ))}
       </div>
 
-      {active === "folder" && (
-        <div className="mt-3 flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content1 px-3 py-1.5 text-xs"
-              placeholder="No folder chosen"
-              readOnly
-              value={data?.saveFolder ?? ""}
-            />
-            <button
-              type="button"
-              onClick={browse}
-              className="rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200"
-            >
-              Browse
-            </button>
-          </div>
-          {/* The sandbox only reaches the home directory and removable media, the same
-              limit the games folder already has. */}
-          <p className="text-[11px] text-foreground/50">
-            In the Flatpak build the folder has to be inside your home directory.
-          </p>
-        </div>
-      )}
-
-      {active === "webdav" && (
-        <div className="mt-3 flex flex-col gap-2">
-          <Field
-            label="Address"
-            placeholder="https://cloud.example.com/remote.php/dav/files/me/saves"
-            value={data?.webdavUrl ?? ""}
-            onCommit={(value) => update({ webdavUrl: value })}
-          />
-          <Field
-            label="Username"
-            value={data?.webdavUsername ?? ""}
-            onCommit={(value) => update({ webdavUsername: value })}
-          />
-          <Field
-            label="Password"
-            type="password"
-            value=""
-            placeholder={data?.hasWebdavPassword ? "Saved, type to replace" : ""}
-            onCommit={(value) => update({ webdavPassword: value })}
-          />
-          <p className="text-[11px] text-warning-600">
-            This password is stored unencrypted in this PC's settings file, and never shown
-            again once saved. Use an app password rather than your account password if your
-            server offers one.
-          </p>
-        </div>
-      )}
+      {active === "folder" && <FolderFields onChanged={() => setResult(null)} />}
+      {active === "webdav" && <WebDavFields onChanged={() => setResult(null)} />}
 
       {/* Directly under the location, since that is what it checks. */}
       <div className="mt-3 flex items-center gap-3">
@@ -177,27 +122,134 @@ export function SavesSection() {
   );
 }
 
-/** Copying saves across after changing where they are kept. */
+/** The folder a folder store uses. Shared by the location picker and copying saves across. */
+function FolderFields({ onChanged }: { onChanged?: () => void }) {
+  const settings = useAppSettings();
+  const { save, error } = useSettingSaver();
+  const folder = settings.data?.saveFolder ?? "";
+
+  async function browse() {
+    const chosen = await backend.pickFolder(folder || undefined);
+    if (!chosen) return;
+    onChanged?.();
+    await save({ saveFolder: chosen });
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <input
+          className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content1 px-3 py-1.5 text-xs"
+          placeholder="No folder chosen"
+          readOnly
+          value={folder}
+        />
+        <button
+          type="button"
+          onClick={() => void browse()}
+          className="rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200"
+        >
+          Browse
+        </button>
+      </div>
+      {/* The sandbox only reaches the home directory and removable media, the same
+          limit the games folder already has. */}
+      <p className="text-[11px] text-foreground/50">
+        In the Flatpak build the folder has to be inside your home directory.
+      </p>
+      <SaveError error={error} />
+    </div>
+  );
+}
+
+/** A WebDAV share's address and sign-in. Shared by the location picker and copying saves. */
+function WebDavFields({ onChanged }: { onChanged?: () => void }) {
+  const settings = useAppSettings();
+  const { save, error } = useSettingSaver();
+  const data = settings.data;
+
+  function update(patch: Parameters<typeof save>[0]) {
+    onChanged?.();
+    return save(patch);
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <Field
+        label="Address"
+        placeholder="https://cloud.example.com/remote.php/dav/files/me/saves"
+        value={data?.webdavUrl ?? ""}
+        onCommit={(value) => update({ webdavUrl: value })}
+      />
+      <Field
+        label="Username"
+        value={data?.webdavUsername ?? ""}
+        onCommit={(value) => update({ webdavUsername: value })}
+      />
+      <Field
+        label="Password"
+        type="password"
+        value=""
+        placeholder={data?.hasWebdavPassword ? "Saved, type to replace" : ""}
+        onCommit={(value) => update({ webdavPassword: value })}
+      />
+      <p className="text-[11px] text-warning-600">
+        This password is stored unencrypted in this PC's settings file, and never shown
+        again once saved. Use an app password rather than your account password if your
+        server offers one.
+      </p>
+      <SaveError error={error} />
+    </div>
+  );
+}
+
+/** Each place as it reads in a sentence. */
+const PLACE: Record<SaveBackend, string> = {
+  server: "the Gameyfin server",
+  folder: "the save folder",
+  webdav: "the WebDAV share",
+};
+
+/** Whether a place has what it needs to be reached. The server only needs a sign-in. */
+function isSetUp(
+  place: SaveBackend,
+  data?: { saveFolder?: string | null; webdavUrl?: string | null },
+): boolean {
+  if (place === "folder") return Boolean(data?.saveFolder?.trim());
+  if (place === "webdav") return Boolean(data?.webdavUrl?.trim());
+  return true;
+}
+
+/** Copying saves into the place they are kept now, from one of the other places. */
 export function MigrationSection() {
   const settings = useAppSettings();
-  const active: SaveBackend = settings.data?.saveBackend ?? "server";
+  const data = settings.data;
+  const active: SaveBackend = data?.saveBackend ?? "server";
+  const sources = BACKENDS.filter((place) => place !== active);
 
-  // Defaults to copying into the place saves are kept now, the usual reason to be here.
-  // Both ends are still selectable, so a folder can be the target while the server is in
-  // use, which is the case for anyone setting a folder up before switching to it.
-  const [to, setTo] = useState<SaveBackend>(active);
-  const [from, setFrom] = useState<SaveBackend>(active === "server" ? "folder" : "server");
+  const [from, setFrom] = useState<SaveBackend>(sources[0]);
+  // The place just switched away from, which is where a copy is usually wanted from.
+  const [switchedFrom, setSwitchedFrom] = useState<SaveBackend | null>(null);
   const [allVersions, setAllVersions] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [summary, setSummary] = useState<MigrationSummary | null>(null);
   const migration = useAction();
   const busy = migration.busy;
+  const seen = useRef<SaveBackend | null>(null);
 
-  // Switching backend while this is on screen should move the target with it.
+  // Only a change after the settings loaded counts as switching.
   useEffect(() => {
-    setTo(active);
-    setFrom((current) => (current === active ? BACKENDS.find((b) => b !== active)! : current));
-  }, [active]);
+    if (!data) return;
+    if (seen.current !== null && seen.current !== active) {
+      setFrom(seen.current);
+      setSwitchedFrom(seen.current);
+      setSummary(null);
+    } else if (from === active) {
+      setFrom(sources[0]);
+    }
+    seen.current = active;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, data]);
 
   // Subscribed only while a migration is running.
   useTauriEvent<{ done: number; total: number }>("save-migration-progress", setProgress, busy);
@@ -205,51 +257,60 @@ export function MigrationSection() {
   async function run() {
     setSummary(null);
     setProgress(null);
-    const result = await migration.run(() => backend.migrateSaves(from, to, allVersions));
+    const result = await migration.run(() => backend.migrateSaves(from, allVersions));
     setProgress(null);
-    if (result) setSummary(result);
+    if (result) {
+      setSummary(result);
+      setSwitchedFrom(null);
+    }
   }
 
+  const ready = isSetUp(active, data) && isSetUp(from, data);
+
   return (
-    <Section title="Move saves">
+    <Section title="Copy saves here">
       <p className={HINT}>
-        Nothing is removed from the place you copy from, so you can run this again, and a
-        second run only copies what is missing.
+        Copies into {PLACE[active]}, where saves are kept now. Nothing is removed from the
+        place you copy from, and a second run only copies what is missing.
       </p>
 
-      <div className="grid grid-cols-2 gap-2 pt-2">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-foreground/55">Copy from</span>
-          <select
-            value={from}
-            onChange={(e) => setFrom(e.target.value as SaveBackend)}
-            className={INPUT}
+      {switchedFrom && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+          <span className="min-w-0 flex-1">
+            You switched from {PLACE[switchedFrom]}. Copy your saves from there, so they are
+            here too?
+          </span>
+          <button
+            type="button"
+            onClick={() => setSwitchedFrom(null)}
+            className="text-foreground/55 underline-offset-2 hover:underline"
           >
-            {BACKENDS.map((backendId) => (
-              <option key={backendId} value={backendId}>
-                {BACKEND_LABELS[backendId]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-foreground/55">Copy to</span>
-          <select
-            value={to}
-            onChange={(e) => setTo(e.target.value as SaveBackend)}
-            className={INPUT}
-          >
-            {BACKENDS.map((backendId) => (
-              <option key={backendId} value={backendId}>
-                {BACKEND_LABELS[backendId]}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <p className={HINT}>
-        Each location keeps its own settings, so both ends work whichever one is in use now.
-      </p>
+            Not now
+          </button>
+        </div>
+      )}
+
+      <label className="flex flex-col gap-1 pt-2">
+        <span className="text-xs text-foreground/55">Copy from</span>
+        <select
+          value={from}
+          disabled={busy}
+          onChange={(e) => {
+            setFrom(e.target.value as SaveBackend);
+            setSummary(null);
+          }}
+          className={INPUT}
+        >
+          {sources.map((place) => (
+            <option key={place} value={place}>
+              {BACKEND_LABELS[place]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {/* The source is set up right here, without making it the place saves are kept. */}
+      {from === "folder" && <FolderFields />}
+      {from === "webdav" && <WebDavFields />}
 
       <label className="flex cursor-pointer items-start gap-2 pt-2">
         <input
@@ -269,7 +330,7 @@ export function MigrationSection() {
       <div className="flex flex-wrap items-center gap-3 pt-1">
         <button
           type="button"
-          disabled={busy || from === to}
+          disabled={busy || !ready}
           onClick={() => void run()}
           className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
         >
@@ -282,15 +343,16 @@ export function MigrationSection() {
         )}
       </div>
 
-      {from === to && (
-        <p className={HINT}>
-          Pick two different places to copy between.
-        </p>
+      {!isSetUp(active, data) && (
+        <p className={HINT}>Set up where saves are kept, above, before copying into it.</p>
       )}
 
       <SaveError error={migration.error} />
 
-      {summary && (
+      {summary && summary.games === 0 && (
+        <p className="pt-1 text-xs text-foreground/60">Nothing to copy: no saves were found there.</p>
+      )}
+      {summary && summary.games > 0 && (
         <div className="flex flex-col gap-1 pt-1">
           <p className={`text-xs ${summary.failed > 0 ? "text-warning-600" : "text-success-600"}`}>
             {summary.copied} copied from {summary.games} game

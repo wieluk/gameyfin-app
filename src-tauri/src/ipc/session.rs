@@ -202,12 +202,19 @@ pub async fn update_settings(
         .context("could not change the startup setting")?;
     }
 
-    let settings = state
+    let (settings, store_changed) = state
         .update_settings(|s| {
+            let before = s.save_store_identity();
             patch.apply(s);
-            Ok(s.clone())
+            Ok((s.clone(), s.save_store_identity() != before))
         })
         .await?;
+
+    if store_changed {
+        // Otherwise the old store's ids reach the new one as the base of the next upload.
+        state.library().forget_synced_save_ids().await;
+        tracing::info!("the save store changed, so every game's last synced version was forgotten");
+    }
 
     if let Some(level) = patch.log_level {
         crate::set_log_level(level).map_err(CommandError::Message)?;

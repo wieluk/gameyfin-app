@@ -311,6 +311,14 @@ impl LibraryState {
         self.persist().await;
     }
 
+    /// Forgets every game's last synced version, for a store that never held those ids.
+    pub async fn forget_synced_save_ids(&self) {
+        for record in write(&self.records).values_mut() {
+            record.saves.last_synced_save_id = None;
+        }
+        self.persist().await;
+    }
+
     /// Snapshots inside the writer lock, so the last write always carries every change.
     async fn persist(&self) {
         let Some(dir) = self.config_dir.get() else {

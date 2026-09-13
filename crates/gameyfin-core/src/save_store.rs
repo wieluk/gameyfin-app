@@ -151,9 +151,17 @@ impl SaveStore for ServerStore {
     }
 
     async fn games(&self) -> StoreResult<Vec<i64>> {
-        // The server has no "which games have saves" route; the caller already knows the
-        // library, so migration off a server iterates that instead.
-        Ok(Vec::new())
+        // From the user's own save list: without it a move off the server found nothing.
+        let mut games: Vec<i64> = self
+            .client
+            .my_saves()
+            .await?
+            .into_iter()
+            .map(|save| save.game_id)
+            .collect();
+        games.sort_unstable();
+        games.dedup();
+        Ok(games)
     }
 
     fn describe(&self) -> String {

@@ -216,8 +216,12 @@ impl GameyfinClient {
         if let Some(title) = &metadata.ludusavi_title {
             req = req.header("X-Ludusavi-Title", title);
         }
-        if let Some(base) = &metadata.base_save_id {
-            req = req.header("X-Base-Save-Id", base);
+        // Server ids are numbers. One from a folder or WebDAV store fails to parse there and
+        // comes back as a bare 403, which reads as a dead session.
+        match metadata.base_save_id.as_deref() {
+            Some(base) if base.parse::<i64>().is_ok() => req = req.header("X-Base-Save-Id", base),
+            Some(base) => tracing::warn!(base, "dropping a base save id the server never issued"),
+            None => {}
         }
         if metadata.force {
             req = req.header("X-Force", "true");

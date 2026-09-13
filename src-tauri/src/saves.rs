@@ -44,7 +44,6 @@ fn home() -> Option<PathBuf> {
     crate::integrations::home().ok()
 }
 
-/// Everything one game's sync needs, resolved once.
 struct GameContext {
     game_id: i64,
     title: String,
@@ -78,13 +77,8 @@ impl GameContext {
     }
 }
 
-/// Whether a game runs as a Windows program on this machine, which is what decides where
-/// its saves live and how they are tagged.
-///
-/// Evidence in order of how much it is worth: the file that would be launched, then the
-/// name it was recorded under, then a prefix that has booted, then what a previous sync
-/// concluded. `None` rather than a guess: tagging a save wrongly is what makes another
-/// machine refuse it.
+/// Whether a game runs as a Windows program here, deciding where saves live and how they are
+/// tagged. `None` rather than a guess: a wrong tag makes another machine refuse the save.
 fn runs_as_windows(record: &GameRecord, install_dir: &Path, prefix_dir: &Path) -> Option<bool> {
     // Everything runs as a Windows program on Windows, and `needs_proton` says so too.
     if cfg!(windows) {
@@ -150,9 +144,8 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
     })
 }
 
-/// The strategy a sync actually uses. For a game run in a prefix the cross-OS translation is
-/// never right: it drops the portable mapping, so a save stored under `/gameyfin/home`
-/// restores to nowhere. It was offered there before Proton games were recognised.
+/// Never cross-OS for a game in a prefix: it drops the portable mapping, so a save stored under
+/// `/gameyfin/home` restores to nowhere.
 fn effective_strategy(stored: RestoreStrategy, runs_as_windows: Option<bool>) -> RestoreStrategy {
     if !cfg!(windows) && runs_as_windows == Some(true) {
         RestoreStrategy::Portable
@@ -161,9 +154,8 @@ fn effective_strategy(stored: RestoreStrategy, runs_as_windows: Option<bool>) ->
     }
 }
 
-/// The path as the filesystem resolves it. Ludusavi reports files by their real path, so a
-/// redirect written through a symlink (`/home` is `/var/home` on an ostree system) never
-/// matches and the backup keeps this machine's own path.
+/// The path as the filesystem resolves it: Ludusavi reports real paths, so a redirect through a
+/// symlink (`/home` on ostree) never matches.
 fn real(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
@@ -237,9 +229,8 @@ async fn ludusavi_for(
         builder = builder.wine_prefix(&real(&context.prefix_dir));
     }
 
-    // For a Windows game on Proton the home that travels is the one inside the prefix, so
-    // pointing both at one synthetic target is what lets a save cross between the two. The
-    // machine's own home is registered after it, and only as itself.
+    // A Proton game's travelling home is the prefix's, so a save crosses to Windows. The machine's
+    // own home is registered after it, only as itself.
     let prefix_home = in_prefix
         .then(|| gameyfin_core::prefix::prefix_home(&context.prefix_dir))
         .flatten();
@@ -270,7 +261,6 @@ async fn ludusavi_for(
     })
 }
 
-/// What identifying a game against the manifest produced.
 enum Resolution {
     Title(String),
     /// Near misses only, so the user has to choose.
@@ -555,7 +545,6 @@ async fn recorded_change(context: &GameContext) -> bool {
     }
 }
 
-/// Works out where one game stands without changing anything.
 pub async fn state_of(
     app: &AppHandle,
     state: &AppState,
@@ -580,11 +569,9 @@ pub async fn state_of(
 /// This PC's own save files for a game, from a scan rather than from a record.
 #[derive(Debug, Clone, Default)]
 struct LocalFiles {
-    /// Whether the game has save files here at all.
     present: bool,
     /// Whether they differ from what the last sync left in staging.
     changed: bool,
-    /// When the newest of them was last written.
     newest_at: Option<String>,
 }
 
@@ -650,8 +637,7 @@ async fn state_at_launch(
         } => (context, title, remote),
     };
 
-    // The files, not the record of the last backup: a wrong record kept a newer save from
-    // ever being restored.
+    // The files, not the record of the last backup, which can be wrong.
     let local = match scan_local(app, state, &context, &title).await {
         Ok(local) => Some(local),
         Err(e) => {
@@ -700,7 +686,6 @@ pub enum SyncMoment {
     Exit,
 }
 
-/// What an automatic sync is doing right now.
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(
     tag = "kind",
@@ -763,10 +748,8 @@ pub struct SaveSyncProgress {
     pub blocking: bool,
 }
 
-/// Reports what an automatic sync is doing, and carries the user's answer if they skip it.
-///
-/// Skipping never interrupts anything: it is read between steps, so the worst it costs is a
-/// download nobody used.
+/// Reports an automatic sync's progress and carries a skip, which is read between steps so it
+/// never interrupts anything.
 pub struct SyncWatch {
     app: AppHandle,
     game_id: i64,
@@ -851,11 +834,9 @@ pub enum SaveScope {
     Installed,
     /// Installed games, and uninstalled ones with stored saves, so a save left behind shows.
     WithSaves,
-    /// Every game in the library.
     All,
 }
 
-/// One game's line in the Saves tab.
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -878,11 +859,8 @@ pub struct SaveOverviewRow {
 /// about not opening a hundred connections rather than about local work.
 const OVERVIEW_CONCURRENCY: usize = 8;
 
-/// Every game's save status in one pass.
-///
-/// Never runs the helper: identifying a game costs subprocesses and is only needed to back
-/// one up, so a list of a hundred games is a hundred cheap store listings, asked in
-/// parallel, rather than the sequential probe this replaces.
+/// Every game's save status in one pass. Never runs the helper, so a large library costs only
+/// cheap store listings, asked in parallel.
 #[tauri::command]
 pub async fn save_overview(
     state: State<'_, AppState>,
@@ -922,9 +900,8 @@ pub async fn save_overview(
     }
 
     let store: Arc<dyn SaveStore> = Arc::from(store_for(&state, &settings).await?);
-    // A folder or a share can say which games it holds anything for in one listing, so most
-    // of the library needs no request at all. The server has no such route and answers
-    // with nothing, which this reads as "ask about all of them".
+    // Every store can say which games it holds anything for in one listing, so most of the
+    // library needs no request at all. An empty or failed answer means "ask about all of them".
     let held: Option<HashSet<i64>> = match store.games().await {
         Ok(games) if !games.is_empty() => Some(games.into_iter().collect()),
         _ => None,
@@ -1231,7 +1208,6 @@ impl RestoreReport {
     }
 }
 
-/// Fetches a version and restores it over the local saves.
 #[tauri::command]
 pub async fn restore_saves(
     app: AppHandle,
@@ -1417,7 +1393,6 @@ pub async fn set_save_title(
     state_of(&app, &state, game_id).await
 }
 
-/// Records how a game's saves map onto this machine.
 #[tauri::command]
 pub async fn set_save_mapping(
     app: AppHandle,
@@ -1449,7 +1424,7 @@ pub async fn set_save_mapping(
     state_of(&app, &state, game_id).await
 }
 
-/// Its own command because going through `set_save_mapping` erased hand-entered paths.
+/// Its own command, so changing the mapping cannot erase hand-entered paths.
 #[tauri::command]
 pub async fn set_save_cross_os(
     app: AppHandle,
@@ -1514,10 +1489,8 @@ fn existing(path: PathBuf) -> Option<String> {
     path.is_dir().then(|| path.to_string_lossy().into_owned())
 }
 
-/// Where a game's saves are, for opening a folder and for browsing to one by hand.
-///
-/// `probe` runs a scan to find where the saves actually are, which takes the helper's lock
-/// and a moment, so the list asks without it and the dialog asks with it.
+/// Where a game's saves are. `probe` runs a scan, which takes the helper's lock, so only the
+/// dialog asks for it.
 #[tauri::command]
 pub async fn save_locations(
     app: AppHandle,
@@ -1609,10 +1582,8 @@ fn comparable(title: &str) -> String {
         .collect()
 }
 
-/// Everything on this PC the save database recognises, whether or not Gameyfin installed it.
-///
-/// Runs in a config directory of its own, under its own lock, so a scan of the whole
-/// machine cannot stand between a game and the save it is waiting for at launch.
+/// Everything on this PC the save database recognises. Its own config directory and lock keep a
+/// whole-machine scan from delaying a launch.
 #[tauri::command]
 pub async fn scan_this_pc(
     app: AppHandle,
@@ -1792,20 +1763,20 @@ struct MigrationProgress {
     total: usize,
 }
 
-/// Copies saves from another backend into the active one. The source is never touched, and
+/// Copies saves from another location into the one in use. The source is never touched, and
 /// anything already at the destination is skipped, so a failed run can be repeated.
 #[tauri::command]
 pub async fn migrate_saves(
     app: AppHandle,
     state: State<'_, AppState>,
     from: SaveBackend,
-    to: SaveBackend,
     all_versions: bool,
 ) -> CommandResult<gameyfin_core::save_migration::MigrationSummary> {
     let settings = state.settings();
+    let to = settings.save_backend;
     if from == to {
         return Err(CommandError::msg(
-            "Pick two different places, one to copy from and one to copy to.",
+            "Saves are kept there already. Pick another place to copy from.",
         ));
     }
     let source = store_of(&state, &settings, from).await?;
@@ -2109,7 +2080,6 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
                     tracing::info!(game_id, "save needs a decision before it can be restored");
                     emit_state(app, game_id, other);
                 }
-                // The real reason, where "nothing to sync" used to stand in for all of them.
                 watch.finish(SaveSyncPhase::Done {
                     state: other.clone(),
                 });
@@ -2211,7 +2181,6 @@ pub async fn answer_save_pull_offer(
     Ok(())
 }
 
-/// Backs up and uploads after the game exits.
 pub async fn after_exit(app: &AppHandle, state: &AppState, game_id: i64) {
     let settings = state.settings();
     if !settings.save_sync_enabled || !settings.sync_saves_on_exit {
@@ -2294,9 +2263,8 @@ mod tests {
 
     #[test]
     fn a_windows_game_is_recognised_by_the_file_it_launches() {
-        // The bug this covers: the executable is stored relative to the install folder, and
-        // testing that path directly always failed to open, so every Windows game on Linux
-        // was tagged as a native one and its save refused a Windows PC's.
+        // The executable is stored relative to the install folder; opening that path as-is would tag
+        // every Windows game on Linux as native.
         let dir = scratch("exe");
         let install = dir.join("install");
         std::fs::create_dir_all(install.join("bin")).unwrap();
@@ -2381,8 +2349,7 @@ mod tests {
 
     #[test]
     fn a_symlinked_path_is_written_as_the_path_it_resolves_to() {
-        // On an ostree system `/home` is `/var/home`, and every Proton save from there kept
-        // this machine's path because the redirect was written through the link.
+        // On ostree `/home` is `/var/home`, so a redirect written through the link never matches.
         let dir = scratch("real");
         std::fs::create_dir_all(dir.join("var/home/u")).unwrap();
         std::os::unix::fs::symlink(dir.join("var/home"), dir.join("home")).unwrap();
@@ -2395,8 +2362,7 @@ mod tests {
 
     #[test]
     fn a_game_run_in_a_prefix_always_travels_by_the_portable_mapping() {
-        // Cross-OS drops that mapping, so a save stored under /gameyfin/home restored to
-        // nowhere. It was offered for Proton games before they were recognised.
+        // Cross-OS drops that mapping, so a save stored under /gameyfin/home would restore to nowhere.
         assert!(
             effective_strategy(RestoreStrategy::CrossOs, Some(true)) == RestoreStrategy::Portable
         );

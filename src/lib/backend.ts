@@ -224,9 +224,9 @@ export const backend = {
     redirects: Array<[string, string]>,
     customPaths: string[],
   ) => invoke<SaveSyncState>("set_save_mapping", { gameId, crossOs, redirects, customPaths }),
-  /** Copy saves between two locations. The source is left alone. */
-  migrateSaves: (from: SaveBackend, to: SaveBackend, allVersions: boolean) =>
-    invoke<MigrationSummary>("migrate_saves", { from, to, allVersions }),
+  /** Copy saves from another location into the one in use. The source is left alone. */
+  migrateSaves: (from: SaveBackend, allVersions: boolean) =>
+    invoke<MigrationSummary>("migrate_saves", { from, allVersions }),
   saveToolStatus: () => invoke<SaveToolStatus>("save_tool_status"),
   /** Refresh the game database. It changes far more often than the helper itself. */
   updateSaveManifest: () => invoke<ManifestInfo>("update_save_manifest"),
