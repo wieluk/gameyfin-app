@@ -23,8 +23,16 @@ in sync between PCs.
   automatic updates.
 
 > **Save sync with a Gameyfin server** needs server support that is not merged into
-> Gameyfin yet. Until it is, run `ghcr.io/wieluk/gameyfin:save-sync` as your server.
+> [Gameyfin](https://github.com/gameyfin/gameyfin) yet. Until it is, run `ghcr.io/wieluk/gameyfin:save-sync` as your server.
 > Saving to a folder or WebDAV share works with any Gameyfin server.
+
+## Screenshots
+
+| Library | Game details |
+| --- | --- |
+| ![Library](assets/screenshots/library.png) | ![Game details](assets/screenshots/game-details.png) |
+| **Saves** | **Installed games** |
+| ![Saves](assets/screenshots/saves.png) | ![Installed games](assets/screenshots/installed.png) |
 
 ## Install
 
@@ -53,4 +61,4 @@ cross-built; `.github/workflows/release.yml` builds each platform on its own run
 
 ## Licence
 
-MIT. Ludusavi, bundled for save backups, is MIT licensed.
+MIT

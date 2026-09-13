@@ -22,7 +22,7 @@ setup step and in **Settings, Compatibility**. Restart Gameyfin afterwards.
 
 ## First start
 
-1. **Connect**: enter your Gameyfin server's address.
+1. **Connect**: enter your [Gameyfin](https://github.com/gameyfin/gameyfin) server's address.
 2. **Sign in**: the server's own login page opens, so SSO works too. If the login window
    misbehaves, use the link under it to clear its saved data.
 3. **Choose where games go and name this PC.** The name appears beside every save this PC

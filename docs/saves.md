@@ -5,7 +5,7 @@ on every PC that syncs to the same place. You can also restore older versions an
 saves to a new location.
 
 > **Using a Gameyfin server for saves** needs server support that is not merged into
-> Gameyfin yet. Until it is, run `ghcr.io/wieluk/gameyfin:save-sync` as your server.
+> [Gameyfin](https://github.com/gameyfin/gameyfin) yet. Until it is, run `ghcr.io/wieluk/gameyfin:save-sync` as your server.
 > A folder or WebDAV share works with any Gameyfin server.
 
 ## How it works
