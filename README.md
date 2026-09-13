@@ -1,73 +1,56 @@
 # gameyfin-app
 
-A system-integrated Gameyfin desktop client for Windows and Linux. Tauri v2, a Rust core
-for downloads, launching, process supervision and save sync, and a React/HeroUI interface.
+A desktop client for [Gameyfin](https://github.com/gameyfin/gameyfin) on Windows and Linux.
+Browse your server's library, download and install games, play them, and keep your saves
+in sync between PCs.
 
-## Status
+## Features
 
-Library browsing, downloading, extraction, installation, launching, playtime tracking and
-save syncing all work against a live server. Saves are backed up through a bundled Ludusavi
-sidecar and kept on the Gameyfin server, a folder or WebDAV, with conflicts between machines
-resolved on restore.
+- **Library**: search, filters, sorting, cover sizes, photos and trailers. Stays usable offline.
+- **Downloads**: a speed limit, several games folders and optional auto install.
+- **Installing**: unpacks archives (including password protected ones), runs setup programs,
+  finds the game's executable and uninstalls cleanly.
+- **Playing**: playtime tracking, and a readable reason when a game crashes on start.
+- **Windows games on Linux**: Proton through umu, GE-Proton, Wine as a fallback, DXVK and
+  vkd3d-proton, per-title fixes, and per-game launch options and prefixes.
+- **Save sync**: saves are backed up with [Ludusavi](https://github.com/mtkennerly/ludusavi)
+  after you play and restored before you start. They can be kept on the Gameyfin server,
+  in a folder or on a WebDAV share, with version history, conflict handling and
+  Windows/Proton interchange.
+- **Shortcuts**: applications menu, desktop and Steam.
+- **Controller support**: navigation by gamepad and a large layout for the sofa.
+- **Desktop integration**: tray icon, start with login, notifications, taskbar progress and
+  automatic updates.
+
+> **Save sync with a Gameyfin server** needs server support that is not merged into
+> Gameyfin yet. Until it is, run `ghcr.io/wieluk/gameyfin:save-sync` as your server.
+> Saving to a folder or WebDAV share works with any Gameyfin server.
+
+## Install
+
+Download a build from the [releases](https://github.com/wieluk/gameyfin-app/releases) page:
+`.exe` for Windows, `.deb`, `.rpm` or `.flatpak` for Linux.
+See [Getting started](docs/getting-started.md) for first-time setup.
+
+## Documentation
+
+The [docs](docs/README.md) explain every feature in more depth, especially
+[save sync](docs/saves.md).
 
 ## Development
 
-On Linux the build needs `libudev-dev` (`systemd-devel` on Fedora) plus the usual WebKit
-and GTK dev packages.
-
 ```bash
 npm install
-npm run dev          # frontend only, fixture data, no server needed
-npm test
-npm run typecheck
-
-npm run fetch-sidecars            # the bundled helpers, needed for the Rust tests
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-npm run tauri dev                 # the full application
+npm run dev              # frontend only, with fixture data
+npm run fetch-sidecars   # bundled helpers, needed for the Rust tests
+npm run tauri dev        # the full app
+npm run verify           # typecheck, tests and clippy
+npm run package          # installers for this platform, into build/
 ```
 
-## Building installers
-
-```bash
-npm run package              # every bundle type for the current platform
-npm run package deb rpm      # or just the ones you want
-npm run package:flatpak      # assembled from the deb; needs flatpak-builder + GNOME 50 SDK
-```
-
-Installers land in `build/`.
-
-| Platform | Produces | Needs |
-|---|---|---|
-| Linux | `.deb`, `.rpm` | `dpkg-deb`, `rpmbuild` |
-| Linux | `.flatpak` | `flatpak`, `flatpak-builder`, GNOME 50 runtime + SDK |
-| Windows | `.exe` | NSIS, installed by the Tauri CLI on first run |
-
-Installers cannot be cross-built; `.github/workflows/release.yml` builds each platform on
-its own runner. The Linux packages are built in an Ubuntu 22.04 container: a binary needs
-the glibc it was built against or newer, and the runner's own 24.04 would leave them
-unable to start on anything older. The Flatpak, which carries its own runtime, is the
-answer for distributions the deb and the rpm cannot reach.
-
-## Installing
-
-Grab a build from the [releases](https://github.com/wieluk/gameyfin-app/releases) page.
-The Windows installers are not code signed, so SmartScreen warns on first run: choose
-"More info" then "Run anyway".
-
-On the Flatpak, 32-bit support is a separate download. Flatpak only pulls an app's
-extensions from the remote the app came from, and a freedesktop runtime extension is not
-something Gameyfin's own repository carries, so it never arrives with the app. Installers
-and older games are 32-bit and need it to run in the Proton container rather than on Wine:
-
-```bash
-flatpak install --user flathub org.freedesktop.Platform.Compat.i386//25.08
-```
-
-Settings, Compatibility offers a button that runs exactly that, and first-time setup offers
-it as a step. Restart Gameyfin afterwards: extensions are mounted when the sandbox starts.
+Linux builds need `libudev-dev` plus the WebKit and GTK dev packages. Installers cannot be
+cross-built; `.github/workflows/release.yml` builds each platform on its own runner.
 
 ## Licence
 
-MIT. Ludusavi, bundled as a save-backup sidecar, is MIT licensed; its notice is fetched
-alongside the binary by `scripts/fetch-sidecar.mjs`.
+MIT. Ludusavi, bundled for save backups, is MIT licensed.
