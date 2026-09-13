@@ -6,21 +6,50 @@
 
   <name>Gameyfin</name>
   <summary>Play your Gameyfin library</summary>
+  <developer id="io.github.wieluk">
+    <name>wieluk</name>
+  </developer>
 
   <description>
     <p>
-      A desktop client for a Gameyfin server. Browse your library, download and install
-      games, launch them, and keep your saves in sync across machines.
+      A desktop client for a Gameyfin server. Browse your library, download and install games,
+      play them, and keep your saves in sync between PCs.
     </p>
-    <p>
-      Windows games are run through wine.
-    </p>
+    <ul>
+      <li>Library with search, filters, cover sizes, photos and trailers, usable offline</li>
+      <li>Downloads with a speed limit, several games folders and optional auto install</li>
+      <li>Unpacks archives, runs setup programs and uninstalls cleanly</li>
+      <li>Windows games through Proton and umu, with DXVK, vkd3d-proton and per-game options</li>
+      <li>Save sync to the Gameyfin server, a folder or WebDAV, with version history</li>
+      <li>Shortcuts, controller navigation, tray icon and automatic updates</li>
+    </ul>
   </description>
 
   <launchable type="desktop-id">org.gameyfin.Gameyfin.desktop</launchable>
 
   <url type="homepage">https://github.com/wieluk/gameyfin-app</url>
   <url type="bugtracker">https://github.com/wieluk/gameyfin-app/issues</url>
+  <url type="help">https://github.com/wieluk/gameyfin-app/tree/main/docs</url>
+  <url type="vcs-browser">https://github.com/wieluk/gameyfin-app</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Your library</caption>
+      <image type="source" width="1963" height="1039">https://raw.githubusercontent.com/wieluk/gameyfin-app/main/assets/screenshots/library.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Game details</caption>
+      <image type="source" width="1961" height="1037">https://raw.githubusercontent.com/wieluk/gameyfin-app/main/assets/screenshots/game-details.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Save versions and locations</caption>
+      <image type="source" width="1961" height="1037">https://raw.githubusercontent.com/wieluk/gameyfin-app/main/assets/screenshots/saves.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Installed games</caption>
+      <image type="source" width="1961" height="1037">https://raw.githubusercontent.com/wieluk/gameyfin-app/main/assets/screenshots/installed.png</image>
+    </screenshot>
+  </screenshots>
 
   <categories>
     <category>Game</category>
@@ -38,10 +67,11 @@
 
   <content_rating type="oars-1.1"/>
 
+  <!-- Release builds replace this with notes from the commits: scripts/release-notes.mjs -->
   <releases>
     <release version="0.1.0" date="2026-09-07">
       <description>
-        <p>First development release.</p>
+        <p>Development build.</p>
       </description>
     </release>
   </releases>
