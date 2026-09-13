@@ -6,12 +6,14 @@ import { Modal } from "@/components/Modal";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { keys } from "@/lib/queries";
-import { describe } from "@/lib/saveState";
+import { describe, restoredText } from "@/lib/saveState";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { SaveSyncProgress } from "@/bindings/SaveSyncProgress";
 
 /** How long a finished sync stays on screen before it takes itself away. */
 const LINGER_MS = 1600;
+/** Longer after a restore, which names a folder worth having time to read. */
+const RESTORED_LINGER_MS = 6000;
 
 /**
  * What the automatic sync is doing while a game starts and after it closes. A restore that
@@ -34,7 +36,8 @@ export function SaveSyncStatus() {
     void queryClient.invalidateQueries({ queryKey: keys.saveVersions(next.gameId) });
     // A failure stays until it is read; everything else has said what it needed to.
     if (next.phase.kind === "failed") return;
-    closing.current = setTimeout(() => setProgress(null), LINGER_MS);
+    const linger = next.phase.kind === "restored" ? RESTORED_LINGER_MS : LINGER_MS;
+    closing.current = setTimeout(() => setProgress(null), linger);
   });
 
   useEffect(() => () => void (closing.current && clearTimeout(closing.current)), []);
@@ -145,7 +148,7 @@ export function SaveSyncStatus() {
 }
 
 function isFinal(progress: SaveSyncProgress): boolean {
-  return ["done", "skipped", "nothing-to-do", "failed"].includes(progress.phase.kind);
+  return ["done", "skipped", "kept-local", "restored", "failed"].includes(progress.phase.kind);
 }
 
 /** One line saying what is happening, in the words of what it means for the save. */
@@ -163,13 +166,19 @@ function phaseText(progress: SaveSyncProgress): string {
     case "uploading":
       return "Uploading your save…";
     case "done":
+      // "Backed up 2 hours ago" answers a different question when you are about to play.
+      if (progress.moment === "launch" && phase.state.kind === "in-sync") {
+        return "Your save is already up to date.";
+      }
       return describe(phase.state).text;
     case "skipped":
       return progress.moment === "launch"
         ? "Skipped. The game starts with the save already on this PC."
         : "Not uploaded. This session started without the newer save, so choose which one to keep under Saves.";
-    case "nothing-to-do":
-      return "Nothing to sync.";
+    case "restored":
+      return restoredText(phase);
+    case "kept-local":
+      return "Keeping this PC's save, as you chose for the newest one on the server.";
     case "failed":
       return phase.message;
   }

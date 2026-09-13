@@ -5,7 +5,13 @@ import { SaveVersionList } from "@/components/SaveVersionList";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { keys } from "@/lib/queries";
-import { describe, isSaveState, outcomeOf } from "@/lib/saveState";
+import {
+  describe,
+  isRestoreReport,
+  isSaveState,
+  outcomeOf,
+  restoredOutcome,
+} from "@/lib/saveState";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { LibraryEntry, SaveSyncState } from "@/types";
 
@@ -19,12 +25,7 @@ const SHOWN_STATES: SaveSyncState["kind"][] = [
   "failed",
 ];
 
-/**
- * A game's synced saves, inside its detail popup.
- *
- * Works against whichever location is configured, so it is just as useful when the server
- * has no save support and the user syncs to a folder or a WebDAV share instead.
- */
+/** A game's synced saves in its detail popup, against whichever location is configured. */
 export function GameSaves({ entry }: { entry: LibraryEntry }) {
   const gameId = entry.game.id;
   const queryClient = useQueryClient();
@@ -63,7 +64,8 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
       const next = await action();
       // Say what the press achieved: the row's own state does not distinguish "backed up"
       // from "looked and found nothing".
-      if (isSaveState(next)) setOutcome(outcomeOf(next));
+      if (isRestoreReport(next)) setOutcome(restoredOutcome(next));
+      else if (isSaveState(next)) setOutcome(outcomeOf(next));
       await load();
     } catch (e) {
       setError(messageOf(e));
@@ -72,9 +74,8 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
     }
   }
 
-  // Nothing to say when saves cannot be synced at all, either here or by the server, or
-  // when this game has none stored: the Saves tab is where a first backup is started, and
-  // a line about a game with nothing to back up on every page is noise.
+  // Nothing to say when saves cannot sync or none are stored: a first backup starts in the
+  // Saves tab, and a line on every page would be noise.
   if (!state || !SHOWN_STATES.includes(state.kind)) return null;
 
   const summary = describe(state);
@@ -115,6 +116,7 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
             gameId={gameId}
             busy={busy}
             onRestore={(saveId) => act(() => backend.restoreSaves(gameId, saveId))}
+            onChanged={() => void load()}
           />
         </div>
       </div>

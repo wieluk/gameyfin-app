@@ -33,10 +33,10 @@ pub struct LocalSaveState {
     pub last_backup_hash: Option<String>,
     pub last_backup_at: Option<String>,
     pub platform: Option<SavePlatform>,
-    /// Whether the first-play offer has been answered. Declining leaves no other trace, so
-    /// without this the offer would return on every launch.
+    /// The version a first-play offer was declined for. Only that version is kept out: a
+    /// newer save arriving later is offered again.
     #[serde(default)]
-    pub pull_offer_answered: bool,
+    pub pull_offer_declined: Option<String>,
 }
 
 /// Whether this machine has never synced this game, so save files on disk may predate sync
@@ -45,7 +45,106 @@ pub fn never_synced(local: &LocalSaveState) -> bool {
     local.last_synced_save_id.is_none() && local.last_backup_hash.is_none()
 }
 
-/// What the UI shows for one game. Mirrored by hand in `src/types.ts`.
+/// What a first launch on this PC does with a save already in the store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirstStart {
+    /// The stored saves are offered even with none here: the game may have been played on
+    /// this PC before Gameyfin saw it, so only the user knows which save is the right one.
+    Ask,
+    /// The user already chose this PC's save over this exact version.
+    KeepLocal,
+}
+
+pub fn first_start(local: &LocalSaveState, newest_remote_id: &str) -> FirstStart {
+    if local.pull_offer_declined.as_deref() == Some(newest_remote_id) {
+        FirstStart::KeepLocal
+    } else {
+        FirstStart::Ask
+    }
+}
+
+/// A PC whose record says in sync but that has no save files left, deleted or never really
+/// restored, needs the stored save back rather than being told it is up to date.
+pub fn missing_here(
+    judged: SaveSyncState,
+    newest: Option<&SaveVersion>,
+    files_here: bool,
+) -> SaveSyncState {
+    match (judged, newest) {
+        (SaveSyncState::InSync { .. }, Some(remote)) if !files_here => SaveSyncState::RemoteNewer {
+            remote_at: remote.created_at.clone(),
+            device: remote.device_name.clone(),
+        },
+        (judged, _) => judged,
+    }
+}
+
+/// Drops deleted versions from what this PC remembers. One built on a deleted version moves to
+/// the newest left, or its next upload names a base the store no longer has.
+pub fn forget_versions(
+    local: &mut LocalSaveState,
+    deleted: &[String],
+    newest_left: Option<String>,
+) {
+    if local
+        .last_synced_save_id
+        .as_ref()
+        .is_some_and(|id| deleted.contains(id))
+    {
+        local.last_synced_save_id = newest_left;
+    }
+    if local
+        .pull_offer_declined
+        .as_ref()
+        .is_some_and(|id| deleted.contains(id))
+    {
+        local.pull_offer_declined = None;
+    }
+}
+
+#[cfg(test)]
+mod missing_and_deleted_tests {
+    use super::*;
+
+    fn version(id: &str) -> SaveVersion {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "gameId": 1, "createdAt": "2026-09-01T10:00:00Z",
+            "sizeBytes": 10, "contentHash": "h", "platform": "WINDOWS", "deviceName": "Desk"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn in_sync_with_no_files_here_restores() {
+        let newest = version("7");
+        let judged = SaveSyncState::InSync {
+            last_synced_at: None,
+        };
+        assert!(matches!(
+            missing_here(judged.clone(), Some(&newest), false),
+            SaveSyncState::RemoteNewer { .. }
+        ));
+        assert_eq!(missing_here(judged.clone(), Some(&newest), true), judged);
+    }
+
+    #[test]
+    fn deleting_the_version_this_pc_is_on_moves_it_to_the_newest_left() {
+        let mut local = LocalSaveState {
+            last_synced_save_id: Some("7".into()),
+            pull_offer_declined: Some("7".into()),
+            ..Default::default()
+        };
+        forget_versions(&mut local, &["7".into()], Some("5".into()));
+        assert_eq!(local.last_synced_save_id.as_deref(), Some("5"));
+        assert_eq!(local.pull_offer_declined, None);
+
+        // Deleting some other version leaves this PC where it was.
+        forget_versions(&mut local, &["3".into()], Some("5".into()));
+        assert_eq!(local.last_synced_save_id.as_deref(), Some("5"));
+    }
+}
+
+/// What the UI shows for one game.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(
     tag = "kind",
@@ -66,9 +165,7 @@ pub enum SaveSyncState {
         candidates: Vec<String>,
     },
     NeverSynced,
-    /// The backup helper ran and captured nothing. Distinct from never having tried: it
-    /// means the game was recognised but no save files were found where it expected them,
-    /// which is a different problem with a different remedy.
+    /// The helper recognised the game but found no save files where it expected them.
     NothingToBackUp {
         /// The title it searched under, which is what the user needs to judge whether the
         /// game was matched to the wrong entry or simply has nothing saved yet.
@@ -106,7 +203,6 @@ pub enum SaveSyncState {
     },
 }
 
-/// How the user resolved a conflict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
@@ -144,16 +240,9 @@ pub fn decide(
         .parse::<SavePlatform>()
         .unwrap_or(SavePlatform::Unknown);
 
-    // Our own upload is restorable here whatever it is tagged: it came from these very
-    // paths. Versions written before Gameyfin could tell a Proton game from a native one
-    // carry the wrong platform, and this is what keeps them usable until the next backup
-    // re-tags them.
-    let ours =
-        this_installation.is_some() && remote.installation_id.as_deref() == this_installation;
-
     // A save that cannot be restored here is worth saying so about before anything else,
     // otherwise the UI would offer a restore that would scatter files into wrong paths.
-    if !ours && !remote_platform.interchangeable_with(this_platform) {
+    if !restorable_here(remote, this_platform, this_installation) {
         return SaveSyncState::PlatformMismatch {
             local: this_platform,
             remote: remote_platform,
@@ -186,6 +275,22 @@ pub fn decide(
 fn bridgeable_by_wine_translation(a: SavePlatform, b: SavePlatform) -> bool {
     use SavePlatform::*;
     matches!((a, b), (Windows, Linux) | (Linux, Windows))
+}
+
+/// Whether a stored version restores into the right places on this PC. Our own upload always
+/// does, whatever an older client tagged it: it came from these very paths.
+pub fn restorable_here(
+    remote: &SaveVersion,
+    this_platform: SavePlatform,
+    this_installation: Option<&str>,
+) -> bool {
+    let ours =
+        this_installation.is_some() && remote.installation_id.as_deref() == this_installation;
+    ours || remote
+        .platform
+        .parse::<SavePlatform>()
+        .unwrap_or(SavePlatform::Unknown)
+        .interchangeable_with(this_platform)
 }
 
 /// Whether a state needs the user to decide before anything can happen.
@@ -287,7 +392,6 @@ fn collect_files(root: &Path, dir: &Path, into: &mut Vec<PathBuf>) -> std::io::R
     Ok(())
 }
 
-/// Performs the transfers the decisions call for.
 pub struct SaveSync {
     store: Box<dyn SaveStore>,
     /// Holds the per-game staging directories and the packed archives beside them.
@@ -306,7 +410,6 @@ impl SaveSync {
         }
     }
 
-    /// Which store this is syncing against, for the UI.
     pub fn describe(&self) -> String {
         self.store.describe()
     }
@@ -321,13 +424,11 @@ impl SaveSync {
         self
     }
 
-    /// The newest version the store holds, or None when there are none.
     pub async fn newest_remote(&self, game_id: i64) -> Result<Option<SaveVersion>, ApiError> {
         // Every store lists newest first.
         Ok(self.store.list(game_id).await?.into_iter().next())
     }
 
-    /// Every version of a game, newest first.
     pub async fn versions(&self, game_id: i64) -> Result<Vec<SaveVersion>, ApiError> {
         self.store.list(game_id).await
     }
@@ -470,7 +571,7 @@ mod tests {
             last_backup_hash: Some("abc".into()),
             last_backup_at: Some("2026-01-01T00:00:00Z".into()),
             platform: Some(SavePlatform::Windows),
-            pull_offer_answered: true,
+            pull_offer_declined: None,
         }
     }
 
@@ -596,9 +697,8 @@ mod tests {
 
     #[test]
     fn our_own_upload_is_restorable_whatever_it_is_tagged() {
-        // Versions written before Gameyfin could tell a Proton game from a native one carry
-        // LINUX. They came from these very paths, so the machine that wrote them keeps
-        // using them rather than being told its own save is foreign.
+        // Older clients tagged Proton saves LINUX. They came from these paths, so the machine
+        // that wrote them keeps using them.
         let mut mine = remote(5, "LINUX");
         mine.installation_id = Some("this-pc".into());
 
@@ -767,5 +867,66 @@ mod tests {
         let archive = root.join("42.zip");
         assert!(pack(&staging, &archive).is_ok());
         assert!(archive.exists());
+    }
+}
+
+#[cfg(test)]
+mod first_start_tests {
+    use super::*;
+
+    #[test]
+    fn a_first_start_asks_even_with_nothing_local() {
+        // The game may have been played here before Gameyfin saw it.
+        assert_eq!(
+            FirstStart::Ask,
+            first_start(&LocalSaveState::default(), "9")
+        );
+    }
+
+    #[test]
+    fn keeping_this_pcs_save_covers_only_the_version_declined() {
+        // Declined once for version 9: a later save, say from the Windows PC, asks again.
+        let declined = LocalSaveState {
+            pull_offer_declined: Some("9".into()),
+            ..Default::default()
+        };
+        assert_eq!(FirstStart::KeepLocal, first_start(&declined, "9"));
+        assert_eq!(FirstStart::Ask, first_start(&declined, "12"));
+    }
+
+    #[test]
+    fn a_save_from_another_platform_restores_only_when_it_is_ours() {
+        let mut version: SaveVersion = serde_json::from_value(serde_json::json!({
+            "id": "1", "gameId": 1, "sizeBytes": 1, "contentHash": "h",
+            "platform": "LINUX", "installationId": "desk"
+        }))
+        .unwrap();
+        assert!(!restorable_here(
+            &version,
+            SavePlatform::Windows,
+            Some("laptop")
+        ));
+        assert!(restorable_here(
+            &version,
+            SavePlatform::Windows,
+            Some("desk")
+        ));
+
+        version.platform = "WINDOWS".into();
+        assert!(restorable_here(
+            &version,
+            SavePlatform::Windows,
+            Some("laptop")
+        ));
+    }
+
+    #[test]
+    fn a_record_from_before_declines_were_per_version_still_loads() {
+        // The legacy permanent flag is dropped, so that PC is asked once more.
+        let old: LocalSaveState =
+            serde_json::from_str(r#"{"ludusaviTitle":"Celeste","pullOfferAnswered":true}"#)
+                .unwrap();
+        assert_eq!(Some("Celeste".to_string()), old.ludusavi_title);
+        assert_eq!(None, old.pull_offer_declined);
     }
 }

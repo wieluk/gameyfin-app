@@ -72,4 +72,32 @@ describe("SaveSyncStatus", () => {
     expect(screen.getByRole("button", { name: "Open Saves" })).toBeTruthy();
     expect(screen.getByText(/The game has not started/)).toBeTruthy();
   });
+
+  it("says a save was restored and where, not that it was already up to date", () => {
+    show();
+    emit(
+      {
+        kind: "restored",
+        files: 2,
+        folders: ["/home/u/Prefixes/1902/drive_c/users/u/AppData/LocalLow/TeamSoda/Duckov/Saves"],
+        savedAt: null,
+        device: "Desk",
+      },
+      false,
+    );
+    expect(screen.getByText(/Restored the save made .* on Desk: 2 files to .*Duckov\/Saves\./)).toBeTruthy();
+    expect(screen.queryByText("Your save is already up to date.")).toBeNull();
+  });
+
+  it("says why nothing was restored instead of a catch-all", () => {
+    show();
+    emit({ kind: "done", state: { kind: "in-sync", lastSyncedAt: null } }, false);
+    expect(screen.getByText("Your save is already up to date.")).toBeTruthy();
+
+    emit({ kind: "done", state: { kind: "unmatched", candidates: [] } }, false);
+    expect(screen.getByText(/not in the save location database/)).toBeTruthy();
+
+    emit({ kind: "kept-local" }, false);
+    expect(screen.getByText(/Keeping this PC's save/)).toBeTruthy();
+  });
 });

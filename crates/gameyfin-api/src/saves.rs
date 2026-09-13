@@ -266,6 +266,29 @@ impl GameyfinClient {
         Ok(())
     }
 
+    pub async fn my_saves(&self) -> ApiResult<Vec<SaveVersion>> {
+        self.call("SaveSyncEndpoint", "getMySaves", serde_json::json!({}))
+            .await
+    }
+
+    /// Deletes several versions at once. The server refuses the lot if one is not the user's.
+    pub async fn delete_saves(&self, save_ids: &[&str]) -> ApiResult<()> {
+        let ids = save_ids
+            .iter()
+            .map(|id| {
+                id.parse::<i64>()
+                    .map_err(|_| ApiError::Other(format!("not a server save id: {id}")))
+            })
+            .collect::<ApiResult<Vec<i64>>>()?;
+        self.call::<Option<serde_json::Value>>(
+            "SaveSyncEndpoint",
+            "deleteSaves",
+            serde_json::json!({ "saveIds": ids }),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn delete_save(&self, game_id: i64, save_id: &str) -> ApiResult<()> {
         self.delete_at(&format!("/saves/game/{game_id}/{save_id}"))
             .await

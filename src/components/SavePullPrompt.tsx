@@ -1,27 +1,26 @@
 import { useState } from "react";
 
+import { Alert } from "@/components/Alert";
+import { platformLabel } from "@/components/SaveVersionList";
 import { backend } from "@/lib/backend";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { keys, useInvalidate } from "@/lib/queries";
 import { useAction } from "@/lib/useAction";
 import { useTauriEvent } from "@/lib/useTauriEvent";
-import { Alert } from "@/components/Alert";
 import type { SavePullOffer } from "@/bindings/SavePullOffer";
 import { Modal, ModalFooter, ModalHeader } from "./Modal";
 
 /**
- * Asks, before a game is played here for the first time, whether to download the saves
- * that already exist for it.
- *
- * Restoring writes over whatever save files are on disk, and a game played before sync was
- * set up has saves no backup has captured. The launch waits on this answer, which is why
- * the dialog starts the game itself.
+ * Asks, on a game's first start on this PC, which stored save to play with. Always asked: the
+ * game may have been played here before Gameyfin saw it. The dialog starts the game itself.
  */
 export function SavePullPrompt() {
   const invalidate = useInvalidate();
   const action = useAction();
   // Queued: two launches in a row would otherwise leave the first game waiting forever.
   const [queue, setQueue] = useState<SavePullOffer[]>([]);
+  // Null until the user picks, so the newest version that restores here is the default.
+  const [picked, setPicked] = useState<string | null>(null);
   const offer = queue[0];
 
   useTauriEvent<SavePullOffer>("save-pull-offer", (next) => {
@@ -32,37 +31,78 @@ export function SavePullPrompt() {
 
   if (!offer) return null;
 
-  function dismiss() {
-    if (!action.busy) setQueue((current) => current.slice(1));
+  const chosen =
+    picked ?? offer.versions.find((offered) => offered.restorable)?.version.id ?? null;
+
+  function next() {
+    setPicked(null);
+    setQueue((current) => current.slice(1));
   }
 
-  async function answer(download: boolean) {
+  function dismiss() {
+    if (!action.busy) next();
+  }
+
+  async function answer(saveId: string | null) {
     const answered = await action.run(async () => {
-      await backend.answerSavePullOffer(offer.gameId, download);
+      await backend.answerSavePullOffer(offer.gameId, saveId);
       await invalidate(keys.saveOverviewAll);
       // The launch stopped to ask, so it has to be started again either way.
       await backend.launch(offer.gameId);
       return true;
     });
-    if (answered) setQueue((current) => current.slice(1));
+    if (answered) next();
   }
-
-  const from = offer.device ? `from ${offer.device}` : "from another PC";
 
   return (
     // Escape means "not now": the game does not start, and the offer returns next time.
     <Modal label={`Saves found for ${offer.title}`} role="alertdialog" onDismiss={dismiss}>
       <ModalHeader
-        title={`Saves already exist for ${offer.title}`}
+        title={`Which save for ${offer.title}?`}
         description={
-          <>
-            There is a save {from}, {formatRelative(offer.remoteAt)}
-            {offer.sizeBytes > 0 ? `, ${formatBytes(offer.sizeBytes)}` : ""}. This PC has never
-            synced this game. Downloading replaces any save files already on it, so keep yours
-            if you have played this game here before.
-          </>
+          offer.localSaves ? (
+            <>
+              This PC already has save files for it
+              {offer.localAt ? `, last changed ${formatRelative(offer.localAt)}` : ""}. Restoring
+              a stored save replaces them.
+            </>
+          ) : (
+            "First start here. Pick a stored save to play with, or start without one."
+          )
         }
       />
+
+      <ul role="radiogroup" className="flex max-h-[40vh] flex-col gap-1 overflow-y-auto px-5 pb-3">
+        {offer.versions.map(({ version, restorable }) => (
+          <li key={version.id}>
+            <label
+              className={`flex items-center gap-3 rounded-lg border px-2.5 py-2 text-xs ${
+                chosen === version.id ? "border-primary bg-primary/5" : "border-default-200/60"
+              } ${restorable ? "cursor-pointer" : "opacity-50"}`}
+            >
+              <input
+                type="radio"
+                name="offered-save"
+                className="h-3.5 w-3.5 shrink-0 accent-primary"
+                checked={chosen === version.id}
+                disabled={!restorable || action.busy}
+                onChange={() => setPicked(version.id)}
+              />
+              <span className="min-w-0 flex-1 truncate">
+                {formatRelative(version.createdAt)}
+                {version.deviceName ? ` from ${version.deviceName}` : ""}
+              </span>
+              <span className="shrink-0 text-foreground/45">
+                {restorable
+                  ? platformLabel(version.platform)
+                  : `${platformLabel(version.platform) || version.platform}, does not restore here`}
+              </span>
+              <span className="shrink-0 text-foreground/45">{formatBytes(version.sizeBytes)}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+
       {action.error && (
         <div className="px-5 pb-2">
           <Alert>{action.error}</Alert>
@@ -81,18 +121,18 @@ export function SavePullPrompt() {
         <button
           type="button"
           disabled={action.busy}
-          onClick={() => void answer(false)}
+          onClick={() => void answer(null)}
           className="rounded-lg border border-default-200 px-3 py-1.5 text-xs font-medium hover:bg-default-100 disabled:opacity-50"
         >
-          Keep mine and play
+          {offer.localSaves ? "Keep mine and play" : "Play without a save"}
         </button>
         <button
           type="button"
-          disabled={action.busy}
-          onClick={() => void answer(true)}
+          disabled={action.busy || chosen === null}
+          onClick={() => void answer(chosen)}
           className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50"
         >
-          {action.busy ? "Working…" : "Download and play"}
+          {action.busy ? "Working…" : "Restore and play"}
         </button>
       </ModalFooter>
     </Modal>

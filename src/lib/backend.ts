@@ -28,6 +28,7 @@ import type { ProtonFamily } from "@/bindings/ProtonFamily";
 import type { ProtonStatus } from "@/bindings/ProtonStatus";
 import type { ProviderChoice } from "@/bindings/ProviderChoice";
 import type { PublicSettings } from "@/bindings/PublicSettings";
+import type { RestoreReport } from "@/bindings/RestoreReport";
 import type { SaveBackend } from "@/bindings/SaveBackend";
 import type { SaveFind } from "@/bindings/SaveFind";
 import type { SaveLocations } from "@/bindings/SaveLocations";
@@ -184,12 +185,20 @@ export const backend = {
   /** Back up and upload. `force` accepts a stale base, keeping the losing version. */
   backupSaves: (gameId: number, force: boolean) =>
     invoke<SaveSyncState>("backup_saves", { gameId, force }),
-  /** Restore a version, newest if none is named. */
+  /** Restore a version, newest if none is named. Says where the files went. */
   restoreSaves: (gameId: number, saveId?: string) =>
-    invoke<SaveSyncState>("restore_saves", { gameId, saveId }),
-  /** Answers the first-play offer to download existing saves. */
-  answerSavePullOffer: (gameId: number, download: boolean) =>
-    invoke<void>("answer_save_pull_offer", { gameId, download }),
+    invoke<RestoreReport>("restore_saves", { gameId, saveId }),
+  /** Delete stored versions for good. */
+  deleteSaveVersions: (gameId: number, saveIds: string[]) =>
+    invoke<void>("delete_save_versions", { gameId, saveIds }),
+  /** Keep a version safe from pruning, or let it be pruned again. */
+  setSaveLocked: (gameId: number, saveId: string, locked: boolean) =>
+    invoke<void>("set_save_locked", { gameId, saveId, locked }),
+  /** Every stored save, for every game. Answers how many were deleted. */
+  deleteAllSaves: () => invoke<number>("delete_all_saves"),
+  /** Answers the first-start offer: the version to restore, or null to keep this PC's save. */
+  answerSavePullOffer: (gameId: number, saveId: string | null) =>
+    invoke<void>("answer_save_pull_offer", { gameId, saveId }),
   resolveSaveConflict: (gameId: number, choice: ConflictChoice) =>
     invoke<SaveSyncState>("resolve_save_conflict", { gameId, choice }),
   /** Search the save manifest for what the user typed. Best match first. */

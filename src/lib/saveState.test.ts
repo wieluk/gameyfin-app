@@ -1,6 +1,43 @@
 import { describe as group, expect, it } from "vitest";
 
-import { describe, outcomeOf } from "./saveState";
+import { describe, outcomeOf, restoredOutcome } from "./saveState";
+
+group("restoredOutcome", () => {
+  it("says a restore put the save back and where, never that it backed up", () => {
+    const outcome = restoredOutcome({
+      state: { kind: "in-sync", lastSyncedAt: null },
+      files: 1,
+      folders: ["/games/Celeste/Saves"],
+      savedAt: null,
+      device: null,
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.text).toContain("Restored");
+    expect(outcome.text).toContain("1 file to /games/Celeste/Saves");
+    expect(outcome.text).not.toContain("Backed up");
+  });
+
+  it("does not call a restore that wrote nothing a success", () => {
+    const empty = restoredOutcome({
+      state: { kind: "in-sync", lastSyncedAt: null },
+      files: 0,
+      folders: [],
+      savedAt: null,
+      device: null,
+    });
+    expect(empty.ok).toBe(false);
+
+    const unmatched = restoredOutcome({
+      state: { kind: "unmatched", candidates: [] },
+      files: 0,
+      folders: [],
+      savedAt: null,
+      device: null,
+    });
+    expect(unmatched.ok).toBe(false);
+  });
+});
 
 group("outcomeOf", () => {
   it("says a backup worked", () => {

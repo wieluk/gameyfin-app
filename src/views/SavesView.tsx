@@ -1,7 +1,9 @@
 import { useCallback, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert } from "@/components/Alert";
 import { Empty } from "@/components/Empty";
 import { Icon } from "@/components/Icon";
+import { Modal, ModalFooter, ModalHeader } from "@/components/Modal";
 import { SaveConflictDialog } from "@/components/SaveConflictDialog";
 import { SaveMatchDialog } from "@/components/SaveMatchDialog";
 import { SavePathDialog } from "@/components/SavePathDialog";
@@ -10,9 +12,16 @@ import { ScanThisPcDialog } from "@/components/ScanThisPcDialog";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatBytes, formatRelative } from "@/lib/format";
-import { describe, isSaveState, outcomeOf } from "@/lib/saveState";
+import {
+  describe,
+  isRestoreReport,
+  isSaveState,
+  outcomeOf,
+  restoredOutcome,
+} from "@/lib/saveState";
 import { keys, useEntries, useInvalidate } from "@/lib/queries";
 import { readStored, writeStored } from "@/lib/storage";
+import { useAction } from "@/lib/useAction";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { ConflictChoice, SaveSyncState } from "@/types";
 import type { SaveOverviewRow } from "@/bindings/SaveOverviewRow";
@@ -26,12 +35,27 @@ export function useSaveOverview(scope: SaveScope) {
   });
 }
 
-const SHOW_ALL_KEY = "gameyfin.saves.show-all";
+/** What an empty list says, which depends on what it was asked to show. */
+const EMPTY: Record<SaveScope, { title: string; text: string }> = {
+  installed: {
+    title: "No installed games yet",
+    text: "Saves are synced for games installed on this PC. Tick Show all saves for games with stored saves, or Show all games for your whole library.",
+  },
+  "with-saves": {
+    title: "No saves yet",
+    text: "Nothing is installed here and no saves are stored. Tick Show all games for your whole library.",
+  },
+  all: { title: "No games yet", text: "Games appear here once your library has some." },
+};
+
+const SHOW_ALL_SAVES_KEY = "gameyfin.saves.show-all";
+const SHOW_ALL_GAMES_KEY = "gameyfin.saves.show-all-games";
 
 export function SavesView() {
   const invalidate = useInvalidate();
-  const [showAll, setShowAll] = useState(() => readStored(SHOW_ALL_KEY, false));
-  const scope: SaveScope = showAll ? "all" : "installed";
+  const [showAllSaves, setShowAllSaves] = useState(() => readStored(SHOW_ALL_SAVES_KEY, false));
+  const [showAllGames, setShowAllGames] = useState(() => readStored(SHOW_ALL_GAMES_KEY, false));
+  const scope: SaveScope = showAllGames ? "all" : showAllSaves ? "with-saves" : "installed";
   const overview = useSaveOverview(scope);
   const rows = overview.data ?? [];
 
@@ -44,6 +68,19 @@ export function SavesView() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const deleteAll = useAction();
+  const queryClient = useQueryClient();
+
+  async function deleteAllSaves() {
+    const count = await deleteAll.run(() => backend.deleteAllSaves());
+    if (count === undefined) return;
+    setConfirmDeleteAll(false);
+    setNotice(count === 1 ? "Deleted 1 save." : `Deleted ${count} saves.`);
+    await queryClient.invalidateQueries({ queryKey: ["save-versions"] });
+    await queryClient.invalidateQueries({ queryKey: keys.saveOverviewAll });
+  }
   const entries = useEntries();
 
   /** The saves folder itself, which is the same for every game on this PC. */
@@ -89,7 +126,9 @@ export function SavesView() {
     });
     try {
       const next = await action();
-      if (isSaveState(next)) {
+      if (isRestoreReport(next)) {
+        setOutcome((current) => ({ ...current, [gameId]: restoredOutcome(next) }));
+      } else if (isSaveState(next)) {
         setOutcome((current) => ({ ...current, [gameId]: outcomeOf(next) }));
       }
       refresh();
@@ -107,9 +146,14 @@ export function SavesView() {
     }
   }
 
-  function chooseScope(checked: boolean) {
-    setShowAll(checked);
-    writeStored(SHOW_ALL_KEY, checked);
+  function chooseAllSaves(checked: boolean) {
+    setShowAllSaves(checked);
+    writeStored(SHOW_ALL_SAVES_KEY, checked);
+  }
+
+  function chooseAllGames(checked: boolean) {
+    setShowAllGames(checked);
+    writeStored(SHOW_ALL_GAMES_KEY, checked);
   }
 
   const conflictRow = rows.find((row) => row.gameId === conflictGameId);
@@ -120,7 +164,7 @@ export function SavesView() {
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
       <div className="mb-1 flex items-baseline justify-between gap-4">
         <h1 className="text-lg font-semibold">Saves</h1>
-        <div className="flex shrink-0 items-center gap-4">
+        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
           <button
             type="button"
             onClick={() => setScanning(true)}
@@ -135,22 +179,50 @@ export function SavesView() {
           >
             Open saves folder
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setNotice(null);
+              setConfirmDeleteAll(true);
+            }}
+            className="text-xs text-danger/80 underline-offset-2 transition-colors hover:text-danger hover:underline"
+          >
+            Delete all saves
+          </button>
           <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground/60 transition-colors hover:text-foreground">
             <input
               type="checkbox"
-              checked={showAll}
-              onChange={(e) => chooseScope(e.target.checked)}
-              className="h-3.5 w-3.5 accent-primary"
+              // Every game includes every game with saves, so this one follows along.
+              checked={showAllSaves || showAllGames}
+              disabled={showAllGames}
+              onChange={(e) => chooseAllSaves(e.target.checked)}
+              className="h-3.5 w-3.5 accent-primary disabled:opacity-50"
             />
             Show all saves
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground/60 transition-colors hover:text-foreground">
+            <input
+              type="checkbox"
+              checked={showAllGames}
+              onChange={(e) => chooseAllGames(e.target.checked)}
+              className="h-3.5 w-3.5 accent-primary"
+            />
+            Show all games
           </label>
         </div>
       </div>
       <p className="mb-5 text-xs text-foreground/60">
         Your saves are backed up after you play and restored before you start, on every PC
         signed in to the same server.
-        {showAll && " Every game in your library is listed, installed here or not."}
+        {scope === "with-saves" && " Games with stored saves are listed too, installed here or not."}
+        {scope === "all" && " Every game in your library is listed, installed here or not."}
       </p>
+
+      {notice && (
+        <p role="status" className="mb-3 text-[11px] text-success-600">
+          {notice}
+        </p>
+      )}
 
       {folderError && (
         <p role="alert" className="mb-3 text-[11px] text-warning-600">
@@ -167,10 +239,8 @@ export function SavesView() {
           {messageOf(overview.error)}
         </p>
       ) : rows.length === 0 ? (
-        <Empty icon="cloud" title={showAll ? "No games yet" : "No installed games yet"}>
-          {showAll
-            ? "Games appear here once your library has some."
-            : "Saves are synced for games installed on this PC. Install one and play it, and its save will appear here. Tick Show all saves to include the rest of your library."}
+        <Empty icon="cloud" title={EMPTY[scope].title}>
+          {EMPTY[scope].text}
         </Empty>
       ) : (
         <div className="flex flex-col gap-2">
@@ -234,6 +304,45 @@ export function SavesView() {
           onClose={() => setScanning(false)}
           onDone={refresh}
         />
+      )}
+
+      {confirmDeleteAll && (
+        <Modal
+          label="Delete all saves"
+          role="alertdialog"
+          size="sm"
+          onDismiss={() => {
+            if (!deleteAll.busy) setConfirmDeleteAll(false);
+          }}
+        >
+          <ModalHeader
+            title="Delete all saves?"
+            description="Every stored save goes, for every game, including games not installed here. They cannot be recovered. The save files on this PC stay where they are."
+          />
+          {deleteAll.error && (
+            <div className="px-5 pb-2">
+              <Alert>{deleteAll.error}</Alert>
+            </div>
+          )}
+          <ModalFooter>
+            <button
+              type="button"
+              disabled={deleteAll.busy}
+              onClick={() => setConfirmDeleteAll(false)}
+              className="rounded-lg px-3 py-1.5 text-xs text-foreground/60 hover:bg-default-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={deleteAll.busy}
+              onClick={() => void deleteAllSaves()}
+              className="rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-50"
+            >
+              {deleteAll.busy ? "Deleting…" : "Delete all saves"}
+            </button>
+          </ModalFooter>
+        </Modal>
       )}
 
       {pathsRow && (

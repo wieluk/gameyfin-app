@@ -505,46 +505,190 @@ async fn staged_hash(context: &GameContext) -> Option<String> {
         .unwrap_or(None)
 }
 
+/// A game's standing as far as it can be told without knowing what this PC changed.
+enum Standing {
+    Settled(SaveSyncState),
+    Open {
+        context: Box<GameContext>,
+        title: String,
+        remote: Option<SaveVersion>,
+    },
+}
+
+async fn standing(app: &AppHandle, state: &AppState, game_id: i64) -> CommandResult<Standing> {
+    let settings = state.settings();
+    if !settings.save_sync_enabled {
+        return Ok(Standing::Settled(SaveSyncState::Off));
+    }
+    let context = context(state, game_id).await?;
+    let title = match resolve_saves(app, state, &context).await?.require_title() {
+        Ok(title) => title,
+        Err(unmatched) => return Ok(Standing::Settled(unmatched)),
+    };
+
+    let sync = sync_for(state, &context, &settings).await?;
+    let remote = match sync.newest_remote(game_id).await {
+        Ok(remote) => remote,
+        // Both mean the server cannot store saves; the UI advises differently for each.
+        Err(gameyfin_api::ApiError::SaveSyncDisabled) => {
+            return Ok(Standing::Settled(SaveSyncState::Disabled))
+        }
+        Err(gameyfin_api::ApiError::SaveSyncUnsupported { .. }) => {
+            return Ok(Standing::Settled(SaveSyncState::Unsupported))
+        }
+        Err(e) => return Err(e.into()),
+    };
+    Ok(Standing::Open {
+        context: Box::new(context),
+        title,
+        remote,
+    })
+}
+
+/// Local change by the record of the last backup: cheap, and wrong once the record is.
+async fn recorded_change(context: &GameContext) -> bool {
+    let staged = staged_hash(context).await;
+    match (&staged, &context.record_saves.last_backup_hash) {
+        (Some(current), Some(synced)) => current != synced,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
 /// Works out where one game stands without changing anything.
 pub async fn state_of(
     app: &AppHandle,
     state: &AppState,
     game_id: i64,
 ) -> CommandResult<SaveSyncState> {
-    let settings = state.settings();
-    if !settings.save_sync_enabled {
-        return Ok(SaveSyncState::Off);
-    }
-    let context = context(state, game_id).await?;
-    if let Err(unmatched) = resolve_saves(app, state, &context).await?.require_title() {
-        return Ok(unmatched);
-    }
-
-    let sync = sync_for(state, &context, &settings).await?;
-    let remote = match sync.newest_remote(game_id).await {
-        Ok(remote) => remote,
-        // Both mean the server cannot store saves; the UI advises differently for each.
-        Err(gameyfin_api::ApiError::SaveSyncDisabled) => return Ok(SaveSyncState::Disabled),
-        Err(gameyfin_api::ApiError::SaveSyncUnsupported { .. }) => {
-            return Ok(SaveSyncState::Unsupported)
-        }
-        Err(e) => return Err(e.into()),
+    let (context, remote) = match standing(app, state, game_id).await? {
+        Standing::Settled(settled) => return Ok(settled),
+        Standing::Open {
+            context, remote, ..
+        } => (context, remote),
     };
-
-    // A staged archive whose hash differs means this machine played since the last sync.
-    let staged = staged_hash(&context).await;
-    let local_changed = match (&staged, &context.record_saves.last_backup_hash) {
-        (Some(current), Some(synced)) => current != synced,
-        (Some(_), None) => true,
-        _ => false,
-    };
+    let local_changed = recorded_change(&context).await;
     Ok(save_sync::decide(
         &context.record_saves,
         remote.as_ref(),
         local_changed,
         context.platform(),
-        settings.installation_id.as_deref(),
+        state.settings().installation_id.as_deref(),
     ))
+}
+
+/// This PC's own save files for a game, from a scan rather than from a record.
+#[derive(Debug, Clone, Default)]
+struct LocalFiles {
+    /// Whether the game has save files here at all.
+    present: bool,
+    /// Whether they differ from what the last sync left in staging.
+    changed: bool,
+    /// When the newest of them was last written.
+    newest_at: Option<String>,
+}
+
+async fn scan_local(
+    app: &AppHandle,
+    state: &AppState,
+    context: &GameContext,
+    title: &str,
+) -> CommandResult<LocalFiles> {
+    let ludusavi = ludusavi_for(app, state, context).await?;
+    let scan = ludusavi
+        .preview(title, &context.staging)
+        .await
+        .context("could not look at this PC's saves")?;
+    drop(ludusavi);
+
+    let newest_at = scan
+        .games
+        .values()
+        .flat_map(|game| game.files.iter())
+        .filter(|(_, file)| !file.failed && !file.ignored)
+        .filter_map(|(path, _)| std::fs::metadata(path).and_then(|m| m.modified()).ok())
+        .max()
+        .and_then(|written| {
+            time::OffsetDateTime::from(written)
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        });
+    Ok(LocalFiles {
+        present: scan.games.values().any(|game| game.produced_data()),
+        changed: scan.games.values().any(|game| game.changed()),
+        newest_at,
+    })
+}
+
+/// What a launch goes on: the state judged by the save files actually on disk, what those
+/// files are, the newest stored version, and what a first start should do about it.
+struct LaunchView {
+    state: SaveSyncState,
+    local: Option<LocalFiles>,
+    newest: Option<SaveVersion>,
+    first_start: Option<save_sync::FirstStart>,
+}
+
+async fn state_at_launch(
+    app: &AppHandle,
+    state: &AppState,
+    game_id: i64,
+) -> CommandResult<LaunchView> {
+    let (context, title, remote) = match standing(app, state, game_id).await? {
+        Standing::Settled(settled) => {
+            return Ok(LaunchView {
+                state: settled,
+                local: None,
+                newest: None,
+                first_start: None,
+            })
+        }
+        Standing::Open {
+            context,
+            title,
+            remote,
+        } => (context, title, remote),
+    };
+
+    // The files, not the record of the last backup: a wrong record kept a newer save from
+    // ever being restored.
+    let local = match scan_local(app, state, &context, &title).await {
+        Ok(local) => Some(local),
+        Err(e) => {
+            tracing::warn!(game_id, error = %e, "could not scan this PC's saves; using the record");
+            None
+        }
+    };
+    let local_changed = match &local {
+        Some(local) => local.changed,
+        None => recorded_change(&context).await,
+    };
+    let judged = save_sync::decide(
+        &context.record_saves,
+        remote.as_ref(),
+        local_changed,
+        context.platform(),
+        state.settings().installation_id.as_deref(),
+    );
+    let judged = match &local {
+        Some(local) => save_sync::missing_here(judged, remote.as_ref(), local.present),
+        None => judged,
+    };
+
+    // A PC that never synced has nothing to compare against, so a first start asks which
+    // stored save to use. Which of them restore here is worked out when asking.
+    let first_start = match &remote {
+        Some(newest) if save_sync::never_synced(&context.record_saves) => {
+            Some(save_sync::first_start(&context.record_saves, &newest.id))
+        }
+        _ => None,
+    };
+    Ok(LaunchView {
+        state: judged,
+        local,
+        newest: remote,
+        first_start,
+    })
 }
 
 /// Which side of a play session a sync belongs to.
@@ -576,7 +720,15 @@ pub enum SaveSyncPhase {
         state: SaveSyncState,
     },
     Skipped,
-    NothingToDo,
+    /// The user chose this PC's save over the newest stored version, so nothing was restored.
+    KeptLocal,
+    /// The stored save was put back. Where it went is said, so the user can find it.
+    Restored {
+        files: u32,
+        folders: Vec<String>,
+        saved_at: Option<String>,
+        device: Option<String>,
+    },
     Failed {
         message: String,
     },
@@ -589,7 +741,8 @@ impl SaveSyncPhase {
             self,
             SaveSyncPhase::Done { .. }
                 | SaveSyncPhase::Skipped
-                | SaveSyncPhase::NothingToDo
+                | SaveSyncPhase::KeptLocal
+                | SaveSyncPhase::Restored { .. }
                 | SaveSyncPhase::Failed { .. }
         )
     }
@@ -696,7 +849,9 @@ pub async fn skip_save_sync(state: State<'_, AppState>, game_id: i64) -> Command
 pub enum SaveScope {
     /// Games installed on this PC, which is the only place a backup can be made.
     Installed,
-    /// Every game in the library, so a save left behind by an uninstalled one is visible.
+    /// Installed games, and uninstalled ones with stored saves, so a save left behind shows.
+    WithSaves,
+    /// Every game in the library.
     All,
 }
 
@@ -749,6 +904,8 @@ pub async fn save_overview(
     if !settings.save_sync_enabled {
         return Ok(wanted
             .into_iter()
+            // Nothing is listed with sync off, so no uninstalled game is known to have saves.
+            .filter(|(_, _, installed)| scope != SaveScope::WithSaves || *installed)
             .map(|(game_id, title, installed)| SaveOverviewRow {
                 game_id,
                 title,
@@ -813,6 +970,10 @@ pub async fn save_overview(
     }
 
     for (game_id, title, installed) in wanted {
+        let listed = listings.remove(&game_id).unwrap_or_default();
+        if scope == SaveScope::WithSaves && !installed && listed.is_empty() {
+            continue;
+        }
         if let Some(state) = unavailable.clone() {
             rows.push(SaveOverviewRow {
                 game_id,
@@ -828,7 +989,7 @@ pub async fn save_overview(
             });
             continue;
         }
-        let versions = listings.remove(&game_id).unwrap_or_default();
+        let versions = listed;
         let newest = versions.first();
         let context = context(&state, game_id).await?;
         let staged = staged_hash(&context).await;
@@ -880,6 +1041,73 @@ pub async fn list_save_versions(
 ) -> CommandResult<Vec<SaveVersion>> {
     let settings = state.settings();
     Ok(store_for(&state, &settings).await?.list(game_id).await?)
+}
+
+/// Deletes stored versions for good, as the server's own saves page does.
+#[tauri::command]
+pub async fn delete_save_versions(
+    state: State<'_, AppState>,
+    game_id: i64,
+    save_ids: Vec<String>,
+) -> CommandResult<()> {
+    let settings = state.settings();
+    let store = store_for(&state, &settings).await?;
+    for id in &save_ids {
+        store.delete(game_id, id).await?;
+    }
+    let newest_left = store.list(game_id).await?.into_iter().next().map(|v| v.id);
+    tracing::info!(game_id, deleted = ?save_ids, "deleted save versions");
+    state
+        .library()
+        .update_record(game_id, move |record| {
+            save_sync::forget_versions(&mut record.saves, &save_ids, newest_left)
+        })
+        .await;
+    Ok(())
+}
+
+/// Keeps a version safe from the store pruning old versions, or lets it be pruned again.
+#[tauri::command]
+pub async fn set_save_locked(
+    state: State<'_, AppState>,
+    game_id: i64,
+    save_id: String,
+    locked: bool,
+) -> CommandResult<()> {
+    let settings = state.settings();
+    store_for(&state, &settings)
+        .await?
+        .set_locked(game_id, &save_id, locked)
+        .await?;
+    Ok(())
+}
+
+/// Deletes every stored save, for every game, as the server's saves page can.
+#[tauri::command]
+pub async fn delete_all_saves(state: State<'_, AppState>) -> CommandResult<u32> {
+    let settings = state.settings();
+    let deleted = store_for(&state, &settings).await?.delete_all().await?;
+    let mut by_game: HashMap<i64, Vec<String>> = HashMap::new();
+    for version in &deleted {
+        by_game
+            .entry(version.game_id)
+            .or_default()
+            .push(version.id.clone());
+    }
+    tracing::info!(
+        games = by_game.len(),
+        versions = deleted.len(),
+        "deleted every stored save"
+    );
+    for (game_id, ids) in by_game {
+        state
+            .library()
+            .update_record(game_id, move |record| {
+                save_sync::forget_versions(&mut record.saves, &ids, None)
+            })
+            .await;
+    }
+    Ok(u32::try_from(deleted.len()).unwrap_or(u32::MAX))
 }
 
 /// Backs up and uploads. The result includes a conflict, which the UI then resolves.
@@ -976,6 +1204,33 @@ async fn do_backup(
     Ok(next)
 }
 
+/// What a restore did: "in sync" alone does not say the save was just put back, or where.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RestoreReport {
+    pub state: SaveSyncState,
+    pub files: u32,
+    /// Where the files went, leaving out folders nested in another.
+    pub folders: Vec<String>,
+    /// When the restored version was saved, and on which device.
+    pub saved_at: Option<String>,
+    pub device: Option<String>,
+}
+
+impl RestoreReport {
+    /// A restore that wrote nothing, with the state saying why.
+    fn untouched(state: SaveSyncState) -> Self {
+        Self {
+            state,
+            files: 0,
+            folders: Vec::new(),
+            saved_at: None,
+            device: None,
+        }
+    }
+}
+
 /// Fetches a version and restores it over the local saves.
 #[tauri::command]
 pub async fn restore_saves(
@@ -983,7 +1238,7 @@ pub async fn restore_saves(
     state: State<'_, AppState>,
     game_id: i64,
     save_id: Option<String>,
-) -> CommandResult<SaveSyncState> {
+) -> CommandResult<RestoreReport> {
     do_restore(&app, &state, game_id, save_id, None)
         .await
         .inspect_err(|e| tracing::error!(game_id, error = %e, "restoring saves failed"))
@@ -995,25 +1250,27 @@ async fn do_restore(
     game_id: i64,
     save_id: Option<String>,
     watch: Option<&SyncWatch>,
-) -> CommandResult<SaveSyncState> {
+) -> CommandResult<RestoreReport> {
     let settings = state.settings();
     let context = context(state, game_id).await?;
     let title = match resolve_saves(app, state, &context).await?.require_title() {
         Ok(title) => title,
-        Err(unmatched) => return Ok(unmatched),
+        Err(unmatched) => return Ok(RestoreReport::untouched(unmatched)),
     };
     let sync = sync_for(state, &context, &settings).await?;
 
+    let versions = sync.versions(game_id).await?;
+    // An older version restored by hand counts as based on the newest, or the next launch
+    // would restore the newest right over it.
+    let newest_id = versions.first().map(|v| v.id.clone());
     let version = match save_id {
-        Some(id) => sync
-            .versions(game_id)
-            .await?
+        Some(id) => versions
             .into_iter()
             .find(|v| v.id == id)
             .ok_or_else(|| CommandError::msg("That save version is gone."))?,
-        None => sync
-            .newest_remote(game_id)
-            .await?
+        None => versions
+            .into_iter()
+            .next()
             .ok_or_else(|| CommandError::msg("There is no save on the server yet."))?,
     };
     if let Some(watch) = watch {
@@ -1025,10 +1282,10 @@ async fn do_restore(
     // game's has been touched.
     if watch.is_some_and(SyncWatch::skipped) {
         tracing::info!(game_id, "the restore was skipped before it started");
-        return Ok(SaveSyncState::RemoteNewer {
+        return Ok(RestoreReport::untouched(SaveSyncState::RemoteNewer {
             remote_at: version.created_at,
             device: version.device_name,
-        });
+        }));
     }
     if let Some(watch) = watch {
         watch.committed(SaveSyncPhase::Restoring);
@@ -1061,13 +1318,32 @@ async fn do_restore(
         )));
     }
 
-    let hash = staged_hash(&context).await;
-    record_sync(state, game_id, Some(version.id), hash, context.platform()).await;
-    let next = SaveSyncState::InSync {
-        last_synced_at: version.created_at,
+    let placed: Vec<&str> = restored
+        .games
+        .values()
+        .flat_map(|game| game.placed())
+        .collect();
+    let report = RestoreReport {
+        state: SaveSyncState::InSync {
+            last_synced_at: version.created_at.clone(),
+        },
+        files: u32::try_from(placed.len()).unwrap_or(u32::MAX),
+        folders: gameyfin_saves::api::folders_of(placed),
+        saved_at: version.created_at,
+        device: version.device_name,
     };
-    emit_state(app, game_id, &next);
-    Ok(next)
+    tracing::info!(
+        game_id,
+        files = report.files,
+        folders = ?report.folders,
+        "save restored"
+    );
+
+    let hash = staged_hash(&context).await;
+    let base = newest_id.or(Some(version.id));
+    record_sync(state, game_id, base, hash, context.platform()).await;
+    emit_state(app, game_id, &report.state);
+    Ok(report)
 }
 
 #[tauri::command]
@@ -1082,7 +1358,9 @@ pub async fn resolve_save_conflict(
         ConflictChoice::KeepLocal | ConflictChoice::KeepBoth => {
             do_backup(&app, &state, game_id, true, None).await
         }
-        ConflictChoice::KeepRemote => do_restore(&app, &state, game_id, None, None).await,
+        ConflictChoice::KeepRemote => do_restore(&app, &state, game_id, None, None)
+            .await
+            .map(|report| report.state),
     }
 }
 
@@ -1696,16 +1974,63 @@ pub async fn remove_save_tool(app: AppHandle, state: State<'_, AppState>) -> Com
     Ok(())
 }
 
-/// The offer to download saves that already exist, made once before a first play.
+/// A stored version offered on a first start, and whether it restores on this PC.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OfferedSave {
+    pub version: SaveVersion,
+    pub restorable: bool,
+}
+
+/// The stored saves offered on the first start of a game on this PC, newest first.
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SavePullOffer {
     pub game_id: i64,
     pub title: String,
-    pub remote_at: Option<String>,
-    pub device: Option<String>,
-    pub size_bytes: u64,
+    pub versions: Vec<OfferedSave>,
+    /// Whether this PC already has save files for the game, which a restore replaces.
+    pub local_saves: bool,
+    /// When those files last changed, shown beside the stored saves' dates.
+    pub local_at: Option<String>,
+}
+
+/// Every stored version to offer, or None when not one of them restores on this PC.
+async fn pull_offer(
+    state: &AppState,
+    game_id: i64,
+    title: &str,
+    local: Option<&LocalFiles>,
+) -> CommandResult<Option<SavePullOffer>> {
+    let settings = state.settings();
+    let context = context(state, game_id).await?;
+    let versions: Vec<OfferedSave> = store_for(state, &settings)
+        .await?
+        .list(game_id)
+        .await?
+        .into_iter()
+        .map(|version| OfferedSave {
+            restorable: save_sync::restorable_here(
+                &version,
+                context.platform(),
+                settings.installation_id.as_deref(),
+            ),
+            version,
+        })
+        .collect();
+    if !versions.iter().any(|offered| offered.restorable) {
+        return Ok(None);
+    }
+    Ok(Some(SavePullOffer {
+        game_id,
+        title: title.to_string(),
+        versions,
+        // An unreadable scan counts as saves present, so the prompt warns before replacing.
+        local_saves: local.is_none_or(|local| local.present),
+        local_at: local.and_then(|local| local.newest_at.clone()),
+    }))
 }
 
 /// What [`before_launch`] decided the launch should do next.
@@ -1716,122 +2041,172 @@ pub enum LaunchGate {
     AwaitingSaveDecision,
 }
 
-/// Restores a newer save before the game starts. Never fails a launch: a save that could not
-/// be restored is worth a log line, not a game that refuses to start.
+/// Restores a newer save before the game starts, judged by the save files on disk. Only a
+/// restore that failed holds the game; every other outcome is shown and the game starts.
 pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> LaunchGate {
     let settings = state.settings();
     if !settings.save_sync_enabled || !settings.sync_saves_on_launch {
         return LaunchGate::Proceed;
     }
-    let watch = SyncWatch::new(
-        app,
-        state,
-        game_id,
-        state.title(game_id).await,
-        SyncMoment::Launch,
-    );
+    let title = state.title(game_id).await;
+    let watch = SyncWatch::new(app, state, game_id, title.clone(), SyncMoment::Launch);
     watch.step(SaveSyncPhase::Checking);
 
-    match state_of(app, state, game_id).await {
-        Ok(SaveSyncState::RemoteNewer { remote_at, device }) => {
-            let local = state.library().record(game_id).saves;
-            // Saves may predate sync on this machine, and restoring over them is silent data
-            // loss, so the first time is asked about and a refusal is honoured until the user
-            // syncs by hand.
-            if save_sync::never_synced(&local) {
-                if local.pull_offer_answered {
-                    tracing::info!(game_id, "keeping the local saves the user chose to keep");
-                    watch.finish(SaveSyncPhase::NothingToDo);
-                    return LaunchGate::Proceed;
-                }
-                if let Some(offer) = pull_offer(state, game_id, remote_at, device).await {
-                    tracing::info!(game_id, "offering to download saves before the first play");
-                    // Closes this window before the prompt opens: two dialogs about the same
-                    // save at once is one too many.
-                    watch.finish(SaveSyncPhase::Skipped);
-                    let _ = app.emit("save-pull-offer", offer);
-                    return LaunchGate::AwaitingSaveDecision;
-                }
-            }
-            if watch.skipped() {
-                crate::state::lock(&state.unsynced_sessions()).insert(game_id);
-                watch.finish(SaveSyncPhase::Skipped);
-                return LaunchGate::Proceed;
-            }
-            match do_restore(app, state, game_id, None, Some(&watch)).await {
-                // Skipped after the download: the game starts without the newer save.
-                Ok(SaveSyncState::RemoteNewer { .. }) => {
-                    crate::state::lock(&state.unsynced_sessions()).insert(game_id);
-                    watch.finish(SaveSyncPhase::Skipped);
-                }
-                Ok(next) => watch.finish(SaveSyncPhase::Done { state: next }),
-                Err(e) => {
-                    tracing::warn!(game_id, error = %e, "could not restore the save before launch");
-                    // Playing on starts the game on an older save and uploads it over the
-                    // newer one at exit, so the user decides first.
-                    watch.hold(e.to_string());
-                    return LaunchGate::AwaitingSaveDecision;
-                }
-            }
-        }
-        Ok(other) if save_sync::needs_attention(&other) => {
-            tracing::info!(game_id, "save needs a decision before it can be restored");
-            emit_state(app, game_id, &other);
-            watch.finish(SaveSyncPhase::Done { state: other });
-        }
-        Ok(_) => watch.finish(SaveSyncPhase::NothingToDo),
+    let view = match state_at_launch(app, state, game_id).await {
+        Ok(view) => view,
         Err(e) => {
             tracing::warn!(game_id, error = %e, "could not check saves before launch");
             watch.finish(SaveSyncPhase::Failed {
                 message: e.to_string(),
             });
+            return LaunchGate::Proceed;
+        }
+    };
+
+    match (view.first_start, view.newest.as_ref()) {
+        (Some(save_sync::FirstStart::KeepLocal), _) => {
+            tracing::info!(
+                game_id,
+                "keeping this PC's save, as chosen for this version"
+            );
+            watch.finish(SaveSyncPhase::KeptLocal);
+            return LaunchGate::Proceed;
+        }
+        (Some(save_sync::FirstStart::Ask), Some(_)) => {
+            match pull_offer(state, game_id, &title, view.local.as_ref()).await {
+                Ok(Some(offer)) => {
+                    tracing::info!(
+                        game_id,
+                        versions = offer.versions.len(),
+                        "first start here; asking which save to use"
+                    );
+                    // Closes this window before the prompt opens: two dialogs about one save at
+                    // once is one too many.
+                    watch.finish(SaveSyncPhase::Skipped);
+                    let _ = app.emit("save-pull-offer", offer);
+                    return LaunchGate::AwaitingSaveDecision;
+                }
+                // None of them restores on this platform, and the state says why.
+                Ok(None) => {
+                    watch.finish(SaveSyncPhase::Done {
+                        state: view.state.clone(),
+                    });
+                    return LaunchGate::Proceed;
+                }
+                Err(e) => {
+                    tracing::warn!(game_id, error = %e, "could not list the saves to offer");
+                    watch.finish(SaveSyncPhase::Failed {
+                        message: e.to_string(),
+                    });
+                    return LaunchGate::Proceed;
+                }
+            }
+        }
+        _ => match &view.state {
+            SaveSyncState::RemoteNewer { .. } => {}
+            other => {
+                if save_sync::needs_attention(other) {
+                    tracing::info!(game_id, "save needs a decision before it can be restored");
+                    emit_state(app, game_id, other);
+                }
+                // The real reason, where "nothing to sync" used to stand in for all of them.
+                watch.finish(SaveSyncPhase::Done {
+                    state: other.clone(),
+                });
+                return LaunchGate::Proceed;
+            }
+        },
+    }
+
+    if watch.skipped() {
+        crate::state::lock(&state.unsynced_sessions()).insert(game_id);
+        watch.finish(SaveSyncPhase::Skipped);
+        return LaunchGate::Proceed;
+    }
+    match do_restore(app, state, game_id, None, Some(&watch)).await {
+        // Skipped after the download: the game starts without the newer save.
+        Ok(RestoreReport {
+            state: SaveSyncState::RemoteNewer { .. },
+            ..
+        }) => {
+            crate::state::lock(&state.unsynced_sessions()).insert(game_id);
+            watch.finish(SaveSyncPhase::Skipped);
+        }
+        Ok(RestoreReport {
+            state: SaveSyncState::InSync { .. },
+            files,
+            folders,
+            saved_at,
+            device,
+        }) => watch.finish(SaveSyncPhase::Restored {
+            files,
+            folders,
+            saved_at,
+            device,
+        }),
+        // Nothing was written, and the state says why.
+        Ok(report) => watch.finish(SaveSyncPhase::Done {
+            state: report.state,
+        }),
+        Err(e) => {
+            tracing::warn!(game_id, error = %e, "could not restore the save before launch");
+            // Playing on starts the game on an older save and uploads it over the newer one
+            // at exit, so the user decides first.
+            watch.hold(e.to_string());
+            return LaunchGate::AwaitingSaveDecision;
         }
     }
     LaunchGate::Proceed
 }
 
-async fn pull_offer(
-    state: &AppState,
-    game_id: i64,
-    remote_at: Option<String>,
-    device: Option<String>,
-) -> Option<SavePullOffer> {
-    let settings = state.settings();
-    // Best effort: the offer is worth making even when the size is unknown.
-    let size_bytes = match store_for(state, &settings).await {
-        Ok(store) => store
-            .list(game_id)
-            .await
-            .ok()
-            .and_then(|versions| versions.first().map(|v| v.size_bytes))
-            .unwrap_or(0),
-        Err(_) => 0,
-    };
-    Some(SavePullOffer {
-        game_id,
-        title: state.title(game_id).await,
-        remote_at,
-        device,
-        size_bytes,
-    })
-}
-
-/// Records the answer to the first-play offer. Declining is remembered so it is asked once;
-/// a failed download is not, so the question survives to be answered again.
+/// Records the answer to the first-start offer: the version to restore, or none to keep what
+/// this PC has. Declining covers the newest version only, so a newer save asks again.
 #[tauri::command]
 pub async fn answer_save_pull_offer(
     app: AppHandle,
     state: State<'_, AppState>,
     game_id: i64,
-    download: bool,
+    save_id: Option<String>,
 ) -> CommandResult<()> {
-    if download {
-        let restored = do_restore(&app, &state, game_id, None, None).await?;
-        emit_state(&app, game_id, &restored);
+    if let Some(save_id) = save_id {
+        let report = do_restore(&app, &state, game_id, Some(save_id), None).await?;
+        let SaveSyncState::InSync { .. } = report.state else {
+            return Err(CommandError::msg(
+                "Gameyfin does not know where this game keeps its saves yet. Choose the game \
+                 under Saves, then restore it from there.",
+            ));
+        };
+        state
+            .library()
+            .update_record(game_id, |r| r.saves.pull_offer_declined = None)
+            .await;
+        // In the window a launch restore uses, so where the save went is said the same way.
+        SyncWatch::new(
+            &app,
+            &state,
+            game_id,
+            state.title(game_id).await,
+            SyncMoment::Launch,
+        )
+        .finish(SaveSyncPhase::Restored {
+            files: report.files,
+            folders: report.folders,
+            saved_at: report.saved_at,
+            device: report.device,
+        });
+        return Ok(());
     }
+    let settings = state.settings();
+    let newest = store_for(&state, &settings)
+        .await?
+        .list(game_id)
+        .await?
+        .into_iter()
+        .next()
+        .map(|version| version.id);
     state
         .library()
-        .update_record(game_id, |r| r.saves.pull_offer_answered = true)
+        .update_record(game_id, move |r| r.saves.pull_offer_declined = newest)
         .await;
     Ok(())
 }
@@ -1865,12 +2240,15 @@ pub async fn after_exit(app: &AppHandle, state: &AppState, game_id: i64) {
     // backup the upload would only discard.
     if settings.save_backend == SaveBackend::Server {
         if let Ok(store) = store_for(state, &settings).await {
-            if matches!(
-                store.list(game_id).await,
-                Err(gameyfin_api::ApiError::SaveSyncUnsupported { .. }
-                    | gameyfin_api::ApiError::SaveSyncDisabled)
-            ) {
-                watch.finish(SaveSyncPhase::NothingToDo);
+            let settled = match store.list(game_id).await {
+                Err(gameyfin_api::ApiError::SaveSyncUnsupported { .. }) => {
+                    Some(SaveSyncState::Unsupported)
+                }
+                Err(gameyfin_api::ApiError::SaveSyncDisabled) => Some(SaveSyncState::Disabled),
+                _ => None,
+            };
+            if let Some(settled) = settled {
+                watch.finish(SaveSyncPhase::Done { state: settled });
                 return;
             }
         }

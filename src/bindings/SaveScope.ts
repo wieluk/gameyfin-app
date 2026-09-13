@@ -3,4 +3,4 @@
 /**
  * Which games the Saves tab is asking about.
  */
-export type SaveScope = "installed" | "all";
+export type SaveScope = "installed" | "with-saves" | "all";
