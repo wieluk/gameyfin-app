@@ -33,7 +33,11 @@ downloadProvider: string | null, setupDismissed: boolean, notifyTransfers: boole
 /**
  * Separate so failures stay audible with the routine chatter off.
  */
-notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, autoInstall: boolean, deleteArchiveAfterExtract: boolean, deleteDownloadAfterInstall: boolean, umuFixes: boolean, umuAutoUpdate: boolean, 
+notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, autoInstall: boolean, deleteArchiveAfterExtract: boolean, deleteDownloadAfterInstall: boolean, 
+/**
+ * Only a folder game qualifies, since Gameyfin zips those on the fly.
+ */
+unpackWhileDownloading: boolean, umuFixes: boolean, umuAutoUpdate: boolean, 
 /**
  * DXVK and vkd3d-proton; off falls back to WineD3D, where Direct3D 12 does not start.
  */

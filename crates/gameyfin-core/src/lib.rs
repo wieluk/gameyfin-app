@@ -30,6 +30,7 @@ pub mod umu;
 pub mod unarc;
 pub mod vulkan;
 pub mod wine;
+pub mod zip_stream;
 
 pub use checkpoint::Checkpoint;
 pub use download::{DownloadOutcome, Downloader, Progress, StartMode};

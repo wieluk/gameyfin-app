@@ -161,7 +161,7 @@ pub fn safe_join(destination: &Path, entry: &str) -> Option<PathBuf> {
 /// Keep only the executable bit an archive asked for: setuid, setgid and group or world
 /// write bits have no place in a game's files.
 #[cfg(unix)]
-fn set_mode(target: &Path, mode: u32) {
+pub(crate) fn set_mode(target: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
 
     let executable = if mode & 0o111 != 0 { 0o111 } else { 0 };

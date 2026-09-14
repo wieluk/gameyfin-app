@@ -120,6 +120,12 @@ pub async fn start_download(
         &game.title,
         &crate::downloads::provisional_filename(&game.title),
     );
+    // A folder game arrives as a zip built on the fly, unpacked as it comes in when allowed.
+    let unpack_into = settings
+        .unpack_while_downloading
+        .then(|| destination.parent().map(|dir| dir.join(EXTRACT_DIR)))
+        .flatten();
+    let expected_bytes = game.metadata.file_size;
     let cookie_header = gameyfin_api::cookie_header(&settings.cookies);
     let rate_limit = state.download_limit();
     rate_limit.set(u64::from(settings.download_limit_kib) * 1024);
@@ -137,7 +143,7 @@ pub async fn start_download(
                     game_id,
                     Activity::Downloading {
                         received_bytes: p.received_bytes,
-                        total_bytes: p.total_bytes.unwrap_or(0),
+                        total_bytes: p.total_bytes.unwrap_or(expected_bytes),
                         bytes_per_second: p.bytes_per_second,
                     },
                 );
@@ -154,13 +160,22 @@ pub async fn start_download(
             }
         };
         let result = downloader
-            .download(&url, &destination, authorize, on_progress)
+            .download_or_unpack(
+                &url,
+                &destination,
+                unpack_into.as_deref(),
+                authorize,
+                on_progress,
+            )
             .await;
         app.state::<AppState>().downloads.finish(game_id);
 
+        use gameyfin_core::download::Outcome;
         match result {
             // The torrent provider answers with metainfo, which is not a game to install.
-            Ok(outcome) if gameyfin_core::extract::is_torrent_metainfo(&outcome.path) => {
+            Ok(Outcome::File(outcome))
+                if gameyfin_core::extract::is_torrent_metainfo(&outcome.path) =>
+            {
                 let _ = tokio::fs::remove_file(&outcome.path).await;
                 let message = format!(
                     "{} hands back a torrent, which Gameyfin cannot download from. Pick another provider under Downloads.",
@@ -168,7 +183,7 @@ pub async fn start_download(
                 );
                 fail(&app, game_id, Stage::Download, &game.title, message).await;
             }
-            Ok(outcome) => {
+            Ok(Outcome::File(outcome)) => {
                 tracing::info!(game_id, path = ?outcome.path, bytes = outcome.bytes, "download finished");
                 library
                     .update_record(game_id, |r| {
@@ -185,6 +200,19 @@ pub async fn start_download(
                         fail(&app, game_id, Stage::Install, &game.title, e.to_string()).await;
                     }
                 } else {
+                    crate::notify::download_finished(&app, &game.title).await;
+                }
+            }
+            Ok(Outcome::Unpacked { dir, bytes }) => {
+                tracing::info!(game_id, ?dir, bytes, "download unpacked as it arrived");
+                let setups = {
+                    let dir = dir.clone();
+                    tokio::task::spawn_blocking(move || scan_setups(&dir))
+                        .await
+                        .unwrap_or_default()
+                };
+                record_extracted(&app, game_id, &game.title, dir, setups, true).await;
+                if !app.state::<AppState>().settings().auto_install {
                     crate::notify::download_finished(&app, &game.title).await;
                 }
             }
@@ -208,7 +236,7 @@ pub async fn fail(app: &AppHandle, game_id: i64, stage: Stage, title: &str, mess
     crate::notify::failed(app, stage.label(), title, &message).await;
 }
 
-/// Keeps the partial file and checkpoint for a resume.
+/// A saved file keeps its checkpoint for a resume; a download being unpacked starts over.
 #[tauri::command]
 pub async fn cancel_download(
     app: AppHandle,
@@ -297,36 +325,50 @@ pub async fn extract_download(
                 tracing::warn!(game_id, error = %e, "could not remove the archive");
             }
         }
-        library
-            .update_record(game_id, |r| {
-                r.extracted_dir = Some(staging.clone());
-                r.staging_setups = setups.clone();
-                r.setup_candidates = setups.clone();
-                if delete_archive {
-                    r.archive_path = None;
-                    r.archive_bytes = 0;
-                }
-            })
-            .await;
-        library.clear_activity(game_id);
-
-        // A setup wizard asks questions a checkbox should not answer for the user.
-        if app.state::<AppState>().settings().auto_install {
-            if setups.is_empty() {
-                super::install::finish_auto_install(&app, game_id).await;
-            } else {
-                crate::notify::send(
-                    &app,
-                    crate::notify::Category::Transfer,
-                    "Setup needed",
-                    &format!("{title} came with an installer. Run it from Downloads."),
-                )
-                .await;
-            }
-        }
-        notify_state(&app, game_id);
+        record_extracted(&app, game_id, &title, staging, setups, delete_archive).await;
     });
     Ok(())
+}
+
+/// Records unpacked files, then installs them when that is switched on. Shared by the extract
+/// step and a download that unpacked as it arrived.
+async fn record_extracted(
+    app: &AppHandle,
+    game_id: i64,
+    title: &str,
+    staging: PathBuf,
+    setups: Vec<String>,
+    archive_gone: bool,
+) {
+    let library = app.state::<AppState>().library().clone();
+    library
+        .update_record(game_id, |r| {
+            r.extracted_dir = Some(staging.clone());
+            r.staging_setups = setups.clone();
+            r.setup_candidates = setups.clone();
+            if archive_gone {
+                r.archive_path = None;
+                r.archive_bytes = 0;
+            }
+        })
+        .await;
+    library.clear_activity(game_id);
+
+    // A setup wizard asks questions a checkbox should not answer for the user.
+    if app.state::<AppState>().settings().auto_install {
+        if setups.is_empty() {
+            super::install::finish_auto_install(app, game_id).await;
+        } else {
+            crate::notify::send(
+                app,
+                crate::notify::Category::Transfer,
+                "Setup needed",
+                &format!("{title} came with an installer. Run it from Downloads."),
+            )
+            .await;
+        }
+    }
+    notify_state(app, game_id);
 }
 
 /// Adopts games restored from a backup or copied from another machine, in every games folder.

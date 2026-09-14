@@ -312,6 +312,16 @@ impl RateLimiter {
     }
 }
 
+/// What a download produced: a file saved as sent, or a folder unpacked while it arrived.
+#[derive(Debug, Clone)]
+pub enum Outcome {
+    File(DownloadOutcome),
+    Unpacked { dir: PathBuf, bytes: u64 },
+}
+
+/// Enough of a body to recognise a zip's first local header.
+const SNIFF_BYTES: usize = 30;
+
 pub struct Downloader {
     http: reqwest::Client,
     /// Shared so the cap can be changed while a transfer is running.
@@ -346,8 +356,31 @@ impl Downloader {
         url: &str,
         destination: &Path,
         authorize: A,
-        mut on_progress: F,
+        on_progress: F,
     ) -> CoreResult<DownloadOutcome>
+    where
+        F: FnMut(Progress) + Send,
+        A: Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder + Send + Sync,
+    {
+        match self
+            .download_or_unpack(url, destination, None, authorize, on_progress)
+            .await?
+        {
+            Outcome::File(outcome) => Ok(outcome),
+            Outcome::Unpacked { .. } => unreachable!("nothing is unpacked without a folder for it"),
+        }
+    }
+
+    /// As [`Self::download`], but the zip Gameyfin builds on the fly for a folder game, one
+    /// without a length, is unpacked into `unpack_into` while it arrives.
+    pub async fn download_or_unpack<F, A>(
+        &self,
+        url: &str,
+        destination: &Path,
+        unpack_into: Option<&Path>,
+        authorize: A,
+        mut on_progress: F,
+    ) -> CoreResult<Outcome>
     where
         F: FnMut(Progress) + Send,
         A: Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder + Send + Sync,
@@ -413,6 +446,36 @@ impl Downloader {
         // `Content-Length` is the remaining bytes, so a resumed transfer adds the offset back for the true total.
         let total_bytes = response.content_length().map(|len| len + written);
 
+        let mut stream = response.bytes_stream();
+        let mut head = Vec::new();
+        // A single-file game comes with a length and is saved as sent, whatever it contains.
+        if let (Some(dir), StartMode::Fresh, None) = (unpack_into, mode, total_bytes) {
+            let mut seen = 0;
+            while seen < SNIFF_BYTES {
+                match stream.next().await {
+                    Some(Ok(chunk)) => {
+                        seen += chunk.len();
+                        head.push(chunk);
+                    }
+                    Some(Err(e)) => return Err(e.into()),
+                    None => break,
+                }
+            }
+            let first: Vec<u8> = head
+                .iter()
+                .flat_map(|chunk| chunk.iter().copied())
+                .take(SNIFF_BYTES)
+                .collect();
+            if crate::zip_stream::looks_streamable(&first) {
+                let stream = futures_util::stream::iter(head.into_iter().map(Ok)).chain(stream);
+                return self
+                    .unpack(stream, destination, dir, &mut on_progress)
+                    .await;
+            }
+        }
+        // Whatever was sniffed is the start of the file.
+        let mut stream = futures_util::stream::iter(head.into_iter().map(Ok)).chain(stream);
+
         let mut file = if written > 0 {
             let mut f = tokio::fs::OpenOptions::new()
                 .write(true)
@@ -438,7 +501,6 @@ impl Downloader {
 
         let mut limiter = RateLimiter::shared(self.rate_limit.clone());
 
-        let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             // Checked before the chunk so a cancel during a stall is noticed and nothing is half-applied.
             if self.cancel.is_cancelled() {
@@ -502,11 +564,139 @@ impl Downloader {
 
         Checkpoint::clear(destination).await?;
 
-        Ok(DownloadOutcome {
+        Ok(Outcome::File(DownloadOutcome {
             path: destination.to_path_buf(),
             bytes: written,
             mode,
-        })
+        }))
+    }
+
+    /// Unpacks a zip into `dir` while it downloads. None of it can resume, so a failed or
+    /// cancelled attempt removes the folder rather than leaving half a game.
+    async fn unpack<S, B, F>(
+        &self,
+        mut stream: S,
+        destination: &Path,
+        dir: &Path,
+        on_progress: &mut F,
+    ) -> CoreResult<Outcome>
+    where
+        S: futures_util::Stream<Item = reqwest::Result<B>> + Unpin,
+        B: AsRef<[u8]>,
+        F: FnMut(Progress),
+    {
+        // Left by an earlier attempt that was saved as a file, and not part of this one.
+        let _ = tokio::fs::remove_file(destination).await;
+        let _ = Checkpoint::clear(destination).await;
+        if tokio::fs::try_exists(dir).await.unwrap_or(false) {
+            tokio::fs::remove_dir_all(dir).await?;
+        }
+
+        let written = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (chunks, receiver) = tokio::sync::mpsc::channel::<std::io::Result<Vec<u8>>>(16);
+        let unpacker = {
+            let (dir, cancel, written) = (dir.to_path_buf(), self.cancel.clone(), written.clone());
+            tokio::task::spawn_blocking(move || {
+                crate::zip_stream::extract_stream(
+                    ChunkReader::new(receiver),
+                    &dir,
+                    &cancel,
+                    &written,
+                )
+            })
+        };
+
+        let started = std::time::Instant::now();
+        let mut received = 0u64;
+        let mut limiter = RateLimiter::shared(self.rate_limit.clone());
+        let pumped: CoreResult<()> = loop {
+            if self.cancel.is_cancelled() {
+                break Err(CoreError::Cancelled);
+            }
+            let chunk = match stream.next().await {
+                Some(Ok(chunk)) => chunk.as_ref().to_vec(),
+                Some(Err(e)) => break Err(e.into()),
+                None => break Ok(()),
+            };
+            let len = chunk.len() as u64;
+            // A closed channel means the unpacker stopped, and its own error says why.
+            if chunks.send(Ok(chunk)).await.is_err() {
+                break Ok(());
+            }
+            received += len;
+            let elapsed = started.elapsed().as_secs_f64();
+            on_progress(Progress {
+                received_bytes: written.load(std::sync::atomic::Ordering::Relaxed),
+                total_bytes: None,
+                bytes_per_second: if elapsed > 0.0 {
+                    received as f64 / elapsed
+                } else {
+                    0.0
+                },
+            });
+            if let Some(delay) = limiter.delay_after(len) {
+                tokio::time::sleep(delay).await;
+            }
+        };
+
+        if let Err(e) = &pumped {
+            // The unpacker is waiting on bytes that will not come.
+            let _ = chunks.send(Err(std::io::Error::other(e.to_string()))).await;
+        }
+        drop(chunks);
+        let unpacked = unpacker
+            .await
+            .map_err(|e| CoreError::Other(format!("unpacking stopped unexpectedly: {e}")))?;
+
+        let result = match (pumped, unpacked) {
+            (Err(e), _) | (Ok(()), Err(e)) => Err(e),
+            (Ok(()), Ok(bytes)) => Ok(Outcome::Unpacked {
+                dir: dir.to_path_buf(),
+                bytes,
+            }),
+        };
+        if result.is_err() {
+            if let Err(e) = tokio::fs::remove_dir_all(dir).await {
+                tracing::warn!("could not remove the partly unpacked {dir:?}: {e}");
+            }
+        }
+        result
+    }
+}
+
+/// Hands downloaded chunks to the blocking unpacker. A closed channel is the end of the body.
+struct ChunkReader {
+    chunks: tokio::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    current: Vec<u8>,
+    at: usize,
+}
+
+impl ChunkReader {
+    fn new(chunks: tokio::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>) -> Self {
+        Self {
+            chunks,
+            current: Vec::new(),
+            at: 0,
+        }
+    }
+}
+
+impl std::io::Read for ChunkReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        while self.at == self.current.len() {
+            match self.chunks.blocking_recv() {
+                Some(Ok(chunk)) => {
+                    self.current = chunk;
+                    self.at = 0;
+                }
+                Some(Err(e)) => return Err(e),
+                None => return Ok(0),
+            }
+        }
+        let n = buf.len().min(self.current.len() - self.at);
+        buf[..n].copy_from_slice(&self.current[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
     }
 }
 
