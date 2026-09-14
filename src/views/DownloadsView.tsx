@@ -10,7 +10,7 @@ import { TransferProgress } from "@/components/TransferProgress";
 import { Button, ViewHeader } from "@/components/ui";
 import { isInDownloads, needsChooser, primaryAction } from "@/lib/actions";
 import { backend } from "@/lib/backend";
-import { formatBytes, formatEta, formatSpeed } from "@/lib/format";
+import { formatBytes, formatEta, formatInstallProgress, formatSpeed } from "@/lib/format";
 import { messageOf } from "@/lib/errors";
 import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
@@ -185,8 +185,8 @@ function DownloadRow({
             <div
               className={`h-full rounded-full transition-[width] ${
                 state.kind === "downloading" ? "bg-primary" : "bg-warning"
-              }`}
-              style={{ width: `${progressPercent(entry)}%` }}
+              } ${progressPercent(entry) === undefined ? "animate-pulse" : ""}`}
+              style={{ width: `${progressPercent(entry) ?? 100}%` }}
             />
           </div>
           <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-foreground/45">
@@ -195,13 +195,15 @@ function DownloadRow({
                 ? formatSpeed(state.bytesPerSecond)
                 : state.kind === "extracting"
                   ? `${Math.round(state.percent)}%`
-                  : "Working…"}
+                  : formatInstallProgress(state.progress)}
             </span>
             <div className="flex items-center gap-3">
               <span>
                 {state.kind === "downloading"
                   ? (formatEta(state.receivedBytes, state.totalBytes, state.bytesPerSecond) ?? "")
-                  : ""}
+                  : state.kind === "installing" && state.progress?.bytesPerSecond
+                    ? formatSpeed(state.progress.bytesPerSecond)
+                    : ""}
               </span>
               {/* Extraction always finishes, so it cannot be stopped; an installer can wedge,
                   so it can, and "Retry install" starts it over. */}
@@ -277,13 +279,17 @@ function DownloadRow({
   );
 }
 
-function progressPercent(entry: LibraryEntry): number {
+/** Undefined when the total is unknown, so the bar pulses. */
+function progressPercent(entry: LibraryEntry): number | undefined {
   const { state } = entry;
   if (state.kind === "downloading") {
     return state.totalBytes > 0 ? (state.receivedBytes / state.totalBytes) * 100 : 0;
   }
   if (state.kind === "extracting") return state.percent;
-  return 0;
+  const progress = state.kind === "installing" ? state.progress : undefined;
+  return progress && progress.totalBytes > 0
+    ? (progress.receivedBytes / progress.totalBytes) * 100
+    : undefined;
 }
 
 function statusText(entry: LibraryEntry): string {
@@ -296,7 +302,11 @@ function statusText(entry: LibraryEntry): string {
     case "extracting":
       return "Extracting";
     case "extracted":
-      return state.setupCandidates.length > 0 ? "Unpacked, setup found" : "Unpacked";
+      return state.setupCandidates.length > 1
+        ? "Unpacked, choose a setup"
+        : state.setupCandidates.length > 0
+          ? "Unpacked, setup found"
+          : "Unpacked";
     case "installing":
       return "Installing";
     case "preparing":

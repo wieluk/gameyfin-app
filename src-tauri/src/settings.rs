@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use gameyfin_core::InstallerKind;
 use serde::{Deserialize, Serialize};
 
 /// A partial update: a field that was not sent keeps its value. For text fields an empty
@@ -31,6 +32,8 @@ pub struct SettingsPatch {
     pub download_limit_kib: Option<u32>,
     pub delete_archive_after_extract: Option<bool>,
     pub delete_download_after_install: Option<bool>,
+    pub inno_setup_arguments: Option<String>,
+    pub nsis_arguments: Option<String>,
     pub theme: Option<Theme>,
     pub log_level: Option<LogLevel>,
     pub library_root: Option<String>,
@@ -107,6 +110,16 @@ impl SettingsPatch {
         if let Some(password) = &self.webdav_password {
             s.webdav_password = Some(password.clone()).filter(|p| !p.is_empty());
         }
+        // Blank restores the default.
+        let switches = |value: &String, kind: InstallerKind| {
+            non_blank(value).unwrap_or_else(|| kind.default_unattended_args().to_string())
+        };
+        if let Some(value) = &self.inno_setup_arguments {
+            s.inno_setup_arguments = switches(value, InstallerKind::InnoSetup);
+        }
+        if let Some(value) = &self.nsis_arguments {
+            s.nsis_arguments = switches(value, InstallerKind::Nsis);
+        }
         if let Some(versions) = self.save_max_versions {
             s.save_max_versions = versions.max(1);
         }
@@ -114,6 +127,17 @@ impl SettingsPatch {
             // A blank entry would match every executable.
             s.ignored_executables = entries.iter().filter_map(|e| non_blank(e)).collect();
         }
+    }
+}
+
+impl Settings {
+    pub fn unattended_args(&self, kind: InstallerKind) -> Vec<String> {
+        let typed = match kind {
+            InstallerKind::InnoSetup => &self.inno_setup_arguments,
+            InstallerKind::Nsis => &self.nsis_arguments,
+            InstallerKind::InstallShield | InstallerKind::Unknown => return Vec::new(),
+        };
+        gameyfin_core::arguments::split(typed)
     }
 }
 
@@ -151,6 +175,8 @@ pub struct Settings {
     pub auto_extract: bool,
     pub delete_archive_after_extract: bool,
     pub delete_download_after_install: bool,
+    pub inno_setup_arguments: String,
+    pub nsis_arguments: String,
     pub umu_fixes: bool,
     pub umu_auto_update: bool,
     pub gamepad_enabled: bool,
@@ -203,6 +229,8 @@ impl Default for Settings {
             auto_extract: true,
             delete_archive_after_extract: true,
             delete_download_after_install: false,
+            inno_setup_arguments: InstallerKind::InnoSetup.default_unattended_args().into(),
+            nsis_arguments: InstallerKind::Nsis.default_unattended_args().into(),
             umu_fixes: true,
             umu_auto_update: true,
             gamepad_enabled: true,
@@ -527,6 +555,8 @@ mod tests {
         ("downloadLimitKib", "512"),
         ("deleteArchiveAfterExtract", "false"),
         ("deleteDownloadAfterInstall", "true"),
+        ("innoSetupArguments", "\"/SILENT\""),
+        ("nsisArguments", "\"/S /NCRC\""),
         ("theme", "\"light\""),
         ("logLevel", "\"debug\""),
         ("libraryRoot", "\"/games\""),
@@ -568,9 +598,11 @@ mod tests {
         let mut settings = Settings {
             close_to_tray: true,
             device_name: Some("Desk".into()),
+            inno_setup_arguments: "/SILENT".into(),
             ..Default::default()
         };
         let patch = SettingsPatch {
+            inno_setup_arguments: Some("  ".into()),
             notify_failures: Some(false),
             device_name: Some("   ".into()),
             extraction_password: Some("  ".into()),
@@ -585,6 +617,12 @@ mod tests {
         assert_eq!(settings.extraction_password.as_deref(), Some("  "));
         assert_eq!(settings.ignored_executables, vec!["vcredist.exe"]);
         assert_eq!(settings.save_max_versions, 1);
+        assert_eq!(
+            settings.unattended_args(InstallerKind::InnoSetup),
+            vec!["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+            "a blank field falls back to the default"
+        );
+        assert!(settings.unattended_args(InstallerKind::Unknown).is_empty());
     }
 
     #[test]

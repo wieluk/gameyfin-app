@@ -50,20 +50,7 @@ pub async fn install_options(
 
     let record = state.library().record(game_id);
     let install_dir = super::install_dir_for(&state, game_id).await?;
-    let (runtime, can_run_windows) = if cfg!(windows) {
-        (None, true)
-    } else {
-        let ctx = crate::proton::runtime_context(&state, Some(game_id), None).await;
-        // umu downloads a Proton build on first run, so it counts before one exists.
-        let umu_ready = ctx.umu_launcher.is_some();
-        let found =
-            tokio::task::spawn_blocking(move || gameyfin_core::detect_windows_runtime(&ctx))
-                .await
-                .ok()
-                .flatten();
-        let available = umu_ready || found.is_some();
-        (found, available)
-    };
+    let (runtime, can_run_windows) = windows_runtime(&state, game_id).await;
     let blocked = |needs_windows: bool| {
         (needs_windows && !can_run_windows).then(gameyfin_core::windows_runtime_hint)
     };
@@ -141,6 +128,25 @@ pub async fn install_options(
     })
 }
 
+/// The detected runtime, and whether any can run a Windows program.
+async fn windows_runtime(
+    state: &AppState,
+    game_id: i64,
+) -> (Option<gameyfin_core::WindowsRuntime>, bool) {
+    if cfg!(windows) {
+        return (None, true);
+    }
+    let ctx = crate::proton::runtime_context(state, Some(game_id), None).await;
+    // umu downloads a Proton build on first run, so it counts before one exists.
+    let umu_ready = ctx.umu_launcher.is_some();
+    let found = tokio::task::spawn_blocking(move || gameyfin_core::detect_windows_runtime(&ctx))
+        .await
+        .ok()
+        .flatten();
+    let available = umu_ready || found.is_some();
+    (found, available)
+}
+
 fn method_label(
     method: gameyfin_core::InstallMethod,
     runtime: Option<&gameyfin_core::WindowsRuntime>,
@@ -200,6 +206,7 @@ pub async fn install_game(
     game_id: i64,
     method: Option<String>,
     delete_archive: Option<bool>,
+    delete_download: Option<bool>,
 ) -> CommandResult<()> {
     let method = match method {
         Some(method) => method,
@@ -218,11 +225,20 @@ pub async fn install_game(
     };
 
     if method == "move" {
-        return move_into_place(&app, game_id, &staging()?, &install_dir).await;
+        return move_into_place(&app, game_id, &staging()?, &install_dir, delete_download).await;
     }
     if let Some(relative) = method.strip_prefix("setup:") {
         let program = contained(&staging()?, relative)?;
-        return run_installer(&app, game_id, &program, &install_dir, false).await;
+        return run_installer(
+            &app,
+            game_id,
+            &program,
+            &install_dir,
+            false,
+            false,
+            delete_download,
+        )
+        .await;
     }
 
     let archive = record
@@ -230,12 +246,23 @@ pub async fn install_game(
         .ok_or_else(|| CommandError::msg("This game has not been downloaded yet."))?;
     match gameyfin_core::InstallMethod::from_key(&method) {
         Some(gameyfin_core::InstallMethod::CopyExecutable) => {
-            copy_executable(&app, game_id, &archive, &install_dir).await
+            copy_executable(&app, game_id, &archive, &install_dir, delete_download).await
         }
         Some(
             gameyfin_core::InstallMethod::RunWindowsInstaller
             | gameyfin_core::InstallMethod::RunWindowsInstallerViaProton,
-        ) => run_installer(&app, game_id, &archive, &install_dir, false).await,
+        ) => {
+            run_installer(
+                &app,
+                game_id,
+                &archive,
+                &install_dir,
+                false,
+                false,
+                delete_download,
+            )
+            .await
+        }
         _ => Err(CommandError::msg(format!(
             "{method} is not a way to install this."
         ))),
@@ -287,9 +314,10 @@ async fn move_into_place(
     game_id: i64,
     source: &Path,
     install_dir: &Path,
+    delete_download: Option<bool>,
 ) -> CommandResult<()> {
     let state = app.state::<AppState>();
-    let _claim = claim(&state, game_id, Activity::Installing)?;
+    let _claim = claim(&state, game_id, Activity::installing())?;
     notify_state(app, game_id);
     tracing::info!(
         game_id,
@@ -311,8 +339,17 @@ async fn move_into_place(
 
     // A rename is instant on one filesystem; Downloads may be on another, which needs a copy.
     if tokio::fs::rename(source, &incoming).await.is_err() {
+        let measured = source.to_path_buf();
+        let total = tokio::task::spawn_blocking(move || {
+            gameyfin_core::extract::directory_size(&measured).unwrap_or(0)
+        })
+        .await
+        .unwrap_or(0);
+        let watcher = watch_written(app, game_id, vec![incoming.clone()], 0, total);
         let (from, to) = (source.to_path_buf(), incoming.clone());
-        if let Err(e) = blocking("could not copy the files", move || copy_tree(&from, &to)).await {
+        let copied = blocking("could not copy the files", move || copy_tree(&from, &to)).await;
+        watcher.abort();
+        if let Err(e) = copied {
             let _ = tokio::fs::remove_dir_all(&incoming).await;
             return Err(e);
         }
@@ -344,7 +381,7 @@ async fn move_into_place(
         })
         .await;
     finish_install(&state, game_id, install_dir).await;
-    discard_download_if_asked(app, game_id, install_dir).await;
+    discard_download_if_asked(app, game_id, install_dir, delete_download).await;
     notify_state(app, game_id);
     Ok(())
 }
@@ -369,9 +406,10 @@ async fn copy_executable(
     game_id: i64,
     source: &Path,
     install_dir: &Path,
+    delete_download: Option<bool>,
 ) -> CommandResult<()> {
     let state = app.state::<AppState>();
-    let _claim = claim(&state, game_id, Activity::Installing)?;
+    let _claim = claim(&state, game_id, Activity::installing())?;
     let name = keep_program(source, install_dir).await?;
     #[cfg(unix)]
     {
@@ -383,7 +421,7 @@ async fn copy_executable(
         .await;
     }
     record_install(&state, game_id, install_dir, Some(name)).await;
-    discard_download_if_asked(app, game_id, install_dir).await;
+    discard_download_if_asked(app, game_id, install_dir, delete_download).await;
     notify_state(app, game_id);
     Ok(())
 }
@@ -454,14 +492,57 @@ pub async fn finish_install(state: &AppState, game_id: i64, install_dir: &Path) 
 }
 
 const STUCK_AFTER: Duration = Duration::from_secs(180);
+const MEASURE_EVERY: Duration = Duration::from_secs(2);
 
-/// Runs a setup program and adopts whatever it installs. `elevated` reruns as administrator.
+async fn size_of(dirs: Vec<PathBuf>) -> u64 {
+    tokio::task::spawn_blocking(move || {
+        dirs.iter()
+            .filter_map(|dir| gameyfin_core::extract::directory_size(dir).ok())
+            .sum()
+    })
+    .await
+    .unwrap_or(0)
+}
+
+/// Shows bytes written to `dirs` past `baseline` until aborted. Zero `total_bytes` is unknown.
+fn watch_written(
+    app: &AppHandle,
+    game_id: i64,
+    dirs: Vec<PathBuf>,
+    baseline: u64,
+    total_bytes: u64,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let (mut last, mut at) = (0, std::time::Instant::now());
+        loop {
+            tokio::time::sleep(MEASURE_EVERY).await;
+            let written = size_of(dirs.clone()).await.saturating_sub(baseline);
+            let elapsed = at.elapsed().as_secs_f64().max(f64::EPSILON);
+            let progress = crate::progress::TransferProgress {
+                received_bytes: written,
+                total_bytes,
+                bytes_per_second: written.saturating_sub(last) as f64 / elapsed,
+            };
+            (last, at) = (written, std::time::Instant::now());
+            let library = app.state::<AppState>().library().clone();
+            if library.show_progress(game_id, progress) {
+                notify_state(&app, game_id);
+            }
+        }
+    })
+}
+
+/// Runs a setup program and adopts whatever it installs. `elevated` reruns as administrator,
+/// `unattended` runs it silently and notifies, `delete_download` overrides the setting.
 async fn run_installer(
     app: &AppHandle,
     game_id: i64,
     program: &Path,
     install_dir: &Path,
     elevated: bool,
+    unattended: bool,
+    delete_download: Option<bool>,
 ) -> CommandResult<()> {
     let state = app.state::<AppState>();
     if !program.is_file() {
@@ -523,6 +604,11 @@ async fn run_installer(
     } else {
         gameyfin_core::games_drive_path(&safe_folder)
     };
+    if unattended {
+        config
+            .arguments
+            .extend(state.settings().unattended_args(kind));
+    }
     config.arguments.extend(kind.destination_args(&destination));
     // The user's own options last, so their flags win over the toolkit defaults.
     config.arguments.extend(gameyfin_core::arguments::split(
@@ -540,7 +626,18 @@ async fn run_installer(
         .library()
         .update_record(game_id, |r| r.elevation_program = None)
         .await;
-    state.library().set_activity(game_id, Activity::Installing);
+    // The wizard writes to the shell-safe name first.
+    let mut watched = vec![install_dir.to_path_buf()];
+    if let Some(root) = install_dir.parent() {
+        let written_to = root.join(&safe_folder);
+        if written_to != install_dir {
+            watched.push(written_to);
+        }
+    }
+    let baseline = size_of(watched.clone()).await;
+    state
+        .library()
+        .set_activity(game_id, Activity::installing());
     notify_state(app, game_id);
 
     // Caps the whole process tree, which the installer's own RAM option does not reach.
@@ -564,6 +661,7 @@ async fn run_installer(
     tauri::async_runtime::spawn(async move {
         let _claim = claim;
         let state = app.state::<AppState>();
+        let watcher = watch_written(&app, game_id, watched, baseline, 0);
         let unarc_guard = unarc_prefix
             .map(|prefix| tauri::async_runtime::spawn(gameyfin_core::unarc::guard(prefix)));
         let started = std::time::Instant::now();
@@ -576,6 +674,7 @@ async fn run_installer(
         if let Some(guard) = unarc_guard {
             guard.abort();
         }
+        watcher.abort();
         let elapsed = started.elapsed();
         state.processes.finish(game_id);
 
@@ -618,10 +717,29 @@ async fn run_installer(
             }
             Err(e) => Some(e.to_string()),
         };
+        let report = |outcome: Result<(), String>| {
+            let app = app.clone();
+            async move {
+                let state = app.state::<AppState>();
+                if let Err(message) = &outcome {
+                    state
+                        .library()
+                        .fail(game_id, Stage::Install, message.clone());
+                }
+                notify_state(&app, game_id);
+                if !unattended {
+                    return;
+                }
+                let title = state.title(game_id).await;
+                match outcome {
+                    Ok(()) => crate::notify::install_finished(&app, &title).await,
+                    Err(message) => crate::notify::failed(&app, "Install", &title, &message).await,
+                }
+            }
+        };
         if let Some(message) = failure {
             tracing::error!(game_id, ?elapsed, "installer failed: {message}");
-            state.library().fail(game_id, Stage::Install, message);
-            return notify_state(&app, game_id);
+            return report(Err(message)).await;
         }
 
         // The wizard was pointed at a shell-safe name; move the result to the expected one.
@@ -639,9 +757,10 @@ async fn run_installer(
         }
 
         let populated = crate::library_state::has_content(&install_dir);
-        if populated {
+        let outcome = if populated {
             finish_install(&state, game_id, &install_dir).await;
-            discard_download_if_asked(&app, game_id, &install_dir).await;
+            discard_download_if_asked(&app, game_id, &install_dir, delete_download).await;
+            Ok(())
         } else if kind == gameyfin_core::InstallerKind::Unknown && elapsed >= Duration::from_secs(3)
         {
             // No known toolkit, a clean exit, and a real run: this was the game itself.
@@ -653,19 +772,19 @@ async fn run_installer(
             match keep_program(&program, &install_dir).await {
                 Ok(name) => {
                     record_install(&state, game_id, &install_dir, Some(name)).await;
-                    discard_download_if_asked(&app, game_id, &install_dir).await;
+                    discard_download_if_asked(&app, game_id, &install_dir, delete_download).await;
+                    Ok(())
                 }
-                Err(e) => state.library().fail(game_id, Stage::Install, e.to_string()),
+                Err(e) => Err(e.to_string()),
             }
         } else {
-            state.library().fail(
-                game_id,
-                Stage::Install,
+            Err(
                 "The installer finished without putting anything in the suggested folder. \
-                 If you chose a different location, use \"I installed it myself\".",
-            );
-        }
-        notify_state(&app, game_id);
+                 If you chose a different location, use \"I installed it myself\"."
+                    .to_string(),
+            )
+        };
+        report(outcome).await;
     });
     Ok(())
 }
@@ -727,7 +846,7 @@ fn memory_advice(
 }
 
 /// What a finished download does with automatic install on: an archive is unpacked, a program
-/// that needs no answers is installed, and a setup wizard waits in Downloads.
+/// that needs no answers is installed, and a setup program runs silently where it can.
 pub async fn auto_install_download(
     app: &AppHandle,
     game_id: i64,
@@ -756,22 +875,13 @@ pub async fn auto_install_download(
     match method {
         Some(method) if !method.is_interactive() => {
             let install_dir = super::install_dir_for(&state, game_id).await?;
-            copy_executable(app, game_id, &archive, &install_dir).await
+            copy_executable(app, game_id, &archive, &install_dir, None).await
         }
-        Some(_) => {
-            crate::notify::send(
-                app,
-                crate::notify::Category::Transfer,
-                "Setup needed",
-                &format!("{title} downloaded as an installer. Run it from Downloads."),
-            )
-            .await;
-            Ok(())
-        }
+        Some(_) => auto_run_setup(app, game_id, title, &archive).await,
         None => {
             crate::notify::send(
                 app,
-                crate::notify::Category::Transfer,
+                crate::notify::Category::Action,
                 "Downloaded",
                 &format!(
                     "{title} is a {}. Choose how to install it in Downloads.",
@@ -782,6 +892,46 @@ pub async fn auto_install_download(
             Ok(())
         }
     }
+}
+
+/// Runs a setup program silently, or leaves it waiting when its toolkit has no silent switch.
+pub async fn auto_run_setup(
+    app: &AppHandle,
+    game_id: i64,
+    title: &str,
+    program: &Path,
+) -> CommandResult<()> {
+    let state = app.state::<AppState>();
+    let inspect = program.to_path_buf();
+    let kind = blocking("could not inspect the setup program", move || {
+        gameyfin_core::identify(&inspect)
+    })
+    .await?;
+    let waiting = if !kind.runs_unattended() {
+        Some(format!(
+            "{title} has a setup program that cannot install on its own. Run it from Downloads."
+        ))
+    } else if gameyfin_core::needs_proton(program) && !windows_runtime(&state, game_id).await.1 {
+        Some(format!(
+            "{title} has a setup program. {}",
+            gameyfin_core::windows_runtime_hint()
+        ))
+    } else {
+        None
+    };
+    tracing::info!(
+        game_id,
+        ?program,
+        kind = kind.label(),
+        waiting = waiting.is_some(),
+        "automatic setup"
+    );
+    if let Some(body) = waiting {
+        crate::notify::setup_needed(app, &body).await;
+        return Ok(());
+    }
+    let install_dir = super::install_dir_for(&state, game_id).await?;
+    run_installer(app, game_id, program, &install_dir, false, true, None).await
 }
 
 /// Moves the unpacked files into place after an automatic extraction.
@@ -795,7 +945,7 @@ pub async fn finish_auto_install(app: &AppHandle, game_id: i64) {
             .record(game_id)
             .existing_staging()
             .ok_or_else(|| CommandError::msg("Nothing was unpacked."))?;
-        move_into_place(app, game_id, &source, &install_dir).await
+        move_into_place(app, game_id, &source, &install_dir, None).await
     }
     .await;
     match result {
@@ -820,7 +970,7 @@ pub async fn locate_install(
         return Err(CommandError::msg(format!("{path} is not a folder.")));
     }
     super::safe_game_folder(&state, &dir)?;
-    let _claim = claim(&state, game_id, Activity::Installing)?;
+    let _claim = claim(&state, game_id, Activity::installing())?;
     tracing::info!(game_id, %path, "adopting a user-chosen install folder");
     finish_install(&state, game_id, &dir).await;
     notify(&app);
@@ -844,7 +994,7 @@ pub async fn run_setup(
             CommandError::msg(format!("{relative} could not be found for this game."))
         })?;
     let install_dir = super::install_dir_for(&state, game_id).await?;
-    run_installer(&app, game_id, &program, &install_dir, false).await
+    run_installer(&app, game_id, &program, &install_dir, false, false, None).await
 }
 
 /// A setup program the user picked, for an installer detection missed.
@@ -854,10 +1004,20 @@ pub async fn run_setup_path(
     state: State<'_, AppState>,
     game_id: i64,
     path: String,
+    delete_download: Option<bool>,
 ) -> CommandResult<()> {
     let install_dir = super::install_dir_for(&state, game_id).await?;
     tracing::info!(game_id, %path, "running a user-chosen setup program");
-    run_installer(&app, game_id, Path::new(&path), &install_dir, false).await
+    run_installer(
+        &app,
+        game_id,
+        Path::new(&path),
+        &install_dir,
+        false,
+        false,
+        delete_download,
+    )
+    .await
 }
 
 /// Only reachable after Windows refused the program, so elevation is never asked for speculatively.
@@ -878,7 +1038,7 @@ pub async fn run_setup_elevated(
         .elevation_program
         .ok_or_else(|| CommandError::msg("Nothing is waiting to be run as administrator."))?;
     let install_dir = super::install_dir_for(&state, game_id).await?;
-    run_installer(&app, game_id, &program, &install_dir, true).await
+    run_installer(&app, game_id, &program, &install_dir, true, false, None).await
 }
 
 /// Found by naming convention, reported before anything is removed.

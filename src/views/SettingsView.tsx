@@ -12,7 +12,7 @@ import {
 } from "./settings/compatibility";
 import { DiagnosticsSection } from "./settings/diagnostics";
 import { AppearanceSection, GamepadSection, NotificationSection, WindowSection } from "./settings/interface";
-import { DownloadSection, ExtractionSection, RootsSection } from "./settings/library";
+import { AutomationSection, RootsSection } from "./settings/library";
 import { MigrationSection, SaveToolSection, SavesSection } from "./settings/saves";
 
 /** Which pane of Settings is showing. */
@@ -84,8 +84,7 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
           {tab === "library" && (
             <>
               <RootsSection />
-              <DownloadSection />
-              <ExtractionSection />
+              <AutomationSection />
             </>
           )}
           {tab === "interface" && (

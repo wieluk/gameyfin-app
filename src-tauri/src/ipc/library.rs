@@ -365,23 +365,56 @@ async fn record_extracted(
         .await;
     library.clear_activity(game_id);
 
-    // A setup wizard asks questions a checkbox should not answer for the user.
     if app.state::<AppState>().settings().auto_install {
-        if setups.is_empty() {
-            super::install::finish_auto_install(app, game_id).await;
-        } else {
-            crate::notify::send(
-                app,
-                crate::notify::Category::Transfer,
-                "Setup needed",
-                &format!("{title} came with an installer. Run it from Downloads."),
-            )
-            .await;
+        match auto_setup(&setups) {
+            AutoSetup::Move => super::install::finish_auto_install(app, game_id).await,
+            AutoSetup::Run(setup) => {
+                let started = match super::contained(&staging, setup) {
+                    Ok(program) => {
+                        super::install::auto_run_setup(app, game_id, title, &program).await
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = started {
+                    fail(app, game_id, Stage::Install, title, e.to_string()).await;
+                }
+            }
+            AutoSetup::Choose => {
+                crate::notify::setup_needed(
+                    app,
+                    &format!(
+                        "{title} has {} setup programs. Choose which to run in Downloads.",
+                        setups.len()
+                    ),
+                )
+                .await;
+            }
         }
     } else {
         crate::notify::download_finished(app, title).await;
     }
     notify_state(app, game_id);
+}
+
+/// Several setups, such as a game and its DLC, keep the download for the next one.
+fn deletes_download(choice: Option<bool>, setting: bool, staging_setups: usize) -> bool {
+    choice.unwrap_or(setting && staging_setups <= 1)
+}
+
+#[derive(Debug, PartialEq)]
+enum AutoSetup<'a> {
+    Move,
+    Run(&'a str),
+    /// Several setups, such as a game and its DLC, need someone to choose.
+    Choose,
+}
+
+fn auto_setup(setups: &[String]) -> AutoSetup<'_> {
+    match setups {
+        [] => AutoSetup::Move,
+        [setup] => AutoSetup::Run(setup),
+        _ => AutoSetup::Choose,
+    }
 }
 
 async fn is_archive(path: &Path) -> bool {
@@ -521,10 +554,20 @@ async fn remove_download(state: &AppState, game_id: i64, keep: Option<&Path>) ->
     Ok(())
 }
 
-/// After an install, deletes the download if the user asked. Failure only logs.
-pub async fn discard_download_if_asked(app: &AppHandle, game_id: i64, install_dir: &Path) {
+/// After an install, deletes the download if asked. `choice` overrides the setting. Failure only logs.
+pub async fn discard_download_if_asked(
+    app: &AppHandle,
+    game_id: i64,
+    install_dir: &Path,
+    choice: Option<bool>,
+) {
     let state = app.state::<AppState>();
-    if !state.settings().delete_download_after_install {
+    let setups = state.library().record(game_id).staging_setups.len();
+    if !deletes_download(
+        choice,
+        state.settings().delete_download_after_install,
+        setups,
+    ) {
         return;
     }
     if let Err(e) = remove_download(&state, game_id, Some(install_dir)).await {
@@ -781,6 +824,28 @@ pub async fn list_executables(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn several_setups_keep_the_download_unless_the_user_says_otherwise() {
+        assert!(deletes_download(None, true, 1));
+        assert!(!deletes_download(None, true, 2));
+        assert!(!deletes_download(None, false, 0));
+        assert!(deletes_download(Some(true), false, 2));
+        assert!(!deletes_download(Some(false), true, 0));
+    }
+
+    #[test]
+    fn automatic_install_asks_when_there_is_more_than_one_setup() {
+        let setups = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(auto_setup(&[]), AutoSetup::Move);
+        let one = setups(&["setup.exe"]);
+        assert_eq!(auto_setup(&one), AutoSetup::Run("setup.exe"));
+        let game_and_dlc = setups(&[
+            "setup_wall_world_1.2.4.513_(64bit)_(67993).exe",
+            "setup_wall_world_deep_threat_1.2.4.513_(64bit)_(67993).exe",
+        ]);
+        assert_eq!(auto_setup(&game_and_dlc), AutoSetup::Choose);
+    }
 
     #[test]
     fn a_browsed_file_is_stored_relative_to_the_game() {

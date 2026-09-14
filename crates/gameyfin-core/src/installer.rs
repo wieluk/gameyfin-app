@@ -27,6 +27,20 @@ impl InstallerKind {
         }
     }
 
+    /// Whether the toolkit has silent switches.
+    pub fn runs_unattended(self) -> bool {
+        matches!(self, InstallerKind::InnoSetup | InstallerKind::Nsis)
+    }
+
+    pub fn default_unattended_args(self) -> &'static str {
+        match self {
+            // `/NORESTART` keeps Windows from rebooting afterwards.
+            InstallerKind::InnoSetup => "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+            InstallerKind::Nsis => "/S",
+            InstallerKind::InstallShield | InstallerKind::Unknown => "",
+        }
+    }
+
     /// Arguments that point this installer at `destination`. Empty when the toolkit is unknown.
     pub fn destination_args(self, destination: &str) -> Vec<String> {
         match self {
@@ -138,6 +152,16 @@ mod tests {
         assert!(InstallerKind::InstallShield
             .destination_args("G:\\x")
             .is_empty());
+    }
+
+    #[test]
+    fn only_known_toolkits_run_unattended() {
+        for kind in [InstallerKind::InnoSetup, InstallerKind::Nsis] {
+            assert!(kind.runs_unattended() && !kind.default_unattended_args().is_empty());
+        }
+        for kind in [InstallerKind::InstallShield, InstallerKind::Unknown] {
+            assert!(!kind.runs_unattended() && kind.default_unattended_args().is_empty());
+        }
     }
 
     #[test]

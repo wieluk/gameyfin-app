@@ -26,6 +26,17 @@ describe("Switch", () => {
     expect(onChange).toHaveBeenCalledWith(true);
   });
 
+  it("groups the settings that belong to it under its name", () => {
+    render(
+      <SwitchField label="Install automatically" checked onChange={() => {}}>
+        <SwitchField label="Delete the download" checked={false} onChange={() => {}} />
+      </SwitchField>,
+    );
+
+    const group = screen.getByRole("group", { name: "Install automatically" });
+    expect(group.contains(screen.getByRole("switch", { name: "Delete the download" }))).toBe(true);
+  });
+
   it("ignores presses while disabled", () => {
     const onChange = vi.fn();
     render(<Switch aria-label="Off limits" checked disabled onChange={onChange} />);

@@ -70,11 +70,12 @@ export const backend = {
     invoke<void>("start_download", { gameId, root: root ?? null }),
   cancelDownload: (gameId: number) => invoke<void>("cancel_download", { gameId }),
   installOptions: (gameId: number) => invoke<InstallPlan>("install_options", { gameId }),
-  install: (gameId: number, method?: string, deleteArchive?: boolean) =>
+  install: (gameId: number, method?: string, deleteArchive?: boolean, deleteDownload?: boolean) =>
     invoke<void>("install_game", {
       gameId,
       method: method ?? null,
       deleteArchive: deleteArchive ?? null,
+      deleteDownload: deleteDownload ?? null,
     }),
   rescanLibrary: () => invoke<number>("rescan_library"),
   locateInstall: (gameId: number, path: string) => invoke<void>("locate_install", { gameId, path }),
@@ -89,7 +90,8 @@ export const backend = {
   deleteStaging: (gameId: number) => invoke<void>("delete_staging", { gameId }),
   deleteDownload: (gameId: number) => invoke<void>("delete_download", { gameId }),
   runSetup: (gameId: number, relative: string) => invoke<void>("run_setup", { gameId, relative }),
-  runSetupPath: (gameId: number, path: string) => invoke<void>("run_setup_path", { gameId, path }),
+  runSetupPath: (gameId: number, path: string, deleteDownload?: boolean) =>
+    invoke<void>("run_setup_path", { gameId, path, deleteDownload: deleteDownload ?? null }),
   /** Retry the setup program Windows refused to start, as administrator. */
   runSetupElevated: (gameId: number) => invoke<void>("run_setup_elevated", { gameId }),
   launch: (gameId: number) => invoke<void>("launch_game", { gameId }),

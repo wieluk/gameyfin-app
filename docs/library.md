@@ -27,14 +27,18 @@ see the free space on each.
 - Progress shows on the taskbar or dock icon, and a notification tells you when a game is
   ready.
 
-**Settings, Library, Downloads**:
+**Settings, Library, Automation**:
 
-- **Extract automatically** (on by default). Off keeps the archive in Downloads until you
-  press **Install**.
-- **Install automatically when a download finishes**. Extracts first even with the switch
-  above off. Downloads with a setup program still wait for you.
-- **Delete the archive after extracting** (on by default).
-- **Delete the download after installing**.
+- **Extract automatically** (on by default): unpack archives as soon as they download.
+  - **Delete the archive after extracting** (on by default).
+  - **Archive password**: tried on encrypted archives.
+- **Install automatically when a download finishes**: Inno Setup and NSIS installers run
+  silently. Other installers, or more than one setup program, wait for you.
+  - **Delete the download after installing**: the starting choice in the install dialog, off
+    when there is more than one setup program.
+  - **Inno Setup options** (default `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) and
+    **NSIS options** (default `/S`). Empty restores the default.
+  - **Never offer these executables**.
 
 ## Installing
 
@@ -42,8 +46,8 @@ Gameyfin looks at what was downloaded and handles it:
 
 | Download | What happens |
 | --- | --- |
-| **Archive** (zip, 7z, rar, tar) | Unpacked into `Gameyfin/Installations`. Encrypted archives use the password from **Settings, Library, Extraction**. On Linux, rar needs `unar` installed. |
-| **Setup program** | Run for you, on Linux inside the game's prefix. Common installer types are told where to install, so the game ends up where Gameyfin can find it. |
+| **Archive** (zip, 7z, rar, tar) | Unpacked into `Gameyfin/Installations`. Encrypted archives use the password from **Settings, Library, Automation**. On Linux, rar needs `unar` installed. |
+| **Setup program** | Run for you, on Linux inside the game's prefix. Common installer types are told where to install, so the game ends up where Gameyfin can find it. The row shows how much it has written. |
 | **Game files** | Moved into place as they are. |
 
 **Setup options** are flags passed to the setup program and remembered for the game.
@@ -55,7 +59,7 @@ Gameyfin picks the file to launch and asks when it is not sure. You can change i
 in **Installed** with **Choose an executable**, and pick any file in the game's folder.
 
 Crash handlers, redistributables and uninstallers are never offered. Edit that list in
-**Settings, Library, Extraction, Never offer these executables**.
+**Settings, Library, Automation, Never offer these executables**.
 
 ## Installed games
 

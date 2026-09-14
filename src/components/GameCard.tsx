@@ -1,7 +1,13 @@
 import { Icon } from "./Icon";
 import { primaryAction } from "@/lib/actions";
-import { formatBytes, formatEta, formatPlaytime, formatSpeed } from "@/lib/format";
-import type { LibraryEntry } from "@/types";
+import {
+  formatBytes,
+  formatEta,
+  formatInstallProgress,
+  formatPlaytime,
+  formatSpeed,
+} from "@/lib/format";
+import type { LibraryEntry, TransferProgress } from "@/types";
 
 /** A library tile; 2:3 cover art so the grid reads as a shelf, not a table. */
 /** What to call a failure, by the step that failed. */
@@ -93,6 +99,25 @@ function PlaceholderArt({ title }: { title: string }) {
   );
 }
 
+function InstallingBadge({ progress }: { progress?: TransferProgress }) {
+  const percent =
+    progress && progress.totalBytes > 0 ? (progress.receivedBytes / progress.totalBytes) * 100 : undefined;
+  return (
+    <div className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-sm">
+      <div className="mb-1 flex justify-between text-[10px] text-white/80">
+        <span>Installing</span>
+        {progress ? <span>{formatInstallProgress(progress)}</span> : null}
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-white/20">
+        <div
+          className={`h-full rounded-full bg-warning transition-[width] ${percent === undefined ? "animate-pulse" : ""}`}
+          style={{ width: `${percent ?? 100}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function StateBadge({ entry }: { entry: LibraryEntry }) {
   const { state } = entry;
 
@@ -112,17 +137,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
     );
   }
 
-  if (state.kind === "installing") {
-    return (
-      <div className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-sm">
-        <div className="mb-1 text-[10px] text-white/80">Installing</div>
-        {/* An installer reports nothing, so the bar only says work is happening. */}
-        <div className="h-1 overflow-hidden rounded-full bg-white/20">
-          <div className="h-full w-full animate-pulse rounded-full bg-warning" />
-        </div>
-      </div>
-    );
-  }
+  if (state.kind === "installing") return <InstallingBadge progress={state.progress} />;
 
   if (state.kind === "downloaded") {
     return (
@@ -176,6 +191,9 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
           </div>
         </div>
       );
+    }
+    if (busy?.kind === "installing" && busy.progress) {
+      return <InstallingBadge progress={busy.progress} />;
     }
     if (busy) {
       return (

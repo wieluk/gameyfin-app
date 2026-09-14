@@ -22,6 +22,15 @@ export function formatPlaytime(minutes: number): string {
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
+/** A percentage when the total is known, else bytes written. */
+export function formatInstallProgress(progress?: { receivedBytes: number; totalBytes: number }): string {
+  if (!progress) return "Working…";
+  if (progress.totalBytes > 0) {
+    return `${Math.round((progress.receivedBytes / progress.totalBytes) * 100)}%`;
+  }
+  return `${formatBytes(progress.receivedBytes)} written`;
+}
+
 /** Remaining time for a transfer, or null when it cannot be estimated yet. */
 export function formatEta(receivedBytes: number, totalBytes: number, bytesPerSecond: number): string | null {
   if (bytesPerSecond <= 0 || totalBytes <= receivedBytes) return null;

@@ -35,6 +35,7 @@ export function InstallDialog({
   const settings = useAppSettings();
   const [deleteArchiveChoice, setDeleteArchive] = useState<boolean | null>(null);
   const deleteArchive = deleteArchiveChoice ?? settings.data?.deleteArchiveAfterExtract ?? true;
+  const [deleteDownloadChoice, setDeleteDownload] = useState<boolean | null>(null);
 
   // Keyed by state too: a plan cached from before extraction would keep offering "Extract".
   const plan = useQuery({
@@ -43,6 +44,11 @@ export function InstallDialog({
     staleTime: 0,
     gcTime: 0,
   });
+
+  // Several setups, such as a game and its DLC, keep the download for the next one.
+  const severalSetups = (plan.data?.setupCandidates.length ?? 0) > 1;
+  const deleteDownload =
+    deleteDownloadChoice ?? ((settings.data?.deleteDownloadAfterInstall ?? false) && !severalSetups);
 
   async function start(method: string, interactive: boolean) {
     // Starting takes a moment while a prefix is prepared, so a second click is ignored.
@@ -56,7 +62,7 @@ export function InstallDialog({
           plan.data.windowsInstallPath ?? plan.data.defaultInstallDir,
         );
       }
-      await backend.install(gameId, method, deleteArchive);
+      await backend.install(gameId, method, deleteArchive, deleteDownload);
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
       onClose();
     } catch (e) {
@@ -73,7 +79,7 @@ export function InstallDialog({
     try {
       const chosen = await backend.pickFile(plan.data?.browseDir ?? plan.data?.defaultInstallDir);
       if (!chosen) return;
-      await backend.runSetupPath(gameId, chosen);
+      await backend.runSetupPath(gameId, chosen, deleteDownload);
       await queryClient.invalidateQueries({ queryKey: ["entries"] });
       onClose();
     } catch (e) {
@@ -131,6 +137,21 @@ export function InstallDialog({
               hint="Frees disk space. The only way back is downloading again."
               checked={deleteArchive}
               onChange={setDeleteArchive}
+            />
+          </div>
+        )}
+
+        {plan.data?.options.some((o) => o.key !== "extract") && (
+          <div className="mb-3 rounded-lg border border-default-200 px-3 py-2">
+            <SwitchField
+              label="Delete the download after installing"
+              hint={
+                severalSetups
+                  ? "Off by default, since there is more than one setup program."
+                  : "Remove the download once the game is installed."
+              }
+              checked={deleteDownload}
+              onChange={setDeleteDownload}
             />
           </div>
         )}

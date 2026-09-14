@@ -61,6 +61,7 @@ export function SwitchField({
   checked,
   onChange,
   disabled = false,
+  children,
 }: {
   label: string;
   hint?: React.ReactNode;
@@ -68,8 +69,46 @@ export function SwitchField({
   onChange: (next: boolean) => void | Promise<void>;
   /** Greyed out and inert, for a setting that only applies when another one is on. */
   disabled?: boolean;
+  /** Dependent settings, shown on a rail linked to this switch. */
+  children?: React.ReactNode;
 }) {
   const id = useId();
+  if (!children) {
+    return (
+      <SwitchRow {...{ id, label, hint, checked, onChange, disabled }} />
+    );
+  }
+  return (
+    <div>
+      <SwitchRow {...{ id, label, hint, checked, onChange, disabled }} />
+      <div
+        role="group"
+        aria-labelledby={id}
+        className={`ml-1 mt-2 flex flex-col gap-3 border-l-2 pl-4 transition-colors ${
+          checked ? "border-primary/50" : "border-default-200"
+        }`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SwitchRow({
+  id,
+  label,
+  hint,
+  checked,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  label: string;
+  hint?: React.ReactNode;
+  checked: boolean;
+  onChange: (next: boolean) => void | Promise<void>;
+  disabled: boolean;
+}) {
   return (
     <div className={`flex items-start justify-between gap-4 ${disabled ? "opacity-45" : ""}`}>
       <div className="min-w-0">

@@ -10,7 +10,7 @@ import { UninstallDialog } from "@/components/UninstallDialog";
 import { Button, FormField, IconButton, Select, ViewHeader } from "@/components/ui";
 import { installedFiles, isInstalled } from "@/lib/actions";
 import { backend } from "@/lib/backend";
-import { formatPlaytime } from "@/lib/format";
+import { formatInstallProgress, formatPlaytime } from "@/lib/format";
 import { messageOf } from "@/lib/errors";
 import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
@@ -241,6 +241,11 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
           {busy.kind === "preparing" && busy.progress && (
             <div className="mt-2">
               <TransferProgress {...busy.progress} />
+            </div>
+          )}
+          {busy.kind === "installing" && busy.progress && (
+            <div className="mt-2">
+              <TransferProgress {...busy.progress} label={formatInstallProgress(busy.progress)} />
             </div>
           )}
         </div>

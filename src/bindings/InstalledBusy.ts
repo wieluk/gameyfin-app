@@ -4,4 +4,4 @@ import type { TransferProgress } from "./TransferProgress";
 /**
  * Work on an installed game, shown on its installed row rather than moving it to Downloads.
  */
-export type InstalledBusy = { "kind": "preparing", message: string, progress?: TransferProgress, } | { "kind": "installing" } | { "kind": "failed", message: string, };
+export type InstalledBusy = { "kind": "preparing", message: string, progress?: TransferProgress, } | { "kind": "installing", progress?: TransferProgress, } | { "kind": "failed", message: string, };

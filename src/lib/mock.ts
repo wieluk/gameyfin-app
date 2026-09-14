@@ -71,7 +71,10 @@ const entries: LibraryEntry[] = [
     totalBytes: 21 * 1024 ** 3,
     bytesPerSecond: 18 * 1024 ** 2,
   }),
-  entry(4, "Outer Wilds", "Adventure", { kind: "installing" }),
+  entry(4, "Outer Wilds", "Adventure", {
+    kind: "installing",
+    progress: { receivedBytes: 3.1 * 1024 ** 3, totalBytes: 0, bytesPerSecond: 42 * 1024 ** 2 },
+  }),
   entry(5, "Hades", "Roguelike", { kind: "not-installed" }, 88),
   entry(6, "Return of the Obra Dinn", "Puzzle"),
   entry(7, "Chrono Trigger", "JRPG"),
