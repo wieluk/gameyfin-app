@@ -19,8 +19,8 @@ Flatpak.
 You can also install from the repository instead of a file:
 
 ```bash
-flatpak remote-add --user --if-not-exists gameyfin https://wieluk.github.io/gameyfin-app/repo/gameyfin.flatpakrepo
-flatpak install --user gameyfin org.gameyfin.Gameyfin
+flatpak remote-add --user --if-not-exists gameyfin-app https://wieluk.github.io/gameyfin-app/repo/gameyfin-app.flatpakrepo
+flatpak install --user gameyfin-app org.gameyfin.gameyfin-app
 ```
 
 ### Flatpak: 32-bit support

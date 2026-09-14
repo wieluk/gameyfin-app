@@ -29,7 +29,7 @@ impl GameyfinClient {
         let _ = url::Url::parse(&base_url)?;
 
         let http = reqwest::Client::builder()
-            .user_agent(concat!("Gameyfin-Desktop/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Gameyfin-App/", env!("CARGO_PKG_VERSION")))
             .build()?;
 
         Ok(Self {

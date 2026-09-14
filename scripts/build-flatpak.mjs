@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Builds `build/Gameyfin_<version>.flatpak` from the packaged `.deb`. Needs `flatpak-builder`
+ * Builds `build/gameyfin-app_<version>.flatpak` from the packaged `.deb`. Needs `flatpak-builder`
  * and the GNOME 50 SDK. `--install` installs straight from the build tree instead.
  */
 
@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD = join(ROOT, "build");
 const FLATPAK_DIR = join(ROOT, "flatpak");
-const APP_ID = "org.gameyfin.Gameyfin";
+const APP_ID = "org.gameyfin.gameyfin-app";
 
 function require(tool) {
   try {
@@ -35,7 +35,7 @@ function versionOf(name) {
 
 // Copied to a stable filename for the manifest. Compared as numbers so 1.10.0 beats 1.9.0.
 const deb = readdirSync(BUILD, { withFileTypes: true })
-  .filter((e) => e.isFile() && e.name.endsWith(".deb") && e.name !== "gameyfin.deb")
+  .filter((e) => e.isFile() && e.name.endsWith(".deb") && e.name !== "gameyfin-app.deb")
   .map((e) => e.name)
   .sort((a, b) => {
     const [left, right] = [versionOf(a) ?? [0, 0, 0], versionOf(b) ?? [0, 0, 0]];
@@ -47,7 +47,7 @@ if (!deb) {
   console.error("No .deb found in build/. Run `npm run package deb` first.");
   process.exit(1);
 }
-copyFileSync(join(BUILD, deb), join(BUILD, "gameyfin.deb"));
+copyFileSync(join(BUILD, deb), join(BUILD, "gameyfin-app.deb"));
 
 // Pre-release versions are legal in a tag, so the suffix is kept rather than dropped.
 const version = deb.match(/_([^_]+)_/)?.[1] ?? "0.0.0";
@@ -59,7 +59,7 @@ rmSync(repoDir, { recursive: true, force: true });
 // Set by the release workflow. A local build carries no key, so it still installs unsigned.
 const gpgKey = process.env.FLATPAK_GPG_KEY_ID;
 const repoUrl = process.env.FLATPAK_REPO_URL;
-const publicKey = join(FLATPAK_DIR, "gameyfin-repo.gpg");
+const publicKey = join(FLATPAK_DIR, "gameyfin-app-repo.gpg");
 if (gpgKey && !existsSync(publicKey)) {
   console.error(`FLATPAK_GPG_KEY_ID is set, but ${publicKey} is missing.`);
   process.exit(1);
@@ -76,7 +76,7 @@ if (installDirectly) {
     ["--force-clean", "--user", "--install", buildDir, join(FLATPAK_DIR, `${APP_ID}.yml`)],
     { cwd: ROOT, stdio: "inherit" },
   );
-  rmSync(join(BUILD, "gameyfin.deb"), { force: true });
+  rmSync(join(BUILD, "gameyfin-app.deb"), { force: true });
   console.log(`\nInstalled ${APP_ID}. Run it with: flatpak run ${APP_ID}`);
 } else {
   const signing = gpgKey ? [`--gpg-sign=${gpgKey}`] : [];
@@ -87,7 +87,7 @@ if (installDirectly) {
   );
 
   mkdirSync(BUILD, { recursive: true });
-  const bundle = join(BUILD, `Gameyfin_${version}.flatpak`);
+  const bundle = join(BUILD, `gameyfin-app_${version}.flatpak`);
   // An install keeps this URL and key, so it updates from the repo and rejects unsigned builds.
   const origin = [
     ...(repoUrl ? [`--repo-url=${repoUrl}`] : []),
@@ -98,7 +98,7 @@ if (installDirectly) {
     stdio: "inherit",
   });
 
-  rmSync(join(BUILD, "gameyfin.deb"), { force: true });
+  rmSync(join(BUILD, "gameyfin-app.deb"), { force: true });
 
   if (!existsSync(bundle)) {
     console.error("flatpak build-bundle reported success but produced no file.");

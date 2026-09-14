@@ -214,7 +214,7 @@ pub async fn releases(
     // GitHub answers 403 without a user agent, which reads as a permissions problem.
     let feed: Vec<serde_json::Value> = http
         .get(format!("{}?per_page={FEED_PAGE}", family.releases_api()))
-        .header(reqwest::header::USER_AGENT, "Gameyfin-Desktop")
+        .header(reqwest::header::USER_AGENT, "Gameyfin-App")
         .send()
         .await?
         .error_for_status()?
@@ -305,7 +305,7 @@ where
         Some(url) => {
             let sums = http
                 .get(url)
-                .header(reqwest::header::USER_AGENT, "Gameyfin-Desktop")
+                .header(reqwest::header::USER_AGENT, "Gameyfin-App")
                 .send()
                 .await?
                 .error_for_status()?

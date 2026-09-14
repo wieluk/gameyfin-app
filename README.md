@@ -1,6 +1,6 @@
 # gameyfin-app
 
-A desktop client for [Gameyfin](https://github.com/gameyfin/gameyfin) on Windows and Linux.
+gameyfin-app is a client for [Gameyfin](https://github.com/gameyfin/gameyfin) on Windows and Linux.
 Browse your server's library, download and install games, play them, and keep your saves
 in sync between PCs.
 

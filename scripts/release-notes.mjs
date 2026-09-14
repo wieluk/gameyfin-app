@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const METAINFO = join(ROOT, "flatpak", "org.gameyfin.Gameyfin.metainfo.xml");
+const METAINFO = join(ROOT, "flatpak", "org.gameyfin.gameyfin-app.metainfo.xml");
 
 /** Software centers show only the last few, so older releases only lengthen the file. */
 const HISTORY = 10;

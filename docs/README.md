@@ -1,4 +1,4 @@
-# Gameyfin desktop app documentation
+# gameyfin-app documentation
 
 1. [Getting started](getting-started.md): installing, signing in, first setup
 2. [Library, downloads and installing](library.md)

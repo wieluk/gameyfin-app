@@ -86,7 +86,7 @@ impl CookieSessionAuth {
         // A client that never follows redirects, so the CSRF probe cannot be led into
         // starting an authentication flow.
         let http = reqwest::Client::builder()
-            .user_agent(concat!("Gameyfin-Desktop/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Gameyfin-App/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(15))
             .build()

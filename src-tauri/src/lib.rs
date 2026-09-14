@@ -1,4 +1,4 @@
-//! Gameyfin desktop application shell: the window, the IPC surface and process-wide setup.
+//! gameyfin-app shell: the window, the IPC surface and process-wide setup.
 //! Everything testable lives in the `gameyfin-*` crates, which build without a GUI toolchain.
 
 mod auth_flow;
@@ -58,17 +58,17 @@ fn dirs_log_dir() -> Option<std::path::PathBuf> {
             .or_else(|| {
                 std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
             })
-            .map(|base| base.join("org.gameyfin.desktop/logs"))
+            .map(|base| base.join("org.gameyfin.gameyfin-app/logs"))
     }
     #[cfg(target_os = "windows")]
     {
         std::env::var_os("APPDATA")
-            .map(|base| std::path::PathBuf::from(base).join("org.gameyfin.desktop/logs"))
+            .map(|base| std::path::PathBuf::from(base).join("org.gameyfin.gameyfin-app/logs"))
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/org.gameyfin.desktop"))
+            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/org.gameyfin.gameyfin-app"))
     }
 }
 
@@ -144,7 +144,7 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     let config_dir = app
         .path()
         .app_config_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("org.gameyfin.desktop"));
+        .unwrap_or_else(|_| std::env::temp_dir().join("org.gameyfin.gameyfin-app"));
     let restored = state.restore(config_dir.clone()).await;
     tracing::info!(restored, "stored session restored");
 

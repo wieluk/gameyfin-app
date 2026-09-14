@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.gameyfin.Gameyfin</id>
+  <id>org.gameyfin.gameyfin-app</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
 
-  <name>Gameyfin</name>
+  <name>gameyfin-app</name>
   <summary>Play your Gameyfin library</summary>
   <developer id="io.github.wieluk">
     <name>wieluk</name>
@@ -12,7 +12,7 @@
 
   <description>
     <p>
-      A desktop client for a Gameyfin server. Browse your library, download and install games,
+      A client for a Gameyfin server. Browse your library, download and install games,
       play them, and keep your saves in sync between PCs.
     </p>
     <ul>
@@ -25,7 +25,7 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">org.gameyfin.Gameyfin.desktop</launchable>
+  <launchable type="desktop-id">org.gameyfin.gameyfin-app.desktop</launchable>
 
   <url type="homepage">https://github.com/wieluk/gameyfin-app</url>
   <url type="bugtracker">https://github.com/wieluk/gameyfin-app/issues</url>

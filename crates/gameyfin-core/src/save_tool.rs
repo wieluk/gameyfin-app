@@ -135,7 +135,7 @@ pub async fn releases(http: &reqwest::Client, limit: usize) -> CoreResult<Vec<Sa
     // GitHub answers 403 without a user agent, which reads as a permissions problem.
     let feed: Vec<serde_json::Value> = http
         .get(format!("{RELEASES_API}?per_page={limit}"))
-        .header(reqwest::header::USER_AGENT, "Gameyfin-Desktop")
+        .header(reqwest::header::USER_AGENT, "Gameyfin-App")
         .send()
         .await?
         .error_for_status()?

@@ -66,8 +66,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: Gameyfin Desktop ${{ github.ref_name }}
+          releaseName: gameyfin-app ${{ github.ref_name }}
           releaseDraft: true
+          assetNamePattern: gameyfin-app_[version]_[arch][setup][ext]
 
       # The flatpak job repackages this deb rather than building the app again.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -136,10 +137,10 @@ jobs:
           printf '%s\n' "$FLATPAK_GPG_PRIVATE_KEY" | gpg --batch --import
 
           # A secret from another key pair fails here instead of on users' machines.
-          key=$(gpg --with-colons --import-options show-only --import flatpak/gameyfin-repo.gpg \
+          key=$(gpg --with-colons --import-options show-only --import flatpak/gameyfin-app-repo.gpg \
             | awk -F: '/^fpr:/ {print $10; exit}')
           if [ -z "$key" ] || ! gpg --list-secret-keys "$key" >/dev/null 2>&1; then
-            echo "::error::FLATPAK_GPG_PRIVATE_KEY does not match flatpak/gameyfin-repo.gpg."
+            echo "::error::FLATPAK_GPG_PRIVATE_KEY does not match flatpak/gameyfin-app-repo.gpg."
             exit 1
           fi
 
@@ -200,14 +201,14 @@ jobs:
           flatpak build-update-repo --gpg-sign="$FLATPAK_GPG_KEY_ID" \
             --generate-static-deltas --prune --prune-depth=3 pages/repo
 
-          cat > pages/repo/gameyfin.flatpakrepo <<EOF
+          cat > pages/repo/gameyfin-app.flatpakrepo <<EOF
           [Flatpak Repo]
-          Title=Gameyfin
+          Title=gameyfin-app
           Url=${FLATPAK_REPO_URL}
           Homepage=${SERVER_URL}/${REPOSITORY}
-          Comment=Gameyfin desktop client
-          Description=Updates for the Gameyfin desktop client
-          GPGKey=$(base64 -w0 flatpak/gameyfin-repo.gpg)
+          Comment=Gameyfin client
+          Description=Updates for gameyfin-app
+          GPGKey=$(base64 -w0 flatpak/gameyfin-app-repo.gpg)
           EOF
 
       - name: Publish the repository to GitHub Pages

@@ -462,7 +462,7 @@ mod tests {
         assert!(!carries_launch_id(&lnk("--launch 12"), 1));
         assert!(!carries_launch_id(&lnk("--launch 1"), 12));
         assert!(carries_launch_id(
-            &lnk("run org.gameyfin.Gameyfin --launch 7"),
+            &lnk("run org.gameyfin.gameyfin-app --launch 7"),
             7
         ));
         // Some shells write the arguments a second time as plain bytes.
@@ -489,19 +489,19 @@ mod tests {
         // shortcut has to read `flatpak run <app-id> --launch 12`.
         let mut target = a_target();
         target.launcher = PathBuf::from("/usr/bin/flatpak");
-        target.launcher_args = vec!["run".into(), "org.gameyfin.Gameyfin".into()];
+        target.launcher_args = vec!["run".into(), "org.gameyfin.gameyfin-app".into()];
 
         let entry = desktop_entry(&target);
         assert!(
             entry.contains(
-                "Exec=\"/usr/bin/flatpak\" \"run\" \"org.gameyfin.Gameyfin\" --launch 12"
+                "Exec=\"/usr/bin/flatpak\" \"run\" \"org.gameyfin.gameyfin-app\" --launch 12"
             ),
             "got {entry}"
         );
 
         let script = windows_shortcut_script(&target, Path::new("C:\\x\\y.lnk"));
         assert!(
-            script.contains("$s.Arguments='run org.gameyfin.Gameyfin --launch 12'"),
+            script.contains("$s.Arguments='run org.gameyfin.gameyfin-app --launch 12'"),
             "got {script}"
         );
     }
