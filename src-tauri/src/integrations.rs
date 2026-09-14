@@ -388,6 +388,64 @@ pub async fn open_prefix_tool(
     Ok(())
 }
 
+/// Installs winetricks verbs into a game's prefix, the other half of most ProtonDB fixes.
+/// Waits for the run: a verb can download for minutes, and the result is worth showing.
+#[tauri::command]
+pub async fn run_winetricks(
+    state: State<'_, AppState>,
+    game_id: i64,
+    verbs: String,
+) -> CommandResult<String> {
+    let verbs = gameyfin_core::prefix::winetricks_verbs(&verbs).map_err(CommandError::msg)?;
+    let prefix = crate::ipc::layout_for(&state, game_id)?.prefix_dir(game_id);
+    if !prefix.is_dir() {
+        return Err(CommandError::msg(
+            "This game has no compatibility prefix yet. Run it once first.",
+        ));
+    }
+    let runtime = crate::proton::runtime_for_game(&state, game_id, None).await?;
+    let winetricks = match &runtime {
+        gameyfin_core::WindowsRuntime::Umu { .. } => None,
+        gameyfin_core::WindowsRuntime::HostWine => {
+            tokio::task::spawn_blocking(|| gameyfin_core::runtime::host_has_program("winetricks"))
+                .await
+                .unwrap_or(false)
+                .then(|| PathBuf::from("winetricks"))
+        }
+        _ => gameyfin_core::runtime::find_program("winetricks"),
+    };
+    let Some(mut command) =
+        gameyfin_core::prefix::winetricks_command(&runtime, &prefix, &verbs, winetricks.as_deref())
+    else {
+        return Err(CommandError::msg(
+            "Winetricks is not installed. Install it, or run this game on Proton.",
+        ));
+    };
+    command
+        .env
+        .extend(crate::proton::container_mounts(&state, &runtime));
+
+    tracing::info!(
+        game_id,
+        ?verbs,
+        runtime = runtime.kind(),
+        "running winetricks"
+    );
+    let run = gameyfin_core::run_capturing(&command)
+        .await
+        .context("could not start winetricks")?;
+    if run.success() {
+        tracing::info!(game_id, "winetricks finished");
+        Ok(format!("Installed {}.", verbs.join(" ")))
+    } else {
+        tracing::warn!(game_id, status = ?run.status, output = %run.diagnostic_tail(20), "winetricks failed");
+        Err(CommandError::msg(format!(
+            "Winetricks failed. {}",
+            run.diagnostic_tail(4)
+        )))
+    }
+}
+
 /// What the app knows about per-title Proton fixes.
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]

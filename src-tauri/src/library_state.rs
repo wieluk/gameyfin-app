@@ -39,6 +39,7 @@ pub struct GameRecord {
     pub launch_environment: String,
     pub runtime_override: Option<String>,
     pub proton_build: Option<String>,
+    pub launch_toggles: gameyfin_core::environment::LaunchToggles,
     /// A setup program Windows refused without elevation, so the retry runs that exact file.
     pub elevation_program: Option<PathBuf>,
     pub saves: gameyfin_core::LocalSaveState,

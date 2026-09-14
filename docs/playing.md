@@ -31,8 +31,12 @@ Every Windows game gets its own prefix, a small Windows environment in
 where Gameyfin expects.
 
 In **Settings, Compatibility, Compatibility prefixes** each prefix has **Wine settings**,
-**Registry**, **Browse C:** and **Delete**. Compatibility settings exist on Linux only. A deleted prefix is rebuilt on next launch, but anything
+**Registry**, **Browse C:**, **Winetricks** and **Delete**. Compatibility settings exist on Linux only. A deleted prefix is rebuilt on next launch, but anything
 the game kept inside it is gone, including saves that were not backed up.
+
+**Winetricks** installs components such as `vcrun2022` or `d3dcompiler_47` into that
+prefix, which is what many ProtonDB fixes ask for. Type the verbs and press **Run**. On
+Proton nothing else is needed. A game on Wine needs winetricks installed on this PC.
 
 ### Per-game options
 
@@ -43,6 +47,9 @@ Open a game's options in **Installed**:
   ProtonDB. `WINEDLLOVERRIDES=dxgi=builtin` turns DXVK off for this game only.
 - **Runtime**: force Proton or Wine for this game. Changing it rebuilds the prefix.
 - **Proton build**: pick a specific build, including ones Steam installed.
+- **Wayland** and **WOW64**, for games on Proton. Wayland draws the game without XWayland.
+  WOW64 runs 32-bit games without 32-bit system libraries. Both need Proton 10 or
+  GE-Proton. A variable typed in the box above wins over either switch.
 
 These fields are not a shell. Quoting works, nothing else is interpreted.
 

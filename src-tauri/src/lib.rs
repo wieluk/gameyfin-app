@@ -320,6 +320,7 @@ pub fn run() {
             integrations::list_prefixes,
             integrations::delete_prefix,
             integrations::open_prefix_tool,
+            integrations::run_winetricks,
             integrations::umu_status,
             integrations::refresh_umu_database,
             saves::save_state,

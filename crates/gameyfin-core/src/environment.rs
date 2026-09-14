@@ -3,6 +3,34 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
+/// Proton features a game can opt into, offered as switches rather than typed variables.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct LaunchToggles {
+    /// Wine's Wayland driver instead of XWayland.
+    pub wayland: bool,
+    /// 32-bit games through WOW64, so no 32-bit system libraries are needed.
+    pub wow64: bool,
+}
+
+/// The variables the switches set. Plain Wine reads neither, so only Proton gets them.
+pub fn for_toggles(toggles: &LaunchToggles, proton: bool) -> Vec<(String, String)> {
+    if !proton {
+        return Vec::new();
+    }
+    [
+        (toggles.wayland, "PROTON_ENABLE_WAYLAND"),
+        (toggles.wow64, "PROTON_USE_WOW64"),
+    ]
+    .into_iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, key)| (key.to_string(), "1".to_string()))
+    .collect()
+}
+
 /// Read a typed block into variables, ignoring blank lines and `#` comments.
 pub fn parse(input: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
@@ -36,6 +64,39 @@ pub fn format(vars: &BTreeMap<String, String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switches_set_their_proton_variable_only_when_on() {
+        let both = LaunchToggles {
+            wayland: true,
+            wow64: true,
+        };
+        assert_eq!(
+            for_toggles(&both, true),
+            vec![
+                ("PROTON_ENABLE_WAYLAND".to_string(), "1".to_string()),
+                ("PROTON_USE_WOW64".to_string(), "1".to_string()),
+            ]
+        );
+        let wow64 = LaunchToggles {
+            wow64: true,
+            ..LaunchToggles::default()
+        };
+        assert_eq!(
+            for_toggles(&wow64, true),
+            vec![("PROTON_USE_WOW64".to_string(), "1".to_string())]
+        );
+        assert!(for_toggles(&LaunchToggles::default(), true).is_empty());
+    }
+
+    #[test]
+    fn plain_wine_gets_no_proton_variables() {
+        let both = LaunchToggles {
+            wayland: true,
+            wow64: true,
+        };
+        assert!(for_toggles(&both, false).is_empty());
+    }
 
     fn parsed(input: &str) -> Vec<(String, String)> {
         parse(input).into_iter().collect()

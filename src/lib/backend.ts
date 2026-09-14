@@ -174,6 +174,9 @@ export const backend = {
   deletePrefix: (gameId: number) => invoke<void>("delete_prefix", { gameId }),
   openPrefixTool: (gameId: number, tool: PrefixTool) =>
     invoke<void>("open_prefix_tool", { gameId, tool }),
+  /** Returns a sentence to show. Can take minutes while winetricks downloads. */
+  runWinetricks: (gameId: number, verbs: string) =>
+    invoke<string>("run_winetricks", { gameId, verbs }),
   umuStatus: (gameId?: number) => invoke<UmuStatus>("umu_status", { gameId: gameId ?? null }),
   refreshUmuDatabase: () => invoke<number>("refresh_umu_database"),
 

@@ -106,6 +106,14 @@ async fn launch(
     config
         .arguments
         .extend(gameyfin_core::arguments::split(&record.launch_arguments));
+    // Before the typed block, so a variable set by hand still wins.
+    let proton = matches!(config.runtime, gameyfin_core::Runtime::Proton { .. });
+    config
+        .environment
+        .extend(gameyfin_core::environment::for_toggles(
+            &record.launch_toggles,
+            proton,
+        ));
     // DLL overrides merge, so `dxgi=builtin` does not also bring back the Mono and Gecko prompts.
     for (key, value) in gameyfin_core::environment::parse(&record.launch_environment) {
         let value = if key == "WINEDLLOVERRIDES" {

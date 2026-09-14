@@ -573,6 +573,11 @@ export function CompatibilitySection() {
 export function PrefixSection() {
   const action = useAction();
   const [confirming, setConfirming] = useState<PrefixEntry | null>(null);
+  const [winetricks, setWinetricks] = useState<{
+    gameId: number;
+    verbs: string;
+    result: string | null;
+  } | null>(null);
   const prefixes = useQuery({ queryKey: keys.prefixes, queryFn: () => backend.listPrefixes() });
 
   function run(work: () => Promise<void>) {
@@ -580,6 +585,17 @@ export function PrefixSection() {
       await work();
       await prefixes.refetch();
     });
+  }
+
+  async function runWinetricks() {
+    if (!winetricks || action.busy) return;
+    const { gameId, verbs } = winetricks;
+    const result = await action.run(() => backend.runWinetricks(gameId, verbs));
+    if (result !== undefined) {
+      // The box may have moved to another prefix while this one ran.
+      setWinetricks((current) => (current?.gameId === gameId ? { ...current, result } : current));
+    }
+    await prefixes.refetch();
   }
 
   const rows = prefixes.data ?? [];
@@ -623,10 +639,46 @@ export function PrefixSection() {
                 <SmallButton onClick={() => void run(() => backend.openPrefixTool(prefix.gameId, "explorer"))}>
                   Browse C:
                 </SmallButton>
+                <SmallButton
+                  onClick={() => setWinetricks({ gameId: prefix.gameId, verbs: "", result: null })}
+                >
+                  Winetricks
+                </SmallButton>
                 <SmallButton danger onClick={() => setConfirming(prefix)}>
                   Delete
                 </SmallButton>
               </div>
+              {winetricks?.gameId === prefix.gameId && (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <div className="flex gap-1.5">
+                    <input
+                      aria-label="Winetricks verbs"
+                      value={winetricks.verbs}
+                      onChange={(e) =>
+                        setWinetricks({ ...winetricks, verbs: e.target.value, result: null })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void runWinetricks();
+                      }}
+                      spellCheck={false}
+                      placeholder="vcrun2022 d3dcompiler_47"
+                      className={`${INPUT} font-mono`}
+                    />
+                    <SmallButton
+                      disabled={action.busy || !winetricks.verbs.trim()}
+                      onClick={() => void runWinetricks()}
+                    >
+                      {action.busy ? "Running…" : "Run"}
+                    </SmallButton>
+                  </div>
+                  <p className={HINT}>
+                    For example vcrun2022 d3dcompiler_47. A download can take a few minutes.
+                  </p>
+                  {winetricks.result && (
+                    <p className="text-[11px] text-foreground/70">{winetricks.result}</p>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>

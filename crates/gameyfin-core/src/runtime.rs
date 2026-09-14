@@ -167,8 +167,15 @@ pub fn in_flatpak() -> bool {
 
 /// Whether the host has Wine, asked from inside the sandbox.
 fn host_has_wine() -> bool {
+    host_has_program("wine")
+}
+
+/// Whether the host has a program on its `PATH`, asked from inside the sandbox. The name goes
+/// into a shell, hence a fixed name and never user input.
+pub fn host_has_program(name: &'static str) -> bool {
     std::process::Command::new(FLATPAK_SPAWN)
-        .args(["--host", "sh", "-c", "command -v wine"])
+        .args(["--host", "sh", "-c"])
+        .arg(format!("command -v {name}"))
         .output()
         .map(|out| out.status.success() && !out.stdout.is_empty())
         .unwrap_or(false)

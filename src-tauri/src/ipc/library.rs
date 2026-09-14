@@ -570,6 +570,7 @@ pub struct GameOptionsPatch {
     pub runtime_override: Option<String>,
     /// Empty clears the pin.
     pub proton_build: Option<String>,
+    pub launch_toggles: Option<gameyfin_core::environment::LaunchToggles>,
 }
 
 #[tauri::command]
@@ -598,6 +599,9 @@ pub async fn set_game_options(
             if let Some(v) = options.proton_build {
                 r.proton_build = chosen(v);
             }
+            if let Some(v) = options.launch_toggles {
+                r.launch_toggles = v;
+            }
         })
         .await;
     notify(&app);
@@ -616,6 +620,7 @@ pub struct GameOptions {
     pub available_runtimes: Vec<RuntimeChoice>,
     pub proton_build: Option<String>,
     pub proton_builds: Vec<gameyfin_core::proton::InstalledProton>,
+    pub launch_toggles: gameyfin_core::environment::LaunchToggles,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -659,6 +664,7 @@ pub async fn game_options(state: State<'_, AppState>, game_id: i64) -> CommandRe
         available_runtimes,
         proton_build: record.proton_build,
         proton_builds,
+        launch_toggles: record.launch_toggles,
     })
 }
 

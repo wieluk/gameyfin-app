@@ -6,6 +6,9 @@ import { messageOf } from "@/lib/errors";
 import { keys } from "@/lib/queries";
 import { useFlash } from "@/lib/useFlash";
 import type { GameOptionsPatch } from "@/bindings/GameOptionsPatch";
+import type { LaunchToggles } from "@/bindings/LaunchToggles";
+
+const NO_TOGGLES: LaunchToggles = { wayland: false, wow64: false };
 
 /**
  * Per-game launch and setup options, as free text pasted from a wiki or ProtonDB. Not a shell:
@@ -36,6 +39,7 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
   const [environment, setEnvironment] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<string | null>(null);
   const [protonBuild, setProtonBuild] = useState<string | null>(null);
+  const [toggles, setToggles] = useState<LaunchToggles | null>(null);
   const [saved, flashSaved] = useFlash();
   const [error, setError] = useState<string | null>(null);
 
@@ -45,19 +49,24 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
     setEnvironment(null);
     setRuntime(null);
     setProtonBuild(null);
+    setToggles(null);
   }, [gameId, data]);
 
   const currentLaunch = launch ?? data?.launchArguments ?? "";
   const currentEnvironment = environment ?? data?.launchEnvironment ?? "";
   const currentRuntime = runtime ?? data?.runtimeOverride ?? "auto";
   const currentProtonBuild = protonBuild ?? data?.protonBuild ?? "";
+  const storedToggles = data?.launchToggles ?? NO_TOGGLES;
+  const currentToggles = toggles ?? storedToggles;
   // A build only matters when the game runs through Proton, automatically or by choice.
   const usesProton = currentRuntime === "auto" || currentRuntime === "umu";
   const dirty =
     (launch !== null && launch !== (data?.launchArguments ?? "")) ||
     (environment !== null && environment !== (data?.launchEnvironment ?? "")) ||
     (runtime !== null && runtime !== (data?.runtimeOverride ?? "auto")) ||
-    (protonBuild !== null && protonBuild !== (data?.protonBuild ?? ""));
+    (protonBuild !== null && protonBuild !== (data?.protonBuild ?? "")) ||
+    (toggles !== null &&
+      (toggles.wayland !== storedToggles.wayland || toggles.wow64 !== storedToggles.wow64));
 
   async function commit() {
     setError(null);
@@ -68,6 +77,7 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
         // An empty value clears the override, so "auto" and "no pin" send exactly that.
         runtimeOverride: currentRuntime,
         protonBuild: currentProtonBuild,
+        launchToggles: currentToggles,
       });
       flashSaved();
     } catch (e) {
@@ -172,6 +182,23 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
         </div>
       )}
 
+      {usesProton && (
+        <div className="flex flex-col gap-1.5">
+          <ProtonSwitch
+            label="Wayland"
+            hint="Draws the game without XWayland. Needs Proton 10 or GE-Proton."
+            checked={currentToggles.wayland}
+            onChange={(wayland) => setToggles({ ...currentToggles, wayland })}
+          />
+          <ProtonSwitch
+            label="WOW64"
+            hint="Runs 32-bit games without 32-bit system libraries. Needs Proton 10 or GE-Proton."
+            checked={currentToggles.wow64}
+            onChange={(wow64) => setToggles({ ...currentToggles, wow64 })}
+          />
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="text-[11px] leading-relaxed text-danger">
           {error}
@@ -190,6 +217,34 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** A checkbox with its hint, sized to match the option boxes around it. */
+function ProtonSwitch({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2 text-[11px] text-foreground/80">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-primary"
+      />
+      <span>
+        {label}
+        <span className="block leading-relaxed text-foreground/45">{hint}</span>
+      </span>
+    </label>
   );
 }
 
