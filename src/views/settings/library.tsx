@@ -136,8 +136,14 @@ export function DownloadSection() {
   return (
     <Section title="Downloads">
       <SwitchField
+        label="Extract automatically"
+        hint="Unpacks archives, while they download where the format allows. Off keeps the archive in Downloads until you press Install."
+        checked={settings.data?.autoExtract ?? true}
+        onChange={(next) => save({ autoExtract: next })}
+      />
+      <SwitchField
         label="Install automatically when a download finishes"
-        hint="Unpacks the download and moves the game into your installations folder without asking. Downloads that contain a setup program still stop and wait for you."
+        hint="Moves the game into your installations folder without asking, extracting it first even with the switch above off. A setup program still waits for you."
         checked={settings.data?.autoInstall ?? false}
         onChange={(next) => save({ autoInstall: next })}
       />

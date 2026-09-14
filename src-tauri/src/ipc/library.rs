@@ -120,7 +120,10 @@ pub async fn start_download(
         &game.title,
         &crate::downloads::provisional_filename(&game.title),
     );
-    let unpack_into = destination.parent().map(|dir| dir.join(EXTRACT_DIR));
+    let unpack_into = destination
+        .parent()
+        .filter(|_| settings.auto_extract || settings.auto_install)
+        .map(|dir| dir.join(EXTRACT_DIR));
     let expected_bytes = game.metadata.file_size;
     let cookie_header = gameyfin_api::cookie_header(&settings.cookies);
     let rate_limit = state.download_limit();
@@ -200,10 +203,11 @@ pub async fn start_download(
                     .await;
                 library.clear_activity(game_id);
                 notify(&app);
-                // An archive is unpacked straight away; a program waits for Install.
-                let next = if app.state::<AppState>().settings().auto_install {
+                // A program always waits for Install; an archive waits only with auto extract off.
+                let current = app.state::<AppState>().settings();
+                let next = if current.auto_install {
                     super::install::auto_install_download(&app, game_id, &game.title).await
-                } else if is_archive(&outcome.path).await {
+                } else if current.auto_extract && is_archive(&outcome.path).await {
                     extract_download(&app, game_id, None).await
                 } else {
                     crate::notify::download_finished(&app, &game.title).await;

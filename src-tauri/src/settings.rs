@@ -20,6 +20,7 @@ pub struct SettingsPatch {
     pub start_minimized: Option<bool>,
     pub autostart: Option<bool>,
     pub auto_install: Option<bool>,
+    pub auto_extract: Option<bool>,
     pub gamepad_enabled: Option<bool>,
     pub gamepad_deadzone: Option<f64>,
     pub couch_mode_auto: Option<bool>,
@@ -73,6 +74,7 @@ impl SettingsPatch {
             start_minimized,
             autostart,
             auto_install,
+            auto_extract,
             gamepad_enabled,
             gamepad_deadzone,
             couch_mode_auto,
@@ -145,6 +147,8 @@ pub struct Settings {
     pub close_to_tray: bool,
     pub start_minimized: bool,
     pub auto_install: bool,
+    /// Unpacks archives, while downloading where the format allows. Auto install implies it.
+    pub auto_extract: bool,
     pub delete_archive_after_extract: bool,
     pub delete_download_after_install: bool,
     pub umu_fixes: bool,
@@ -196,6 +200,7 @@ impl Default for Settings {
             close_to_tray: false,
             start_minimized: false,
             auto_install: false,
+            auto_extract: true,
             delete_archive_after_extract: true,
             delete_download_after_install: false,
             umu_fixes: true,
@@ -511,6 +516,7 @@ mod tests {
         ("startMinimized", "true"),
         ("autostart", "true"),
         ("autoInstall", "true"),
+        ("autoExtract", "false"),
         ("gamepadEnabled", "false"),
         ("gamepadDeadzone", "0.4"),
         ("couchModeAuto", "false"),
@@ -597,7 +603,11 @@ mod tests {
     #[test]
     fn defaults_are_what_we_intend_and_match_deserialization() {
         let settings = Settings::default();
-        assert!(!settings.auto_install && settings.delete_archive_after_extract);
+        assert!(
+            !settings.auto_install
+                && settings.auto_extract
+                && settings.delete_archive_after_extract
+        );
         assert_eq!(settings.theme, Theme::Dark);
         assert_eq!(settings.installer_memory_limit, InstallerMemoryLimit::Auto);
         assert_eq!(serde_json::from_str::<Settings>("{}").unwrap(), settings);

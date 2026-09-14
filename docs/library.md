@@ -29,8 +29,10 @@ see the free space on each.
 
 **Settings, Library, Downloads**:
 
-- **Install automatically when a download finishes**. Downloads with a setup program still
-  wait for you.
+- **Extract automatically** (on by default). Off keeps the archive in Downloads until you
+  press **Install**.
+- **Install automatically when a download finishes**. Extracts first even with the switch
+  above off. Downloads with a setup program still wait for you.
 - **Delete the archive after extracting** (on by default).
 - **Delete the download after installing**.
 

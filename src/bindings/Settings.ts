@@ -28,7 +28,11 @@ downloadProvider: string | null, notifyTransfers: boolean,
 /**
  * Separate so failures stay audible with the routine chatter off.
  */
-notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, autoInstall: boolean, deleteArchiveAfterExtract: boolean, deleteDownloadAfterInstall: boolean, umuFixes: boolean, umuAutoUpdate: boolean, gamepadEnabled: boolean, 
+notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, autoInstall: boolean, 
+/**
+ * Unpacks archives, while downloading where the format allows. Auto install implies it.
+ */
+autoExtract: boolean, deleteArchiveAfterExtract: boolean, deleteDownloadAfterInstall: boolean, umuFixes: boolean, umuAutoUpdate: boolean, gamepadEnabled: boolean, 
 /**
  * 0.0 to 1.0; a worn stick rests off-centre.
  */
