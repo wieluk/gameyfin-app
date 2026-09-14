@@ -38,7 +38,7 @@ export function Sidebar({
 
   return (
     <nav
-      className={`flex h-full shrink-0 flex-col gap-1 border-r border-default-200/60 bg-content1 p-3 transition-[width] duration-150 ${
+      className={`flex h-full shrink-0 flex-col gap-1 border-r-2 border-default-200 bg-content1 p-3 dark:border-default-200/60 transition-[width] duration-150 ${
         collapsed ? "w-[60px]" : "w-52"
       }`}
     >

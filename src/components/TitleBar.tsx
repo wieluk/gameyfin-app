@@ -12,7 +12,7 @@ export function TitleBar() {
     <header
       data-tauri-drag-region
       onDoubleClick={() => void windowAction("toggleMaximize")}
-      className="flex h-9 shrink-0 select-none items-center justify-between border-b border-default-200/60 bg-content1 px-3"
+      className="flex h-9 shrink-0 select-none items-center justify-between border-b-2 border-default-200 bg-content1 px-3 dark:border-default-200/60"
     >
       {/* Children of a drag region are not draggable, so repeat the attribute. */}
       <div data-tauri-drag-region className="pointer-events-none flex items-center gap-2">

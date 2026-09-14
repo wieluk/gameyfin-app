@@ -16,7 +16,7 @@ export function ViewHeader({
 }) {
   return (
     <>
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-default-200/60 px-6 py-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b-2 border-default-200 px-6 py-3 dark:border-default-200/60">
         {title && (
           <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground/45">
             {title}

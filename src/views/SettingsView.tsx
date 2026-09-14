@@ -58,7 +58,7 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
       <div
         role="tablist"
         aria-label="Settings"
-        className="flex shrink-0 items-center gap-1 border-b border-default-200/60 px-6"
+        className="flex shrink-0 items-center gap-1 border-b-2 border-default-200 px-6 dark:border-default-200/60"
       >
         {tabs.map((item) => (
           <button
@@ -67,7 +67,7 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
             role="tab"
             aria-selected={tab === item.id}
             onClick={() => select(item.id)}
-            className={`-mb-px border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
+            className={`-mb-0.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
               tab === item.id
                 ? "border-primary text-primary"
                 : "border-transparent text-foreground/50 hover:text-foreground"

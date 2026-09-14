@@ -248,7 +248,7 @@ export function LibraryView() {
       </ViewHeader>
 
       {advanced && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-default-200/60 bg-content1/40 px-6 py-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b-2 border-default-200 bg-content1/40 px-6 py-3 dark:border-default-200/60">
           {FACET_KEYS.map((key) => (
             <Facet
               key={key}
