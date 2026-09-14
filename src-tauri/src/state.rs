@@ -15,7 +15,7 @@ use crate::settings::Settings;
 
 pub const CATALOG_FILE: &str = "catalog.json";
 const SETTINGS_FILE: &str = "settings.json";
-const USER_AGENT: &str = concat!("Gameyfin-Desktop/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("Gameyfin-App/", env!("CARGO_PKG_VERSION"));
 
 /// The last catalogue the server returned, so the library renders offline.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

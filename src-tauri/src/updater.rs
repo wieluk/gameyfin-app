@@ -174,7 +174,7 @@ pub async fn check(state: &AppState) -> UpdateStatus {
 
 /// `flatpak update` cannot run inside the sandbox, so it is handed to the host.
 async fn flatpak_update() -> CommandResult<String> {
-    let app_id = std::env::var("FLATPAK_ID").unwrap_or_else(|_| "org.gameyfin.Gameyfin".into());
+    let app_id = std::env::var("FLATPAK_ID").unwrap_or_else(|_| "org.gameyfin.gameyfin-app".into());
 
     let output = tokio::process::Command::new("flatpak-spawn")
         .args(["--host", "flatpak", "update", "-y", &app_id])

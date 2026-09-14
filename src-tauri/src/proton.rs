@@ -465,15 +465,15 @@ mod tests {
     fn the_installation_is_read_from_the_sandbox_description() {
         // Which one it is decides the flag an install needs: "--user" against a system
         // installation finds no flathub and fails with "no remote refs found".
-        let user = "[Instance]\napp-path=/home/ana/.local/share/flatpak/app/org.gameyfin.Gameyfin/x86_64/stable/abc/files\n";
+        let user = "[Instance]\napp-path=/home/ana/.local/share/flatpak/app/org.gameyfin.gameyfin-app/x86_64/stable/abc/files\n";
         assert_eq!(Some(Scope::User), scope_of(user));
 
-        let system = "[Instance]\napp-path=/var/lib/flatpak/app/org.gameyfin.Gameyfin/x86_64/stable/abc/files\n";
+        let system = "[Instance]\napp-path=/var/lib/flatpak/app/org.gameyfin.gameyfin-app/x86_64/stable/abc/files\n";
         assert_eq!(Some(Scope::System), scope_of(system));
 
         assert_eq!(
             None,
-            scope_of("[Application]\nname=org.gameyfin.Gameyfin\n")
+            scope_of("[Application]\nname=org.gameyfin.gameyfin-app\n")
         );
     }
 
@@ -481,7 +481,7 @@ mod tests {
     fn the_runtime_is_read_from_the_sandbox_description() {
         // The extension extends the runtime, so the runtime's installation is the one to
         // put it in.
-        let info = "[Application]\nname=org.gameyfin.Gameyfin\nruntime=runtime/org.gnome.Platform/x86_64/50\n";
+        let info = "[Application]\nname=org.gameyfin.gameyfin-app\nruntime=runtime/org.gnome.Platform/x86_64/50\n";
         assert_eq!(
             Some("runtime/org.gnome.Platform/x86_64/50".to_string()),
             runtime_of(info)
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn the_i386_extension_matches_the_flatpak_manifest() {
         // The manifest mounts the extension and the command installs it, so the versions must agree.
-        let manifest = include_str!("../../flatpak/org.gameyfin.Gameyfin.yml");
+        let manifest = include_str!("../../flatpak/org.gameyfin.gameyfin-app.yml");
         let (name, version) = I386_EXTENSION
             .split_once("//")
             .expect("the ref carries its version");

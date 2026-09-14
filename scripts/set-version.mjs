@@ -43,7 +43,7 @@ edit("Cargo.toml", /^version = "\d+\.\d+\.\d+[^"]*"$/m, `version = "${version}"`
 edit("package.json", /^  "version": "\d+\.\d+\.\d+[^"]*",$/m, `  "version": "${version}",`);
 
 edit(
-  "flatpak/org.gameyfin.Gameyfin.metainfo.xml",
+  "flatpak/org.gameyfin.gameyfin-app.metainfo.xml",
   /<release version="\d+\.\d+\.\d+[^"]*" date="\d{4}-\d{2}-\d{2}">/,
   `<release version="${version}" date="${today}">`,
 );

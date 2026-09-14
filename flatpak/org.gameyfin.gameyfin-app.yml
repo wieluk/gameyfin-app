@@ -1,5 +1,5 @@
 # Built from the prebuilt `.deb` for self-distribution, not Flathub, which needs a source build.
-app-id: org.gameyfin.Gameyfin
+app-id: org.gameyfin.gameyfin-app
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
@@ -189,10 +189,10 @@ modules:
         # No wrapping directory in the tarball.
         strip-components: 0
 
-  - name: gameyfin
+  - name: gameyfin-app
     buildsystem: simple
     build-commands:
-      - ar x gameyfin.deb
+      - ar x gameyfin-app.deb
       - tar -xf data.tar.gz
       - install -Dm755 usr/bin/gameyfin-app /app/bin/gameyfin-app
 
@@ -207,7 +207,7 @@ modules:
         if [ -f usr/bin/ludusavi ]; then
           install -Dm755 usr/bin/ludusavi /app/bin/ludusavi
           install -Dm644 usr/bin/LUDUSAVI-LICENSE.txt \
-            /app/share/licenses/org.gameyfin.Gameyfin/LUDUSAVI-LICENSE.txt 2>/dev/null || true
+            /app/share/licenses/org.gameyfin.gameyfin-app/LUDUSAVI-LICENSE.txt 2>/dev/null || true
         fi
 
       # umu-run, the Proton launcher, a Linux-only sidecar. A Python zipapp, run by the
@@ -219,10 +219,10 @@ modules:
         fi
 
       # Desktop file, icons and metainfo must be named after the app id.
-      - install -Dm644 usr/share/applications/Gameyfin.desktop
-        /app/share/applications/org.gameyfin.Gameyfin.desktop
-      - desktop-file-edit --set-icon=org.gameyfin.Gameyfin
-        /app/share/applications/org.gameyfin.Gameyfin.desktop
+      - install -Dm644 usr/share/applications/gameyfin-app.desktop
+        /app/share/applications/org.gameyfin.gameyfin-app.desktop
+      - desktop-file-edit --set-icon=org.gameyfin.gameyfin-app
+        /app/share/applications/org.gameyfin.gameyfin-app.desktop
       - |
         set -e
         for src in usr/share/icons/hicolor/*/apps/gameyfin-app.png; do
@@ -231,12 +231,12 @@ modules:
           # Tauri emits "256x256@2", but icon lookup only finds hicolor's "@2x".
           case "$size" in *@2) size="${size}x";; esac
           install -Dm644 "$src" \
-            "/app/share/icons/hicolor/${size}/apps/org.gameyfin.Gameyfin.png"
+            "/app/share/icons/hicolor/${size}/apps/org.gameyfin.gameyfin-app.png"
         done
-      - install -Dm644 org.gameyfin.Gameyfin.metainfo.xml
-        /app/share/metainfo/org.gameyfin.Gameyfin.metainfo.xml
+      - install -Dm644 org.gameyfin.gameyfin-app.metainfo.xml
+        /app/share/metainfo/org.gameyfin.gameyfin-app.metainfo.xml
     sources:
       - type: file
-        path: ../build/gameyfin.deb
+        path: ../build/gameyfin-app.deb
       - type: file
-        path: org.gameyfin.Gameyfin.metainfo.xml
+        path: org.gameyfin.gameyfin-app.metainfo.xml

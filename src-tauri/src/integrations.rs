@@ -441,13 +441,13 @@ mod tests {
         );
         assert_eq!(
             launcher_for(
-                Some("org.gameyfin.Gameyfin".into()),
+                Some("org.gameyfin.gameyfin-app".into()),
                 None,
                 "/app/bin/gameyfin-app".into()
             ),
             (
                 PathBuf::from("/usr/bin/flatpak"),
-                vec!["run".to_string(), "org.gameyfin.Gameyfin".to_string()]
+                vec!["run".to_string(), "org.gameyfin.gameyfin-app".to_string()]
             )
         );
         // A deb or rpm install, or an empty variable left behind by a launcher.

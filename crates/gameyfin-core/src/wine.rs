@@ -185,7 +185,7 @@ pub async fn available_versions(
 ) -> CoreResult<Vec<String>> {
     let feed: Vec<serde_json::Value> = http
         .get(format!("{RELEASES_LIST_API}?per_page={FEED_PAGE}"))
-        .header(reqwest::header::USER_AGENT, "Gameyfin-Desktop")
+        .header(reqwest::header::USER_AGENT, "Gameyfin-App")
         .send()
         .await?
         .error_for_status()?
@@ -237,7 +237,7 @@ pub async fn release_for(
     // GitHub answers 403 without a user agent, which reads as a permissions problem.
     let response: serde_json::Value = http
         .get(endpoint)
-        .header(reqwest::header::USER_AGENT, "Gameyfin-Desktop")
+        .header(reqwest::header::USER_AGENT, "Gameyfin-App")
         .send()
         .await?
         .error_for_status()?
@@ -291,7 +291,7 @@ pub async fn release_for(
     if let Some(url) = sums_url {
         let fetched = http
             .get(url)
-            .header(reqwest::header::USER_AGENT, "Gameyfin-Desktop")
+            .header(reqwest::header::USER_AGENT, "Gameyfin-App")
             .send()
             .await
             .and_then(reqwest::Response::error_for_status);
