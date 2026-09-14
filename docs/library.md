@@ -19,8 +19,8 @@ Press **Download** on a game. With more than one games folder, you choose where 
 see the free space on each.
 
 - Zip and tar downloads are unpacked while they arrive, so a game needs only its own size in
-  free space. 7z and rar are unpacked as soon as the download finishes. An interrupted
-  download starts over.
+  free space. 7z, rar and other archives are unpacked as soon as the download finishes. An
+  interrupted download starts over.
 - A setup program or disc image is saved as it is and waits for **Install**.
 - **Speed limit**: set one on the Downloads page. It is off by default.
 - **Cancel** stops a download; **Delete download** removes a finished one.
@@ -58,7 +58,8 @@ Crash handlers, redistributables and uninstallers are never offered. Edit that l
 ## Installed games
 
 The **Installed** page lists what is on this PC, with the install path, the running game and
-per-game options: launch options, runtime, shortcuts and setup options. See
+per-game options: launch options, Proton settings, the compatibility prefix, shortcuts and
+setup options. See
 [Playing games](playing.md).
 
 **Uninstall** looks for the game's own uninstaller and runs it, or lets you choose one.

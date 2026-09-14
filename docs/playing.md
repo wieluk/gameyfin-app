@@ -20,8 +20,9 @@ Gameyfin runs Windows games the way Steam does. You do not need Steam installed.
 | **Wine** | Gameyfin's own fallback, downloaded when needed: for a 32-bit program on a system without 32-bit libraries, or when Proton cannot start. |
 | **Game fixes** | umu's list of per-title workarounds, matched by Steam AppID when your server knows it, by title otherwise. Updated daily. |
 
-Gameyfin downloads all of these itself, so nothing needs installing on your system. A newer
-Proton build replaces the old one.
+Gameyfin downloads all of these itself, so nothing needs installing on your system. The
+first launch shows the download's progress on the game, and later launches work offline.
+A newer Proton build replaces the old one.
 
 ### Prefixes
 
@@ -59,7 +60,8 @@ Open a game's options in **Installed**:
   without 32-bit system libraries, but can break anti-cheat. A variable typed in the box above
   wins over either switch.
 
-These fields are not a shell. Quoting works, nothing else is interpreted.
+Changes save on their own: switches at once, text when you leave the box. These fields are
+not a shell. Quoting works, nothing else is interpreted.
 
 ### Installer memory limit
 
