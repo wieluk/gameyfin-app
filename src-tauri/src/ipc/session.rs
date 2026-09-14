@@ -237,6 +237,30 @@ pub async fn update_settings(
     Ok(())
 }
 
+/// Settings back to defaults, and the live counterparts with them. Per-game options stay.
+#[tauri::command]
+pub async fn reset_settings(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    if state.settings().autostart {
+        use tauri_plugin_autostart::ManagerExt;
+        app.autolaunch()
+            .disable()
+            .context("could not change the startup setting")?;
+    }
+    let settings = state
+        .update_settings(|s| {
+            s.reset_preferences();
+            Ok(s.clone())
+        })
+        .await?;
+    crate::set_log_level(settings.log_level).map_err(CommandError::Message)?;
+    state.apply_gamepad_settings();
+    state
+        .download_limit()
+        .set(u64::from(settings.download_limit_kib) * 1024);
+    tracing::info!("settings reset to defaults");
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn suggest_library_root(
     app: AppHandle,

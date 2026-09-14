@@ -128,6 +128,8 @@ export const backend = {
   getSettings: () => invoke<PublicSettings>("get_settings"),
   /** Change some settings. Rejects a value it does not know. */
   updateSettings: (patch: SettingsPatch) => invoke<void>("update_settings", { patch }),
+  /** Preferences back to defaults; server, games folders and save location stay. */
+  resetSettings: () => invoke<void>("reset_settings"),
   suggestLibraryRoot: () => invoke<string>("suggest_library_root"),
   listLibraryRoots: () => invoke<LibraryRoot[]>("list_library_roots"),
   addLibraryRoot: (path: string) => invoke<void>("add_library_root", { path }),

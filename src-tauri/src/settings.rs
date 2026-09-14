@@ -421,6 +421,26 @@ impl Settings {
         self.username = None;
     }
 
+    /// Every preference back to its default. The server, session, games folders and save
+    /// location stay: losing those strands installed games and stored saves.
+    pub fn reset_preferences(&mut self) {
+        let kept = std::mem::take(self);
+        *self = Settings {
+            server_url: kept.server_url,
+            library_root: kept.library_root,
+            extra_library_roots: kept.extra_library_roots,
+            cookies: kept.cookies,
+            username: kept.username,
+            installation_id: kept.installation_id,
+            save_backend: kept.save_backend,
+            save_folder: kept.save_folder,
+            webdav_url: kept.webdav_url,
+            webdav_username: kept.webdav_username,
+            webdav_password: kept.webdav_password,
+            ..Settings::default()
+        };
+    }
+
     /// Which store saves go to. Version ids from one store mean nothing to another.
     pub fn save_store_identity(&self) -> (SaveBackend, Option<String>) {
         let location = match self.save_backend {
@@ -526,6 +546,33 @@ mod tests {
         assert_eq!(folder, s.save_store_identity());
         s.save_folder = Some("/elsewhere".into());
         assert_ne!(folder, s.save_store_identity());
+    }
+
+    #[test]
+    fn a_reset_restores_preferences_and_keeps_setup() {
+        let mut settings = Settings {
+            server_url: Some("https://games.example".into()),
+            library_root: Some("/games".into()),
+            username: Some("alice".into()),
+            save_backend: SaveBackend::WebDav,
+            webdav_password: Some("pw".into()),
+            theme: Theme::Light,
+            auto_install: true,
+            download_limit_kib: 512,
+            device_name: Some("Desk".into()),
+            ..Default::default()
+        };
+        settings.cookies.insert("JSESSIONID".into(), "abc".into());
+        settings.reset_preferences();
+
+        assert!(settings.has_session());
+        assert_eq!(settings.library_root.as_deref(), Some("/games"));
+        assert_eq!(settings.save_backend, SaveBackend::WebDav);
+        assert_eq!(settings.webdav_password.as_deref(), Some("pw"));
+        assert_eq!(settings.theme, Theme::Dark);
+        assert!(!settings.auto_install);
+        assert_eq!(settings.download_limit_kib, 0);
+        assert_eq!(settings.device_name, None);
     }
 
     #[test]

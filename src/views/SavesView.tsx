@@ -41,7 +41,7 @@ export function useSaveOverview(scope: SaveScope) {
 const EMPTY: Record<SaveScope, { title: string; text: string }> = {
   installed: {
     title: "No installed games yet",
-    text: "Saves are synced for games installed on this PC. Turn on Show all saves for games with stored saves, or Show all games for your whole library.",
+    text: "Saves are synced for games installed on this PC. Turn on Show remote saves for games with stored saves, or Show all games for your whole library.",
   },
   "with-saves": {
     title: "No saves yet",
@@ -169,7 +169,7 @@ export function SavesView() {
         actions={
           <>
             <Switch
-              label="Show all saves"
+              label="Show remote saves"
               // Every game includes every game with saves, so this one follows along.
               checked={showAllSaves || showAllGames}
               disabled={showAllGames}

@@ -266,6 +266,7 @@ pub fn run() {
             ipc::session::quit_app,
             ipc::session::get_settings,
             ipc::session::update_settings,
+            ipc::session::reset_settings,
             ipc::session::suggest_library_root,
             ipc::session::config_directory,
             ipc::session::log_directory,

@@ -1479,8 +1479,107 @@ pub struct SaveLocations {
     pub prefix_drive_c: Option<String>,
     pub install_dir: Option<String>,
     pub home: Option<String>,
+    /// Whether this game writes saves inside its prefix, so browsing should start there.
+    pub saves_in_prefix: bool,
     /// Where the helper actually found files. Only filled when asked for: it runs a scan.
     pub detected: Vec<String>,
+    /// Folders named like the game in the usual save places. Filled with `detected`.
+    pub suggested: Vec<String>,
+}
+
+/// Where games keep saves by convention, with how deep the game's own folder can sit.
+fn save_roots(context: &GameContext) -> Vec<(PathBuf, usize)> {
+    let windows_home = if context.saves_in_prefix() {
+        gameyfin_core::prefix::prefix_home(&context.prefix_dir)
+    } else if cfg!(windows) {
+        home()
+    } else {
+        None
+    };
+    if let Some(profile) = windows_home {
+        // `Documents/My Games/Studio/Game` is the deepest common layout.
+        return [
+            ("Documents", 3),
+            ("Saved Games", 2),
+            ("AppData/Roaming", 2),
+            ("AppData/Local", 2),
+            ("AppData/LocalLow", 2),
+        ]
+        .into_iter()
+        .map(|(sub, depth)| (profile.join(sub), depth))
+        .collect();
+    }
+    home()
+        .map(|home| {
+            vec![
+                (home.join(".local/share"), 2),
+                (home.join(".config"), 2),
+                (home, 1),
+            ]
+        })
+        .unwrap_or_default()
+}
+
+/// Containers whose names say nothing about the game, but may hide it one level down.
+const GENERIC_FOLDERS: &[&str] = &[
+    "mygames",
+    "microsoft",
+    "temp",
+    "packages",
+    "programs",
+    "cache",
+    "crashdumps",
+    "unity",
+    "google",
+    "nvidia",
+];
+
+/// Whether a folder name is close enough to the title to offer, e.g. "Witcher 3" for
+/// "The Witcher 3: Wild Hunt". Both sides already [`comparable`].
+fn named_like(title: &str, folder: &str) -> bool {
+    const SHORTEST: usize = 5;
+    if GENERIC_FOLDERS.contains(&folder) {
+        return false;
+    }
+    folder == title
+        || (folder.len() >= SHORTEST && title.contains(folder))
+        || (title.len() >= SHORTEST && folder.contains(title))
+}
+
+/// Folders under `roots` named like `title`, shallowest first. Bounded, since AppData can hold
+/// thousands of folders.
+fn folders_named_like(title: &str, roots: &[(PathBuf, usize)]) -> Vec<String> {
+    const MOST_VISITED: usize = 5000;
+    const MOST_FOUND: usize = 5;
+    let wanted = comparable(title);
+    if wanted.len() < 3 {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    let mut visited = 0;
+    let mut queue: std::collections::VecDeque<(PathBuf, usize)> = roots.iter().cloned().collect();
+    while let Some((dir, depth)) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > MOST_VISITED || found.len() >= MOST_FOUND {
+                return found;
+            }
+            // Not following links: a prefix links its folders back into the host home.
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let path = entry.path();
+            if named_like(&wanted, &comparable(&entry.file_name().to_string_lossy())) {
+                found.push(path.to_string_lossy().into_owned());
+            } else if depth > 1 {
+                queue.push_back((path, depth - 1));
+            }
+        }
+    }
+    found
 }
 
 /// Only folders that exist: opening one that does not is refused, and offering to browse
@@ -1508,11 +1607,19 @@ pub async fn save_locations(
         prefix_drive_c: existing(wine_root.join("drive_c")),
         install_dir: existing(context.install_dir.clone()),
         home: home().and_then(existing),
+        saves_in_prefix: context.saves_in_prefix(),
         detected: Vec::new(),
+        suggested: Vec::new(),
     };
     if !probe {
         return Ok(locations);
     }
+
+    // Before identifying: an unknown game is the one that most needs a suggestion.
+    let (title, roots) = (context.title.clone(), save_roots(&context));
+    locations.suggested = tokio::task::spawn_blocking(move || folders_named_like(&title, &roots))
+        .await
+        .unwrap_or_default();
 
     let Ok(title) = resolve_saves(&app, &state, &context).await?.require_title() else {
         return Ok(locations);
@@ -2262,6 +2369,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn folders_named_like_the_game_are_offered_within_their_depth() {
+        let root = scratch("named-like");
+        for dir in [
+            "Documents/My Games/The Witcher 3",
+            "Documents/A/B/C/The Witcher 3",
+            "AppData/Local/Microsoft/Windows",
+        ] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        let roots = [(root.join("Documents"), 3), (root.join("AppData/Local"), 2)];
+
+        let found = folders_named_like("The Witcher 3: Wild Hunt", &roots);
+        let expected = root.join("Documents/My Games/The Witcher 3");
+        assert_eq!(found, vec![expected.to_string_lossy().into_owned()]);
+        assert!(
+            folders_named_like("Microsoft Flight Simulator", &roots).is_empty(),
+            "a generic container is not the game"
+        );
     }
 
     #[test]

@@ -1,11 +1,13 @@
 import { PathRow, Section } from "./controls";
 import { Alert } from "@/components/Alert";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button, FormField, Select } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import type { LogLevel } from "@/bindings/LogLevel";
 import { messageOf } from "@/lib/errors";
 import { formatBytes } from "@/lib/format";
-import { useAppSettings, useSettingsUpdate } from "@/lib/queries";
+import { keys, useAppSettings, useInvalidate, useSettingsUpdate } from "@/lib/queries";
+import { useAction } from "@/lib/useAction";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -26,7 +28,21 @@ export function DiagnosticsSection() {
   const [level, setLevel] = useState<LogLevel | null>(null);
   const [levelError, setLevelError] = useState<string | null>(null);
 
+  const reset = useAction();
+  const invalidate = useInvalidate();
+  const [confirmReset, setConfirmReset] = useState(false);
+
   const current = level ?? settings.data?.logLevel ?? "info";
+
+  async function resetSettings() {
+    setConfirmReset(false);
+    await reset.run(async () => {
+      await backend.resetSettings();
+      await settings.refetch();
+      // Save sync may have been off, which changes every save row.
+      await invalidate(keys.saveOverviewAll);
+    });
+  }
 
   async function change(next: LogLevel) {
     setLevel(next);
@@ -92,6 +108,34 @@ export function DiagnosticsSection() {
         hint="One per day; attach the newest when reporting a problem."
         path={logs.data}
       />
+
+      <div className="mt-2 flex items-center justify-between gap-4 border-t border-default-200/60 pt-3">
+        <div className="min-w-0">
+          <p className="text-xs text-foreground/55">Reset settings</p>
+          <p className="text-[11px] text-foreground/45">
+            Server, games folders, save location and per-game options stay.
+          </p>
+        </div>
+        <Button
+          variant="destructive"
+          icon="reset"
+          disabled={reset.busy}
+          onClick={() => setConfirmReset(true)}
+        >
+          {reset.busy ? "Resetting…" : "Reset to defaults"}
+        </Button>
+      </div>
+      {reset.error && <Alert inline>{reset.error}</Alert>}
+
+      {confirmReset && (
+        <ConfirmDialog
+          title="Reset all settings?"
+          body="Every setting goes back to its default. Your server, sign-in, games folders, save location and per-game options stay."
+          confirmLabel="Reset"
+          onConfirm={() => void resetSettings()}
+          onCancel={() => setConfirmReset(false)}
+        />
+      )}
     </Section>
   );
 }

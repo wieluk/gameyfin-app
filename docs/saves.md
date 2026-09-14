@@ -69,7 +69,7 @@ Each game shows one line saying where it stands:
 | Nothing saved yet, or the saves are not where the game keeps them | Recognised, but no files found. | Play first, or **Set folders**. |
 | Not backed up yet | Never synced on this PC. | **Back up**. |
 
-By default only installed games are listed. **Show all saves** adds games with stored saves
+By default only installed games are listed. **Show remote saves** adds games with stored saves
 that are not installed here, and **Show all games** lists your whole library. A save can only
 be restored once its game is installed.
 
@@ -166,13 +166,15 @@ For a game the database does not know, or where it looks in the wrong place, pre
 
 - **Save folders**: where this game keeps saves on this PC. Adding one makes an unknown game
   backupable. For a known game, the folders are added to what the database already finds.
-  For a Windows game on Linux, **Browse** starts inside its prefix, and a folder picked there
-  still lands in the right place on a Windows PC.
-- **Path corrections**: only for saves travelling between PCs that keep them in different
-  places. The first box is the folder on this PC, the second is the name it is stored under,
-  which must be the same on every PC, for example `/gameyfin/home/Example`.
-- **Translate between Windows and Linux paths**: the same translation as **Try anyway**. Not
-  needed for Windows games on Proton.
+  The dialog shows where saves were already found, and offers folders named like the game
+  in the usual save places: press **Add** on one. For a Windows game on Linux, **Browse**
+  starts inside its prefix, and a folder picked there still lands in the right place on a
+  Windows PC.
+- **Different folders on other PCs**: only for a save kept in a different folder on another
+  PC. Set the folder on each PC. Leave **stored as** blank and it is named after the game, so
+  it matches on every PC.
+- **Translate Windows paths**: the same translation as **Try anyway**. Only shown for games
+  that do not run through Proton or Wine, which never need it.
 
 ## Move saves
 
