@@ -20,6 +20,8 @@ function entry(
       libraryId: id <= 6 ? 1 : 2,
       summary: null,
       release: null,
+      createdAt: new Date(Date.UTC(2025, 0, id)).toISOString(),
+      updatedAt: new Date(Date.UTC(2025, 1, 15 - id)).toISOString(),
       userRating: null,
       criticRating: null,
       platforms: ["Windows"],

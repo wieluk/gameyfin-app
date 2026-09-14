@@ -21,12 +21,12 @@ import {
   useLibraryView,
   type CardSize,
   type FacetKey,
-  type SortDirection,
   type SortKey,
 } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
 import { useEntries, useStatus } from "@/lib/queries";
 import { useRescanOnOpen } from "@/lib/rescan";
+import { SORT_KEYS, SORT_LABELS, directionLabel, sortEntries } from "@/lib/sort";
 import { PANEL_BODY } from "@/lib/ui";
 
 
@@ -225,17 +225,17 @@ export function LibraryView() {
             aria-label="Sort by"
             className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1.5 pr-2.5 text-xs font-medium text-foreground outline-none focus-visible:underline"
           >
-            <option value="title">Title</option>
-            <option value="recent">Last played</option>
-            <option value="playtime">Playtime</option>
-            <option value="size">Size</option>
+            {SORT_KEYS.map((key) => (
+              <option key={key} value={key}>
+                {SORT_LABELS[key]}
+              </option>
+            ))}
           </select>
           <button
             type="button"
             onClick={toggleDirection}
-            title={directionLabel(sort, direction)}
-            aria-label={directionLabel(sort, direction)}
-            className="flex items-center self-stretch rounded-r-full border-l border-default-200 pl-2 pr-2.5 text-foreground/70 transition-colors hover:bg-default-100"
+            title="Reverse the order"
+            className="flex items-center gap-1 self-stretch rounded-r-full border-l border-default-200 pl-2 pr-3 font-medium text-foreground/70 transition-colors hover:bg-default-100"
           >
             <Icon
               name="chevron"
@@ -243,6 +243,8 @@ export function LibraryView() {
                 direction === "asc" ? "-rotate-90" : "rotate-90"
               }`}
             />
+            {/* Spelled out, since "ascending" means something different for a title and a date. */}
+            <span className="whitespace-nowrap">{directionLabel(sort, direction)}</span>
           </button>
         </div>
       </ViewHeader>
@@ -410,44 +412,6 @@ function Facet({
       ))}
     </Select>
   );
-}
-
-function sortEntries(
-  entries: LibraryEntry[],
-  sort: SortKey,
-  direction: SortDirection,
-): LibraryEntry[] {
-  // Fixed natural order then reverse, so the direction toggle means the same for every field.
-  const compare = (a: LibraryEntry, b: LibraryEntry): number => {
-    switch (sort) {
-      case "recent":
-        return (b.lastPlayedAt ?? "").localeCompare(a.lastPlayedAt ?? "");
-      case "playtime":
-        return b.minutesPlayed - a.minutesPlayed;
-      case "size":
-        return b.game.metadata.fileSize - a.game.metadata.fileSize;
-      default:
-        return a.game.title.localeCompare(b.game.title);
-    }
-  };
-
-  const sorted = [...entries].sort(compare);
-  return direction === "asc" ? sorted : sorted.reverse();
-}
-
-/** Spell out what the current direction actually means for this field. */
-function directionLabel(sort: SortKey, direction: SortDirection): string {
-  const ascending = direction === "asc";
-  switch (sort) {
-    case "size":
-      return ascending ? "Largest first" : "Smallest first";
-    case "playtime":
-      return ascending ? "Most played first" : "Least played first";
-    case "recent":
-      return ascending ? "Most recent first" : "Oldest first";
-    default:
-      return ascending ? "A to Z" : "Z to A";
-  }
 }
 
 function SkeletonGrid() {

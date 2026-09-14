@@ -3,7 +3,15 @@ import { create } from "zustand";
 
 /** How the library is being viewed. In a persisted store so it survives tab changes and restarts. */
 
-export type SortKey = "title" | "recent" | "size" | "playtime";
+export type SortKey =
+  | "title"
+  | "added"
+  | "updated"
+  | "release"
+  | "rating"
+  | "recent"
+  | "playtime"
+  | "size";
 export type SortDirection = "asc" | "desc";
 /** How large the covers in the grid are. */
 export type CardSize = "small" | "medium" | "large";

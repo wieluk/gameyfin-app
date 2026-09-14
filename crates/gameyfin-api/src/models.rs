@@ -86,6 +86,11 @@ pub struct Game {
     /// ISO-8601 date as serialized by Hilla from a Kotlin `LocalDate`.
     #[serde(default)]
     pub release: Option<String>,
+    /// ISO-8601 instants. Absent from catalogues cached before they were read.
+    #[serde(default, deserialize_with = "optional_string")]
+    pub created_at: Option<String>,
+    #[serde(default, deserialize_with = "optional_string")]
+    pub updated_at: Option<String>,
     #[serde(default)]
     pub user_rating: Option<i32>,
     #[serde(default)]
@@ -164,6 +169,24 @@ fn urlencode(value: &str) -> String {
         .collect()
 }
 
+/// A string that is dropped, rather than failing the whole game, when it arrives in another shape.
+fn optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrOther {
+        Plain(String),
+        Other(serde::de::IgnoredAny),
+    }
+
+    Ok(match Option::<StringOrOther>::deserialize(deserializer)? {
+        Some(StringOrOther::Plain(s)) => Some(s),
+        _ => None,
+    })
+}
+
 /// A list whose items are plain strings or enum DTOs: Gameyfin sends genres and platforms
 /// as objects carrying a constant and a `displayName`, and the UI wants one shape.
 fn string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -232,6 +255,19 @@ mod tests {
         assert_eq!(game.genres, vec!["Platformer"]);
         // No displayName, so the raw constant is kept.
         assert_eq!(game.keywords, vec!["PIXEL_ART"]);
+    }
+
+    #[test]
+    fn reads_timestamps_and_ignores_other_shapes() {
+        let json = serde_json::json!({
+            "id": 1,
+            "title": "Celeste",
+            "createdAt": "2025-03-01T10:00:00Z",
+            "updatedAt": 1740823200
+        });
+        let game: Game = serde_json::from_value(json).unwrap();
+        assert_eq!(game.created_at.as_deref(), Some("2025-03-01T10:00:00Z"));
+        assert_eq!(game.updated_at, None);
     }
 
     #[test]

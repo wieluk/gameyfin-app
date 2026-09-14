@@ -9,4 +9,8 @@ export type Game = { id: number, title: string, libraryId: number, summary: stri
 /**
  * ISO-8601 date as serialized by Hilla from a Kotlin `LocalDate`.
  */
-release: string | null, userRating: number | null, criticRating: number | null, platforms: Array<string>, genres: Array<string>, themes: Array<string>, publishers: Array<string>, developers: Array<string>, features: Array<string>, keywords: Array<string>, perspectives: Array<string>, collectionIds: Array<number>, cover: Image | null, header: Image | null, images: Array<Image>, videoUrls: Array<string>, metadata: GameMetadata, };
+release: string | null, 
+/**
+ * ISO-8601 instants. Absent from catalogues cached before they were read.
+ */
+createdAt: string | null, updatedAt: string | null, userRating: number | null, criticRating: number | null, platforms: Array<string>, genres: Array<string>, themes: Array<string>, publishers: Array<string>, developers: Array<string>, features: Array<string>, keywords: Array<string>, perspectives: Array<string>, collectionIds: Array<number>, cover: Image | null, header: Image | null, images: Array<Image>, videoUrls: Array<string>, metadata: GameMetadata, };
