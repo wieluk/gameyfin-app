@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Alert } from "@/components/Alert";
+import { Button, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { Modal } from "./Modal";
@@ -76,9 +78,10 @@ export function SaveMatchDialog({
           The save helper could not tell which game <strong>{gameTitle}</strong> is. Pick it
           from the list, or search for the name it is published under.
         </p>
-        <input
+        <TextInput
           autoFocus
-          className="mt-3 w-full rounded-lg border border-default-200 bg-content2 px-3 py-1.5 text-xs"
+          icon="search"
+          className="mt-3"
           placeholder="Search by name"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -86,7 +89,7 @@ export function SaveMatchDialog({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto border-t border-default-200/60">
-        {searching && <p className="px-5 py-3 text-xs text-foreground/50">Searching...</p>}
+        {searching && <p className="px-5 py-3 text-xs text-foreground/50">Searching…</p>}
         {!searching && shown.length === 0 && (
           <p className="px-5 py-3 text-xs text-foreground/50">
             Nothing matches that name. The game may not be in the save database at all, in
@@ -106,17 +109,12 @@ export function SaveMatchDialog({
         ))}
       </div>
 
-      {error && <p className="px-5 py-2 text-xs text-danger">{error}</p>}
+      {error && <Alert className="mx-5 my-2">{error}</Alert>}
 
       <div className="flex justify-end gap-2 border-t border-default-200/60 px-5 py-3">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={busy}
-          className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100 disabled:opacity-50"
-        >
+        <Button variant="ghost" onClick={onClose} disabled={busy}>
           Cancel
-        </button>
+        </Button>
       </div>
     </Modal>
   );

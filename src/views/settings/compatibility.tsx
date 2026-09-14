@@ -1,22 +1,24 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { Alert } from "@/components/Alert";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { TransferProgress } from "@/components/TransferProgress";
+import { Button, FormField, Select, SwitchField } from "@/components/ui";
 import { isInstalled } from "@/lib/actions";
 import { backend } from "@/lib/backend";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { keys, useAppSettings, useEntries, useInvalidate, useProtonStatus } from "@/lib/queries";
 import { useAction } from "@/lib/useAction";
 import { useTauriEvent } from "@/lib/useTauriEvent";
-import { BUTTON_MAYBE_DISABLED, HINT, INPUT } from "@/lib/ui";
+import { HINT } from "@/lib/ui";
 import type { InstalledProton } from "@/bindings/InstalledProton";
 import type { InstallerMemoryLimit } from "@/bindings/InstallerMemoryLimit";
 import type { PrefixEntry } from "@/bindings/PrefixEntry";
 import type { ProtonFamily } from "@/bindings/ProtonFamily";
 import type { ProtonRelease } from "@/bindings/ProtonRelease";
 import type { TransferProgress as Transfer } from "@/bindings/TransferProgress";
-import { Check, Row, SaveError, Section, SmallButton, useSettingSaver } from "./controls";
+import { Row, SaveError, Section, useSettingSaver } from "./controls";
 
 /** Proton, which runs Windows games, and the 32-bit support installers need. */
 export function ProtonSection() {
@@ -51,9 +53,9 @@ export function ProtonSection() {
   return (
     <Section title="Proton">
       {proton?.launcherProblem && (
-        <p role="alert" className="text-[11px] leading-relaxed text-danger">
+        <Alert inline>
           {proton.launcherProblem} Windows games run on Wine until this is fixed.
-        </p>
+        </Alert>
       )}
       <div className="flex flex-col gap-1.5">
         <BuildRow
@@ -95,14 +97,14 @@ export function ProtonSection() {
             Without them they run on Gameyfin&rsquo;s own Wine.
           </p>
           <div>
-            <SmallButton
+            <Button
               disabled={busy !== null}
               onClick={() =>
                 void run("i386", async () => setI386Result(await backend.install32bitSupport()))
               }
             >
               {busy === "i386" ? "Installing…" : "Install 32-bit support"}
-            </SmallButton>
+            </Button>
           </div>
         </div>
       )}
@@ -144,14 +146,19 @@ function BuildRow({
       </div>
       <div className="flex shrink-0 gap-1.5">
         {latest && (!installed || outdated) && (
-          <SmallButton disabled={disabled} onClick={onDownload}>
+          <Button size="sm" disabled={disabled} onClick={onDownload}>
             {installed ? `Update to ${latest.tag}` : `Download (${formatBytes(latest.sizeBytes)})`}
-          </SmallButton>
+          </Button>
         )}
         {installed && onRemove && (
-          <SmallButton danger disabled={disabled} onClick={() => onRemove(installed.name)}>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={disabled}
+            onClick={() => onRemove(installed.name)}
+          >
             Remove
-          </SmallButton>
+          </Button>
         )}
       </div>
     </div>
@@ -196,27 +203,22 @@ export function UmuSection() {
               : formatRelative(new Date(Date.now() - age * 1000).toISOString())
         }
       />
-      <Check
+      <SwitchField
         label="Apply per-title Proton fixes"
         hint="Passes each game's id to Proton so per-title workarounds apply. Matched by Steam AppID where your server knows one, by title otherwise."
         checked={settings.data?.umuFixes ?? true}
         onChange={(next) => save({ umuFixes: next })}
       />
-      <Check
+      <SwitchField
         label="Keep the list up to date automatically"
         hint="Fetches a fresh copy once a day, at startup and while Gameyfin keeps running."
         checked={settings.data?.umuAutoUpdate ?? true}
         onChange={(next) => save({ umuAutoUpdate: next })}
       />
       <div className="pt-1">
-        <button
-          type="button"
-          disabled={action.busy}
-          onClick={() => void refresh()}
-          className={BUTTON_MAYBE_DISABLED}
-        >
+        <Button disabled={action.busy} onClick={() => void refresh()}>
           {action.busy ? "Downloading…" : "Update now"}
-        </button>
+        </Button>
       </div>
       <SaveError error={action.error ?? saveError} />
       <p className={HINT}>A game not in the list runs as it would with fixes off.</p>
@@ -253,30 +255,27 @@ export function CompatibilitySection() {
 
   return (
     <Section title="Compatibility">
-      <label className="text-xs text-foreground/55" htmlFor="installer-memory">
-        Installer memory limit
-      </label>
-      <select
-        id="installer-memory"
-        value={String(current)}
-        onChange={(e) => void change(e.target.value)}
-        className={INPUT}
+      <FormField
+        label="Installer memory limit"
+        htmlFor="installer-memory"
+        hint="Repack installers take all the RAM they find, which can hang the whole machine. Automatic caps them at half your RAM, never below 4 GB. If one still gets stuck, try 3 GB."
       >
-        <option value="auto">
-          Automatic{automatic ? `, ${gigabytes(automatic)} here` : ""} (default)
-        </option>
-        {MEMORY_LIMITS.map((mb) => (
-          <option key={mb} value={mb}>
-            {mb / 1024} GB
+        <Select
+          id="installer-memory"
+          value={String(current)}
+          onChange={(e) => void change(e.target.value)}
+        >
+          <option value="auto">
+            Automatic{automatic ? `, ${gigabytes(automatic)} here` : ""} (default)
           </option>
-        ))}
-        <option value="off">No limit</option>
-      </select>
-      <p className={HINT}>
-        Repack installers take all the RAM they find, which can hang the whole machine.
-        Automatic caps them at half your RAM, never below 4 GB. If one still gets stuck, try
-        3 GB.
-      </p>
+          {MEMORY_LIMITS.map((mb) => (
+            <option key={mb} value={mb}>
+              {mb / 1024} GB
+            </option>
+          ))}
+          <option value="off">No limit</option>
+        </Select>
+      </FormField>
       <SaveError error={error} />
     </Section>
   );
@@ -308,9 +307,9 @@ export function PrefixSection() {
               <span className="min-w-0 truncate text-xs text-foreground" title={prefix.path}>
                 {prefix.title ?? `Game ${prefix.gameId}`}, {formatBytes(prefix.bytes)}
               </span>
-              <SmallButton danger onClick={() => setConfirming(prefix)}>
+              <Button size="sm" variant="destructive" onClick={() => setConfirming(prefix)}>
                 Delete
-              </SmallButton>
+              </Button>
             </div>
           ))}
         </div>

@@ -1,9 +1,11 @@
-import { Check, Row, Section } from "./controls";
+import { Row, Section } from "./controls";
+import { Alert } from "@/components/Alert";
+import { Button, SwitchField } from "@/components/ui";
 import { updateChannelNote, useUpdate } from "@/components/UpdateBanner";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { useAppSettings, useSettingsUpdate } from "@/lib/queries";
-import { BUTTON, BUTTON_MAYBE_DISABLED, HINT } from "@/lib/ui";
+import { HINT } from "@/lib/ui";
 import { useState } from "react";
 
 export function AboutSection() {
@@ -43,54 +45,30 @@ export function AboutSection() {
       />
 
       <div className="flex flex-wrap gap-2 pt-1">
-        <button
-          type="button"
-          disabled={update.isFetching}
-          onClick={() => void update.refetch()}
-          className={BUTTON_MAYBE_DISABLED}
-        >
+        <Button disabled={update.isFetching} onClick={() => void update.refetch()}>
           {update.isFetching ? "Checking…" : "Check now"}
-        </button>
+        </Button>
         {status?.available && status.canInstall && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void install()}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
-          >
+          <Button variant="primary" disabled={busy} onClick={() => void install()}>
             {busy ? "Updating…" : `Update to ${status.latestVersion}`}
-          </button>
+          </Button>
         )}
         {status && (
-          <button
-            type="button"
-            onClick={() => void backend.openUrl(status.releaseUrl)}
-            className={BUTTON}
-          >
-            Release notes
-          </button>
+          <Button onClick={() => void backend.openUrl(status.releaseUrl)}>Release notes</Button>
         )}
       </div>
 
       {message && <p className="text-[11px] text-foreground/60">{message}</p>}
-      {error && (
-        <p role="alert" className="text-[11px] text-danger">
-          {error}
-        </p>
-      )}
+      {error && <Alert inline>{error}</Alert>}
 
-      <Check
+      <SwitchField
         label="Check for updates at startup"
         hint="One request to GitHub when the app opens. Nothing is downloaded until you ask."
         checked={settings.data?.checkForUpdates ?? true}
         onChange={(next) => save({ checkForUpdates: next })}
       />
 
-      {status && (
-        <p className={HINT}>
-          {updateChannelNote(status)}
-        </p>
-      )}
+      {status && <p className={HINT}>{updateChannelNote(status)}</p>}
     </Section>
   );
 }

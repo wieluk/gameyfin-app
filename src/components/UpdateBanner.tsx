@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Icon } from "@/components/Icon";
+import { Button } from "@/components/ui";
 import { backend, isMockBackend, type UpdateStatus } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 
@@ -52,33 +53,20 @@ export function UpdateBanner() {
       {message ? (
         <span className="text-foreground/70">{message}</span>
       ) : status.canInstall ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void install()}
-          className="rounded-lg bg-primary px-2.5 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
-        >
+        <Button size="sm" variant="primary" disabled={busy} onClick={() => void install()}>
           {busy ? "Updating…" : "Update now"}
-        </button>
+        </Button>
       ) : (
-        <button
-          type="button"
-          onClick={() => void backend.openUrl(status.releaseUrl)}
-          className="rounded-lg border border-primary/40 px-2.5 py-0.5 text-[11px] font-medium transition-colors hover:bg-primary/10"
-        >
+        <Button size="sm" onClick={() => void backend.openUrl(status.releaseUrl)}>
           {status.channel === "system-package" ? "How to update" : "Open the release"}
-        </button>
+        </Button>
       )}
 
       {error && <span className="text-danger">{error}</span>}
 
-      <button
-        type="button"
-        onClick={() => setDismissed(true)}
-        className="text-foreground/40 underline-offset-2 hover:text-foreground/70 hover:underline"
-      >
+      <Button size="sm" variant="ghost" onClick={() => setDismissed(true)}>
         Not now
-      </button>
+      </Button>
     </div>
   );
 }

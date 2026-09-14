@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert } from "@/components/Alert";
 import { FolderActions } from "@/components/FolderActions";
 import { LaunchOptions, SetupOptions } from "@/components/GameOptions";
-import { Icon } from "@/components/Icon";
 import { PrefixOptions } from "@/components/PrefixOptions";
 import { ShortcutOptions } from "@/components/ShortcutOptions";
 import { TransferProgress } from "@/components/TransferProgress";
 import { UninstallDialog } from "@/components/UninstallDialog";
+import { Button, FormField, IconButton, Select, ViewHeader } from "@/components/ui";
 import { installedFiles, isInstalled } from "@/lib/actions";
 import { backend } from "@/lib/backend";
 import { formatPlaytime } from "@/lib/format";
@@ -15,7 +16,7 @@ import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
 import { keys, useEntries } from "@/lib/queries";
 import { useRescanOnOpen } from "@/lib/rescan";
-import { BUTTON, PANEL_BODY } from "@/lib/ui";
+import { PANEL_BODY } from "@/lib/ui";
 
 /** Games actually present on this machine and ready to play. */
 export function InstalledView() {
@@ -25,24 +26,11 @@ export function InstalledView() {
   useRescanOnOpen();
 
   const header = (
-    <>
-      <div className="flex shrink-0 items-center justify-between border-b border-default-200/60 px-6 py-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground/45">
-          Installed
-        </h2>
-        <div className="flex items-center gap-3">
-          <FolderActions folder="installations" onError={setError} />
-        </div>
-      </div>
-      {error && (
-        <p
-          role="alert"
-          className="mx-6 mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
-        >
-          {error}
-        </p>
-      )}
-    </>
+    <ViewHeader
+      title="Installed"
+      error={error}
+      actions={<FolderActions folder="installations" onError={setError} />}
+    />
   );
 
   const installed = useMemo(
@@ -139,7 +127,7 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
 
   return (
     <article className="rounded-xl border border-default-200 bg-content1">
-      <div className="flex items-center gap-4 p-3">
+      <div className="flex items-center gap-3 p-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="truncate text-sm font-medium text-foreground">{entry.game.title}</h3>
@@ -170,17 +158,14 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
         {running ? (
           // A game that will not close leaves the row saying "Playing" forever, with
           // nothing to press. Stopping ends its Wine prefix, the same way an install does.
-          <button
-            type="button"
-            onClick={() => void stop()}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-default-200 px-3 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
-          >
-            <Icon name="close" className="h-3 w-3" />
+          <Button variant="destructive" icon="close" onClick={() => void stop()}>
             Stop
-          </button>
+          </Button>
         ) : (
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            icon="play"
+            iconFilled
             disabled={!executable || working}
             title={
               working
@@ -190,24 +175,19 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
                   : "Choose an executable first"
             }
             onClick={() => void play()}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Icon name="play" className="h-3 w-3" filled />
             Play
-          </button>
+          </Button>
         )}
 
-        <button
-          type="button"
-          aria-label={expanded ? "Hide options" : "Show options"}
+        <IconButton
+          icon="chevron"
+          size="sm"
+          label={expanded ? "Hide options" : "Show options"}
+          aria-expanded={expanded}
+          iconClassName={`h-4 w-4 transition-transform ${expanded ? "rotate-90" : ""}`}
           onClick={() => setExpanded((e) => !e)}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-foreground/45 transition-colors hover:bg-default-100 hover:text-foreground"
-        >
-          <Icon
-            name="chevron"
-            className={`h-4 w-4 transition-transform ${expanded ? "rotate-90" : ""}`}
-          />
-        </button>
+        />
       </div>
 
       {needsSetup && (
@@ -216,14 +196,9 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
             This download contained a setup program. Run it to finish installing.
           </span>
           {setups.map((setup) => (
-            <button
-              key={setup}
-              type="button"
-              onClick={() => void runSetup(setup)}
-              className="rounded-lg bg-warning px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-warning-600"
-            >
+            <Button key={setup} size="sm" variant="primary" onClick={() => void runSetup(setup)}>
               Run {setup}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -234,8 +209,8 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
             This game is installed, so its{" "}
             {stagingPresent ? "unpacked files are" : "download is"} no longer needed.
           </span>
-          <button
-            type="button"
+          <Button
+            size="sm"
             onClick={async () => {
               try {
                 if (stagingPresent) await backend.deleteStaging(entry.game.id);
@@ -245,17 +220,12 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
                 setError(messageOf(e));
               }
             }}
-            className="rounded-lg border border-default-200 px-2.5 py-1 text-xs text-foreground/70 transition-colors hover:bg-default-100"
           >
             Free up space
-          </button>
-          <button
-            type="button"
-            onClick={() => setDismissedCleanup(true)}
-            className="text-xs text-foreground/40 underline-offset-2 hover:text-foreground/70 hover:underline"
-          >
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setDismissedCleanup(true)}>
             Keep it
-          </button>
+          </Button>
         </div>
       )}
 
@@ -377,14 +347,15 @@ function Options({
 
   return (
     <div className="flex flex-col gap-3 border-t border-default-200/60 px-3 py-3">
-      <div>
-        <p className="mb-1 text-[11px] text-foreground/45">Launch executable</p>
+      <FormField label="Launch executable" htmlFor={`executable-${gameId}`}>
         <div className="flex gap-2">
-          <select
+          <Select
+            id={`executable-${gameId}`}
+            mono
             value={chosen ?? ""}
             onChange={(e) => void chooseExecutable(e.target.value)}
             disabled={executables.isLoading}
-            className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary disabled:opacity-50"
+            className="flex-1"
           >
             <option value="" disabled>
               {executables.isLoading ? "Scanning…" : "Choose an executable…"}
@@ -396,33 +367,31 @@ function Options({
                 {exe}
               </option>
             ))}
-          </select>
-          <button
-            type="button"
+          </Select>
+          <Button
             onClick={() => void browseForExecutable()}
             title="Pick any file in this game's folder"
-            className="shrink-0 rounded-lg border border-default-200 px-2.5 py-1.5 text-[11px] text-foreground/70 transition-colors hover:bg-default-100"
           >
             Browse…
-          </button>
+          </Button>
         </div>
         {missing ? (
-          <p className="mt-1 text-[11px] text-warning-600">
+          <p className="text-[11px] text-warning-600">
             That file is no longer in the game's folder. Choose another, or browse for it.
           </p>
         ) : (
           !executables.isLoading &&
           listed.length === 0 && (
-            <p className="mt-1 text-[11px] text-foreground/40">
+            <p className="text-[11px] text-foreground/40">
               Nothing launchable was found here. Browse to point at the file yourself.
             </p>
           )
         )}
-      </div>
+      </FormField>
 
       {installDir && (
         <div>
-          <p className="mb-1 text-[11px] text-foreground/45">Installed at</p>
+          <p className="mb-1 text-xs text-foreground/55">Installed at</p>
           <code className="block break-all text-[11px] text-foreground/60">{installDir}</code>
         </div>
       )}
@@ -446,15 +415,15 @@ function Options({
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {extraSetups.map((setup) => (
-              <button
+              <Button
                 key={setup}
-                type="button"
+                size="sm"
+                className="font-mono"
                 onClick={() => onRunSetup(setup)}
                 title={setup}
-                className="rounded-lg border border-default-200 px-2.5 py-1 font-mono text-[11px] text-foreground/70 transition-colors hover:bg-default-100"
               >
                 Run {setup.length > 40 ? `${setup.slice(0, 37)}…` : setup}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="mt-2">
@@ -463,15 +432,11 @@ function Options({
         </details>
       )}
 
-      {folderError && (
-        <p role="alert" className="text-[11px] leading-relaxed text-danger">
-          {folderError}
-        </p>
-      )}
+      {folderError && <Alert inline>{folderError}</Alert>}
 
       <div className="flex gap-2">
-        <button
-          type="button"
+        <Button
+          icon="folder"
           onClick={async () => {
             // Awaited, so a rejection surfaces instead of the click doing nothing silently.
             setFolderError(null);
@@ -481,19 +446,13 @@ function Options({
               setFolderError(messageOf(e));
             }
           }}
-          className={BUTTON}
         >
           Open folder
-        </button>
-        <button
-          type="button"
-          onClick={onUninstall}
-          className="ml-auto rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/60 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
-        >
+        </Button>
+        <Button variant="destructive" className="ml-auto" onClick={onUninstall}>
           Uninstall
-        </button>
+        </Button>
       </div>
     </div>
   );
 }
-

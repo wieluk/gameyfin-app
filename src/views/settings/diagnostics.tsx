@@ -1,10 +1,11 @@
 import { PathRow, Section } from "./controls";
+import { Alert } from "@/components/Alert";
+import { Button, FormField, Select } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import type { LogLevel } from "@/bindings/LogLevel";
 import { messageOf } from "@/lib/errors";
 import { formatBytes } from "@/lib/format";
 import { useAppSettings, useSettingsUpdate } from "@/lib/queries";
-import { INPUT } from "@/lib/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -42,29 +43,24 @@ export function DiagnosticsSection() {
 
   return (
     <Section title="Diagnostics">
-      <label className="text-xs text-foreground/55" htmlFor="log-level">
-        Log detail
-      </label>
-      <select
-        id="log-level"
-        value={current}
-        onChange={(e) => void change(e.target.value as LogLevel)}
-        className={INPUT}
+      <FormField
+        label="Log detail"
+        htmlFor="log-level"
+        hint="Applies immediately. Use Debug while reproducing a problem, then attach the log."
       >
-        {LOG_LEVELS.map((option) => (
-          <option key={option.key} value={option.key}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <p className="text-[11px] text-foreground/45">
-        Applies immediately. Use Debug while reproducing a problem, then attach the log.
-      </p>
-      {levelError && (
-        <p role="alert" className="text-xs text-danger">
-          {levelError}
-        </p>
-      )}
+        <Select
+          id="log-level"
+          value={current}
+          onChange={(e) => void change(e.target.value as LogLevel)}
+        >
+          {LOG_LEVELS.map((option) => (
+            <option key={option.key} value={option.key}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+      </FormField>
+      {levelError && <Alert inline>{levelError}</Alert>}
 
       <div className="mt-2 flex items-center justify-between gap-4">
         <div className="min-w-0">
@@ -75,16 +71,14 @@ export function DiagnosticsSection() {
               : `${formatBytes(cacheSize.data)}, cleans itself as it grows`}
           </p>
         </div>
-        <button
-          type="button"
+        <Button
           onClick={async () => {
             await backend.clearImageCache();
             await cacheSize.refetch();
           }}
-          className="shrink-0 rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100"
         >
           Clear
-        </button>
+        </Button>
       </div>
 
       <PathRow

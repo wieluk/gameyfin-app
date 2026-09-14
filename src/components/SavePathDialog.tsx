@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Alert } from "@/components/Alert";
+import { Button, IconButton, SwitchField, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { Modal } from "./Modal";
@@ -25,16 +27,14 @@ function Browse({
   onPick: (path: string) => void;
 }) {
   return (
-    <button
-      type="button"
+    <Button
       onClick={async () => {
         const picked = await backend.pickFolder(startIn);
         if (picked) onPick(picked);
       }}
-      className="shrink-0 rounded-lg border border-default-200 px-2.5 py-1.5 text-[11px] text-foreground/70 hover:bg-default-100"
     >
       Browse…
-    </button>
+    </Button>
   );
 }
 
@@ -140,8 +140,7 @@ export function SavePathDialog({
         </p>
         {folders.map((folder, index) => (
           <div key={index} className="mb-2 flex items-center gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-3 py-1.5 text-xs"
+            <TextInput
               placeholder="/home/you/.local/share/ExampleGame"
               value={folder}
               onChange={(e) =>
@@ -154,14 +153,12 @@ export function SavePathDialog({
                 setFolders((c) => c.map((v, i) => (i === index ? picked : v)))
               }
             />
-            <button
-              type="button"
-              aria-label="Remove this folder"
+            <IconButton
+              icon="close"
+              size="sm"
+              label="Remove this folder"
               onClick={() => setFolders((c) => c.filter((_, i) => i !== index))}
-              className="shrink-0 rounded-lg px-2 py-1 text-xs text-foreground/50 hover:bg-default-100"
-            >
-              &times;
-            </button>
+            />
           </div>
         ))}
         {locations?.prefixHome && (
@@ -171,13 +168,9 @@ export function SavePathDialog({
             lands in the right place on a Windows machine.
           </p>
         )}
-        <button
-          type="button"
-          onClick={() => setFolders((c) => [...c, ""])}
-          className="mb-4 rounded-lg bg-default-100 px-3 py-1.5 text-xs hover:bg-default-200"
-        >
+        <Button className="mb-4" onClick={() => setFolders((c) => [...c, ""])}>
           Add a folder
-        </button>
+        </Button>
 
         <p className="mb-1 border-t border-default-200 pt-3 text-xs font-medium">
           Path corrections
@@ -189,78 +182,65 @@ export function SavePathDialog({
         </p>
         {mappings.map((row, index) => (
           <div key={index} className="mb-2 flex items-center gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-3 py-1.5 text-xs"
+            <TextInput
               placeholder={"C:\\Users\\you\\Documents\\My Games\\Example"}
               value={row.source}
               onChange={(e) => update(index, "source", e.target.value)}
             />
             <span className="shrink-0 text-xs text-foreground/40">to</span>
-            <input
-              className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-3 py-1.5 text-xs"
+            <TextInput
               placeholder="/gameyfin/home/Example"
               value={row.target}
               onChange={(e) => update(index, "target", e.target.value)}
             />
-            <button
-              type="button"
-              aria-label="Remove this mapping"
+            <IconButton
+              icon="close"
+              size="sm"
+              label="Remove this mapping"
               onClick={() => setMappings((c) => c.filter((_, i) => i !== index))}
-              className="shrink-0 rounded-lg px-2 py-1 text-xs text-foreground/50 hover:bg-default-100"
-            >
-              &times;
-            </button>
+            />
           </div>
         ))}
-        <button
-          type="button"
+        <Button
+          className="mb-3"
           onClick={() => setMappings((c) => [...c, { source: "", target: "" }])}
-          className="mb-3 rounded-lg bg-default-100 px-3 py-1.5 text-xs hover:bg-default-200"
         >
           Add another
-        </button>
+        </Button>
 
-        <label className="mb-3 flex cursor-pointer items-start gap-2">
-          <input
-            type="checkbox"
-            className="mt-1"
+        <div className="mb-3">
+          <SwitchField
+            label="Translate between Windows and Linux paths"
+            hint={
+              <>
+                Only for a save that crossed between a Windows machine and a native Linux
+                build. A Windows game played here through Proton needs nothing: its saves
+                already travel by way of its Windows folder. Turning this on replaces that
+                with Ludusavi&rsquo;s own translation, which is best effort and does not
+                carry registry settings.
+              </>
+            }
             checked={translate}
-            onChange={(e) => setTranslate(e.target.checked)}
+            onChange={setTranslate}
           />
-          <span>
-            <span className="text-xs">Translate between Windows and Linux paths</span>
-            <span className="block text-[11px] text-foreground/50">
-              Only for a save that crossed between a Windows machine and a native Linux
-              build. A Windows game played here through Proton needs nothing: its saves
-              already travel by way of its Windows folder. Turning this on replaces that
-              with Ludusavi&rsquo;s own translation, which is best effort and does not
-              carry registry settings.
-            </span>
-          </span>
-        </label>
+        </div>
       </div>
 
-      {error && <p className="px-5 py-2 text-xs text-danger">{error}</p>}
+      {error && <Alert className="mx-5 my-2">{error}</Alert>}
 
       <div className="flex justify-end gap-2 border-t border-default-200/60 px-5 py-3">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={busy}
-          className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100 disabled:opacity-50"
-        >
+        <Button variant="ghost" onClick={onClose} disabled={busy}>
           Cancel
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="primary"
           onClick={save}
           // Saving before the current paths arrive would write the empty starting state
           // over them.
           disabled={busy || !loaded}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90 disabled:opacity-50"
         >
-          {busy ? "Saving..." : "Save"}
-        </button>
+          {busy ? "Saving…" : "Save"}
+        </Button>
       </div>
     </Modal>
   );

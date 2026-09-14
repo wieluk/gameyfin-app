@@ -2,12 +2,13 @@ import { useState } from "react";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useLibraryRoots } from "@/components/RootChooser";
+import { Button, FormField, SwitchField, TextArea, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { formatBytes } from "@/lib/format";
 import { keys, useAppSettings, useInvalidate } from "@/lib/queries";
 import { useAction } from "@/lib/useAction";
-import { BUTTON, HINT } from "@/lib/ui";
-import { Check, SaveError, Section, SmallButton, useSettingSaver } from "./controls";
+import { HINT } from "@/lib/ui";
+import { SaveError, Section, useSettingSaver } from "./controls";
 
 /** The games folders, and which one is the default. */
 export function RootsSection() {
@@ -68,21 +69,24 @@ export function RootsSection() {
             </p>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {!root.isDefault && (
-                <SmallButton
+                <Button
+                  size="sm"
                   onClick={() => void run(() => backend.setDefaultLibraryRoot(root.path))}
                 >
                   Make default
-                </SmallButton>
+                </Button>
               )}
-              <SmallButton
+              <Button
+                size="sm"
+                icon="folder"
                 onClick={() => void backend.openLibraryFolder("installations", root.path)}
               >
-                Open
-              </SmallButton>
+                Open folder
+              </Button>
               {list.length > 1 && (
-                <SmallButton danger onClick={() => setRemoving(root.path)}>
+                <Button size="sm" variant="destructive" onClick={() => setRemoving(root.path)}>
                   Remove
-                </SmallButton>
+                </Button>
               )}
             </div>
           </div>
@@ -90,13 +94,7 @@ export function RootsSection() {
       </div>
 
       <div className="pt-1">
-        <button
-          type="button"
-          onClick={() => void add()}
-          className={BUTTON}
-        >
-          Add a folder…
-        </button>
+        <Button onClick={() => void add()}>Add a folder…</Button>
       </div>
 
       <SaveError error={action.error} />
@@ -137,19 +135,19 @@ export function DownloadSection() {
 
   return (
     <Section title="Downloads">
-      <Check
+      <SwitchField
         label="Install automatically when a download finishes"
         hint="Unpacks the download and moves the game into your installations folder without asking. Downloads that contain a setup program still stop and wait for you."
         checked={settings.data?.autoInstall ?? false}
         onChange={(next) => save({ autoInstall: next })}
       />
-      <Check
+      <SwitchField
         label="Delete the archive after extracting"
         hint="Frees the space the archive takes once its files are unpacked. Also the starting choice in the install dialog. Reinstalling means downloading again."
         checked={settings.data?.deleteArchiveAfterExtract ?? true}
         onChange={(next) => save({ deleteArchiveAfterExtract: next })}
       />
-      <Check
+      <SwitchField
         label="Delete the download after installing"
         hint="Removes the archive and the unpacked files once a game installs successfully. Reinstalling means downloading again."
         checked={settings.data?.deleteDownloadAfterInstall ?? false}
@@ -177,48 +175,46 @@ export function ExtractionSection() {
 
   return (
     <Section title="Extraction">
-      <label className="text-xs text-foreground/55" htmlFor="extraction-password">
-        Archive password
-      </label>
-      <input
-        id="extraction-password"
-        type="password"
-        value={password ?? ""}
-        onChange={(e) => setPassword(e.target.value)}
-        onBlur={() => {
-          if (password !== null) commit({ extractionPassword: password }, () => setPassword(null));
-        }}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        spellCheck={false}
-        placeholder={settings.data?.hasExtractionPassword ? "Saved, type to replace" : "None"}
-        className="rounded-lg border border-default-200 bg-content2 px-3 py-2 font-mono text-xs outline-none transition-colors focus:border-primary"
-      />
-      <p className={HINT}>
-        Tried automatically when an archive is encrypted. Stored in the app's settings file
-        beside your session, readable only by you, and never shown again once saved. A
-        convenience, not a secret store.
-      </p>
+      <FormField
+        label="Archive password"
+        htmlFor="extraction-password"
+        hint="Tried automatically when an archive is encrypted. Stored in the app's settings file beside your session, readable only by you, and never shown again once saved. A convenience, not a secret store."
+      >
+        <TextInput
+          id="extraction-password"
+          type="password"
+          mono
+          value={password ?? ""}
+          onChange={(e) => setPassword(e.target.value)}
+          onBlur={() => {
+            if (password !== null) commit({ extractionPassword: password }, () => setPassword(null));
+          }}
+          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+          spellCheck={false}
+          placeholder={settings.data?.hasExtractionPassword ? "Saved, type to replace" : "None"}
+        />
+      </FormField>
 
-      <label className="pt-2 text-xs text-foreground/55" htmlFor="ignored-executables">
-        Never offer these executables
-      </label>
-      <textarea
-        id="ignored-executables"
-        rows={6}
-        value={ignored ?? savedIgnored}
-        onChange={(e) => setIgnored(e.target.value)}
-        onBlur={() => {
-          if (ignored !== null && ignored !== savedIgnored) {
-            commit({ ignoredExecutables: ignored.split("\n") }, () => setIgnored(null));
-          }
-        }}
-        spellCheck={false}
-        className="rounded-lg border border-default-200 bg-content2 px-3 py-2 font-mono text-[11px] outline-none transition-colors focus:border-primary"
-      />
-      <p className={HINT}>
-        One per line, matched anywhere in the file name. Keeps redistributables and crash
-        handlers from crowding out the real launcher.
-      </p>
+      <FormField
+        className="pt-2"
+        label="Never offer these executables"
+        htmlFor="ignored-executables"
+        hint="One per line, matched anywhere in the file name. Keeps redistributables and crash handlers from crowding out the real launcher."
+      >
+        <TextArea
+          id="ignored-executables"
+          rows={6}
+          mono
+          value={ignored ?? savedIgnored}
+          onChange={(e) => setIgnored(e.target.value)}
+          onBlur={() => {
+            if (ignored !== null && ignored !== savedIgnored) {
+              commit({ ignoredExecutables: ignored.split("\n") }, () => setIgnored(null));
+            }
+          }}
+          spellCheck={false}
+        />
+      </FormField>
 
       <SaveError error={error} />
     </Section>

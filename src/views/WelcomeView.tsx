@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Icon } from "@/components/Icon";
+import { Button, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { useAction } from "@/lib/useAction";
 import { useTauriEvent } from "@/lib/useTauriEvent";
@@ -75,13 +76,9 @@ export function WelcomeView({
 /** Back navigation, present on every step after the first. */
 function BackLink({ onClick, label = "Back" }: { onClick: () => void; label?: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="self-start text-xs text-foreground/50 underline-offset-2 transition-colors hover:text-foreground hover:underline"
-    >
+    <Button size="sm" variant="ghost" className="self-start" onClick={onClick}>
       ← {label}
-    </button>
+    </Button>
   );
 }
 
@@ -151,15 +148,15 @@ function ServerStep({
       <label className="text-xs font-medium text-foreground/60" htmlFor="server-url">
         Server address
       </label>
-      <input
+      <TextInput
         id="server-url"
+        size="lg"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="games.example.com"
         autoFocus
         spellCheck={false}
         autoCapitalize="none"
-        className="rounded-lg border border-default-200 bg-content2 px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-foreground/35 focus:border-primary"
       />
       <p className="text-[11px] text-foreground/45">
         https:// is assumed if you leave the scheme out.
@@ -167,13 +164,15 @@ function ServerStep({
 
       {error && <Alert>{error}</Alert>}
 
-      <button
+      <Button
         type="submit"
+        variant="primary"
+        size="lg"
+        className="mt-1"
         disabled={busy || !value.trim()}
-        className="mt-1 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {busy ? "Checking…" : "Continue"}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -313,52 +312,42 @@ function SignInStep({
             like Authentik are supported. Finish there and this continues on its own.
           </p>
 
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setWaiting(false);
-                void backend.cancelLogin();
-              }}
-              className="flex-1 rounded-lg border border-default-200 px-4 py-2 text-sm text-foreground/70 transition-colors hover:bg-default-100"
-            >
-              Cancel
-            </button>
-          </div>
+          <Button
+            size="lg"
+            onClick={() => {
+              setWaiting(false);
+              void backend.cancelLogin();
+            }}
+          >
+            Cancel
+          </Button>
         </>
       ) : (
         <>
           {error && <Alert>{error}</Alert>}
-          <button
-            type="button"
-            onClick={() => void start()}
-            className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600"
-          >
+          <Button variant="primary" size="lg" onClick={() => void start()}>
             Sign in
-          </button>
+          </Button>
           <p className="text-[11px] text-foreground/45">
             Your server decides how you sign in: a single sign-on provider if it has one,
             otherwise a username and password.
           </p>
 
-          <div className="mt-1 flex flex-col gap-1.5 border-t border-default-200/60 pt-3">
-            <button
-              type="button"
-              onClick={() => void start(true)}
-              className="self-start text-xs text-foreground/50 underline-offset-2 transition-colors hover:text-foreground hover:underline"
-            >
+          <div className="mt-1 flex flex-col items-start gap-1.5 border-t border-default-200/60 pt-3">
+            <Button size="sm" variant="ghost" onClick={() => void start(true)}>
               Use a username and password instead
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-left"
               onClick={reset}
               disabled={clearing.busy}
-              className="self-start text-xs text-foreground/45 underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:opacity-50"
             >
               {clearing.busy
                 ? "Clearing the saved login data…"
                 : "Login window misbehaving? Sign out of it and clear its saved data."}
-            </button>
+            </Button>
             {clearing.error && <Alert>{clearing.error}</Alert>}
             {cleared && (
               <p className="text-[11px] text-success-600">
@@ -409,15 +398,16 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
         Games folder
       </label>
       <div className="flex gap-2">
-        <input
+        <TextInput
           id="library-root"
+          size="lg"
+          mono
           value={path}
           onChange={(e) => setPath(e.target.value)}
           spellCheck={false}
-          className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content2 px-3 py-2.5 font-mono text-xs outline-none transition-colors focus:border-primary"
         />
-        <button
-          type="button"
+        <Button
+          size="lg"
           onClick={async () => {
             try {
               const chosen = await backend.pickFolder(path || undefined);
@@ -426,10 +416,9 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
               setError(messageOf(e));
             }
           }}
-          className="shrink-0 rounded-lg border border-default-200 px-3 py-2.5 text-xs text-foreground/70 transition-colors hover:bg-default-100"
         >
           Browse…
-        </button>
+        </Button>
       </div>
       <p className="text-[11px] text-foreground/45">
         Downloads and installed games live here. Change it later in Settings.
@@ -438,11 +427,11 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
       <label className="pt-1 text-xs font-medium text-foreground/60" htmlFor="device-name">
         This device's name
       </label>
-      <input
+      <TextInput
         id="device-name"
+        size="lg"
         value={device}
         onChange={(e) => setDevice(e.target.value)}
-        className="rounded-lg border border-default-200 bg-content2 px-3 py-2.5 text-xs outline-none transition-colors focus:border-primary"
       />
       <p className="text-[11px] text-foreground/45">
         Shown beside saves synced from this PC, so you can tell your machines apart.
@@ -450,15 +439,15 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
 
       {error && <Alert>{error}</Alert>}
 
-      <button
-        type="button"
+      <Button
+        variant="primary"
+        size="lg"
+        className="mt-1"
         onClick={finish}
         disabled={!path.trim() || action.busy}
-        className="mt-1 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40"
       >
         Finish
-      </button>
+      </Button>
     </div>
   );
 }
-

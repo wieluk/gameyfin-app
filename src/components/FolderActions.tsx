@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Icon } from "@/components/Icon";
+import { Button } from "@/components/ui";
 import { backend, type LibraryFolder } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
-import { BUTTON_MAYBE_DISABLED } from "@/lib/ui";
 
 /** The Rescan and Open folder pair shared by the Downloads and Installed headers. */
 export function FolderActions({
@@ -42,27 +41,20 @@ export function FolderActions({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => void rescan()}
-        disabled={rescanning}
-        className={BUTTON_MAYBE_DISABLED}
-      >
+      <Button onClick={() => void rescan()} disabled={rescanning}>
         {rescanning ? "Rescanning…" : "Rescan folders"}
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
+        icon="folder"
         onClick={() => void open()}
         title={
           folder === "downloads"
             ? "Open the Downloads folder"
             : "Open the Installations folder"
         }
-        className="flex items-center gap-1.5 rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:bg-default-100"
       >
-        <Icon name="folder" className="h-3.5 w-3.5" />
         Open folder
-      </button>
+      </Button>
     </>
   );
 }

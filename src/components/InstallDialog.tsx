@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Icon } from "./Icon";
 import { SetupOptions } from "./GameOptions";
 import { backend } from "@/lib/backend";
 import { useFlash } from "@/lib/useFlash";
@@ -8,6 +7,7 @@ import { messageOf } from "@/lib/errors";
 import { useAppSettings } from "@/lib/queries";
 import type { LibraryEntry } from "@/types";
 import { Alert } from "@/components/Alert";
+import { Button, IconButton, SwitchField } from "@/components/ui";
 import { Modal } from "./Modal";
 import { PANEL_BODY } from "@/lib/ui";
 
@@ -107,14 +107,7 @@ export function InstallDialog({
             </p>
           )}
         </div>
-        <button
-          type="button"
-          aria-label="Close"
-          onClick={onClose}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-foreground/50 transition-colors hover:bg-default-100 hover:text-foreground"
-        >
-          <Icon name="close" className="h-3.5 w-3.5" />
-        </button>
+        <IconButton icon="close" label="Close" size="sm" onClick={onClose} />
       </header>
 
       <div className={PANEL_BODY}>
@@ -132,20 +125,14 @@ export function InstallDialog({
         )}
 
         {plan.data?.options.some((o) => o.key === "extract") && (
-          <label className="mb-3 flex cursor-pointer items-start gap-2 rounded-lg border border-default-200 px-3 py-2">
-            <input
-              type="checkbox"
+          <div className="mb-3 rounded-lg border border-default-200 px-3 py-2">
+            <SwitchField
+              label="Delete the archive after extracting"
+              hint="Frees disk space. The only way back is downloading again."
               checked={deleteArchive}
-              onChange={(e) => setDeleteArchive(e.target.checked)}
-              className="mt-0.5"
+              onChange={setDeleteArchive}
             />
-            <span className="text-[13px] text-foreground/75">
-              Delete the archive after extracting
-              <span className="mt-1 block text-xs text-foreground/45">
-                Frees disk space. The only way back is downloading again.
-              </span>
-            </span>
-          </label>
+          </div>
         )}
 
         <div className="flex flex-col gap-2">
@@ -191,25 +178,23 @@ export function InstallDialog({
 
         {plan.data?.needsInstallPath && (
           <div className="mt-4 border-t border-default-200/60 pt-3">
-            <p className="mb-1 text-xs text-foreground/50">
+            <p className="mb-1 text-xs text-foreground/55">
               Type this into the installer
             </p>
-            <div className="flex gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-lg border border-default-200 bg-content2 px-3 py-2 font-mono text-[13px] text-foreground/80">
+            <div className="flex items-start gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-lg border border-default-200 bg-content2 px-3 py-1.5 font-mono text-xs text-foreground/80">
                 {plan.data.windowsInstallPath ?? plan.data.defaultInstallDir}
               </code>
-              <button
-                type="button"
+              <Button
                 onClick={async () => {
                   await backend.copyToClipboard(
                     plan.data.windowsInstallPath ?? plan.data.defaultInstallDir,
                   );
                   flashCopied();
                 }}
-                className="shrink-0 rounded-lg border border-default-200 px-2.5 py-1.5 text-[11px] text-foreground/70 transition-colors hover:bg-default-100"
               >
                 {copied ? "Copied" : "Copy"}
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -249,9 +234,8 @@ export function InstallDialog({
         </div>
         )}
 
-        {error && <div className="mt-3"><Alert>{error}</Alert></div>}
+        {error && <Alert className="mt-3">{error}</Alert>}
       </div>
     </Modal>
   );
 }
-

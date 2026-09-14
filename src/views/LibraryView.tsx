@@ -4,6 +4,7 @@ import { GameCard } from "@/components/GameCard";
 import { GameDetail } from "@/components/GameDetail";
 import { InstallDialog } from "@/components/InstallDialog";
 import { Icon } from "@/components/Icon";
+import { Button, IconButton, Select, Switch, TextInput, ViewHeader } from "@/components/ui";
 import { isInstalled, isLocal, needsChooser, primaryAction } from "@/lib/actions";
 import {
   FACET_KEYS,
@@ -26,7 +27,7 @@ import {
 import type { LibraryEntry } from "@/types";
 import { useEntries, useStatus } from "@/lib/queries";
 import { useRescanOnOpen } from "@/lib/rescan";
-import { INPUT, PANEL_BODY } from "@/lib/ui";
+import { PANEL_BODY } from "@/lib/ui";
 
 
 export function LibraryView() {
@@ -165,64 +166,48 @@ export function LibraryView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-3 border-b border-default-200/60 px-6 py-3">
-        <div className="relative flex-1 max-w-md">
-          <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/40" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search your library"
-            className="w-full rounded-lg border border-default-200 bg-content2 py-2 pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-foreground/40 focus:border-primary"
-          />
-        </div>
+      <ViewHeader>
+        <TextInput
+          icon="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search your library"
+          className="max-w-md flex-1"
+        />
 
-        <select
+        <Select
+          aria-label="Library"
           value={libraryId ?? ""}
           onChange={(e) => setLibraryId(e.target.value === "" ? null : Number(e.target.value))}
-          className={INPUT}
         >
           <option value="">All libraries</option>
           {(libraries.data ?? []).map((l) => (
             <option key={l.id} value={l.id}>{l.name}</option>
           ))}
-        </select>
+        </Select>
 
-        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-foreground/70 transition-colors hover:text-foreground">
-          <input
-            type="checkbox"
-            checked={installedOnly}
-            onChange={(e) => setInstalledOnly(e.target.checked)}
-            className="h-4 w-4 accent-primary"
-          />
-          Installed only
-        </label>
+        <Switch label="Installed only" checked={installedOnly} onChange={setInstalledOnly} />
 
-        <button
-          type="button"
+        <Button
           onClick={toggleAdvanced}
+          // Lit while any of its filters apply; whether the row is open is aria-expanded's to say.
+          pressed={advanced || activeFacets > 0}
+          aria-pressed={undefined}
           aria-expanded={advanced}
           title="More ways to narrow the list"
-          className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-2 text-xs transition-colors ${
-            advanced || activeFacets > 0
-              ? "border-primary/50 bg-primary/10 text-primary"
-              : "border-default-200 bg-content2 text-foreground/70 hover:bg-default-100"
-          }`}
         >
           Advanced
           {activeFacets > 0 && <span className="tabular-nums">({activeFacets})</span>}
-        </button>
+        </Button>
 
         {/* Always there, so its place never shifts; greyed out while nothing is narrowed. */}
-        <button
-          type="button"
+        <IconButton
+          icon="reset"
+          label="Reset filters"
+          bordered
           onClick={resetFilters}
           disabled={!filtered}
-          title="Reset filters"
-          aria-label="Reset filters"
-          className="flex shrink-0 items-center justify-center rounded-lg border border-default-200 bg-content2 p-2 text-foreground/70 transition-colors hover:bg-default-100 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-        >
-          <Icon name="reset" className="h-4 w-4" />
-        </button>
+        />
 
         <CardSizes value={cardSize} onChange={setCardSize} />
 
@@ -238,7 +223,7 @@ export function LibraryView() {
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
             aria-label="Sort by"
-            className="cursor-pointer appearance-none bg-transparent py-2 pl-1.5 pr-2.5 text-xs font-medium text-foreground outline-none focus-visible:underline"
+            className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1.5 pr-2.5 text-xs font-medium text-foreground outline-none focus-visible:underline"
           >
             <option value="title">Title</option>
             <option value="recent">Last played</option>
@@ -260,10 +245,10 @@ export function LibraryView() {
             />
           </button>
         </div>
-      </div>
+      </ViewHeader>
 
       {advanced && (
-        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-default-200/60 bg-content1/40 px-6 py-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-default-200/60 bg-content1/40 px-6 py-3">
           {FACET_KEYS.map((key) => (
             <Facet
               key={key}
@@ -274,10 +259,11 @@ export function LibraryView() {
             />
           ))}
 
-          <select
+          <Select
+            aria-label="Rating"
+            active={minRating !== null}
             value={minRating ?? ""}
             onChange={(e) => setMinRating(e.target.value === "" ? null : Number(e.target.value))}
-            className={INPUT}
           >
             <option value="">Any rating</option>
             {[90, 80, 70, 60, 50].map((score) => (
@@ -285,7 +271,7 @@ export function LibraryView() {
                 {score} or higher
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       )}
 
@@ -371,7 +357,7 @@ function CardSizes({
     <div
       role="group"
       aria-label="Cover size"
-      className="ml-auto flex shrink-0 items-center gap-0.5 rounded-full border border-default-200 px-1.5 py-1"
+      className="ml-auto flex shrink-0 items-center gap-0.5 rounded-full border border-default-200 px-1.5 py-0.5"
     >
       {CARD_SIZES.map((size) => (
         <button
@@ -408,13 +394,12 @@ function Facet({
   if (options.length === 0 && !value) return null;
 
   return (
-    <select
+    <Select
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
       aria-label={label}
-      className={`max-w-[10rem] shrink-0 rounded-lg border bg-content2 px-3 py-2 text-sm outline-none focus:border-primary ${
-        value ? "border-primary/50 text-primary" : "border-default-200"
-      }`}
+      active={Boolean(value)}
+      className="max-w-[12rem]"
     >
       <option value="">{label}</option>
       {value && !options.includes(value) && <option value={value}>{value}</option>}
@@ -423,7 +408,7 @@ function Facet({
           {option}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
 

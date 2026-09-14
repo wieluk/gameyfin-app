@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { Button, FormField, Radio, Select, SwitchField, TextField, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { keys, useAppSettings, useInvalidate, useSaveToolStatus } from "@/lib/queries";
 import { useAction } from "@/lib/useAction";
 import { useTauriEvent } from "@/lib/useTauriEvent";
-import { HINT, INPUT } from "@/lib/ui";
+import { HINT } from "@/lib/ui";
 import type { MigrationSummary } from "@/bindings/MigrationSummary";
 import type { SaveBackend } from "@/types";
 import { VersionSection, type VersionTool } from "./VersionSection";
-import { Check, Field, Row, SaveError, Section, useSettingSaver } from "./controls";
+import { Row, SaveError, Section, useSettingSaver } from "./controls";
 
 /** The three places saves can live, as the user sees them named. */
 export const BACKEND_LABELS: Record<SaveBackend, string> = {
@@ -41,22 +42,22 @@ export function SavesSection() {
 
   return (
     <>
-      <Check
+      <SwitchField
         label="Sync my saves"
         hint="Backs up your saves after you play so another PC can pick them up."
         checked={enabled}
         onChange={(next) => update({ saveSyncEnabled: next })}
       />
       {/* Indented and greyed out together, because neither does anything on its own. */}
-      <div className="ml-[1.375rem] flex flex-col gap-2 border-l border-default-200/60 pl-3">
-        <Check
+      <div className="ml-3 flex flex-col gap-2 border-l border-default-200/60 pl-3">
+        <SwitchField
           label="Restore before a game starts"
           hint="Fetches a newer save from another PC before launching, so you carry on where you left off."
           checked={data?.syncSavesOnLaunch ?? true}
           disabled={!enabled}
           onChange={(next) => update({ syncSavesOnLaunch: next })}
         />
-        <Check
+        <SwitchField
           label="Back up after a game closes"
           hint="Uploads your save when you finish playing. Nothing is uploaded if it has not changed."
           checked={data?.syncSavesOnExit ?? true}
@@ -65,8 +66,8 @@ export function SavesSection() {
         />
       </div>
 
-      <div className="mt-4 flex flex-col gap-2">
-        <p className="text-xs font-medium text-foreground/70">Where saves are kept</p>
+      <div role="radiogroup" aria-label="Where saves are kept" className="mt-4 flex flex-col gap-2">
+        <p className="text-xs text-foreground/55">Where saves are kept</p>
         {(
           [
             ["server", "Needs a server with save sync turned on."],
@@ -75,16 +76,17 @@ export function SavesSection() {
           ] as Array<[SaveBackend, string]>
         ).map(([id, hint]) => (
           <label key={id} className="flex cursor-pointer items-start gap-2">
-            <input
-              type="radio"
+            <Radio
               name="save-backend"
-              className="mt-1"
+              className="mt-0.5"
               checked={active === id}
               onChange={() => update({ saveBackend: id })}
             />
             <span>
-              <span className="text-sm">{BACKEND_LABELS[id]}</span>
-              <span className="block text-[11px] text-foreground/50">{hint}</span>
+              <span className="block text-xs text-foreground/80">{BACKEND_LABELS[id]}</span>
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-foreground/45">
+                {hint}
+              </span>
             </span>
           </label>
         ))}
@@ -95,14 +97,12 @@ export function SavesSection() {
 
       {/* Directly under the location, since that is what it checks. */}
       <div className="mt-3 flex items-center gap-3">
-        <button
-          type="button"
+        <Button
           onClick={() => void test.run(async () => setResult(await backend.testSaveStore()))}
           disabled={test.busy}
-          className="rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
         >
           {test.busy ? "Checking…" : "Test connection"}
-        </button>
+        </Button>
         {result && <span className="text-xs text-success-600">{result}</span>}
         {test.error && <span className="text-xs text-danger">{test.error}</span>}
       </div>
@@ -110,7 +110,7 @@ export function SavesSection() {
 
       {active !== "server" && (
         <div className="mt-3">
-          <Field
+          <TextField
             label="Versions to keep per game"
             type="number"
             value={String(data?.saveMaxVersions ?? 10)}
@@ -138,25 +138,12 @@ function FolderFields({ onChanged }: { onChanged?: () => void }) {
   return (
     <div className="mt-3 flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <input
-          className="min-w-0 flex-1 rounded-lg border border-default-200 bg-content1 px-3 py-1.5 text-xs"
-          placeholder="No folder chosen"
-          readOnly
-          value={folder}
-        />
-        <button
-          type="button"
-          onClick={() => void browse()}
-          className="rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200"
-        >
-          Browse
-        </button>
+        <TextInput mono placeholder="No folder chosen" readOnly value={folder} />
+        <Button onClick={() => void browse()}>Browse…</Button>
       </div>
       {/* The sandbox only reaches the home directory and removable media, the same
           limit the games folder already has. */}
-      <p className="text-[11px] text-foreground/50">
-        In the Flatpak build the folder has to be inside your home directory.
-      </p>
+      <p className={HINT}>In the Flatpak build the folder has to be inside your home directory.</p>
       <SaveError error={error} />
     </div>
   );
@@ -175,18 +162,18 @@ function WebDavFields({ onChanged }: { onChanged?: () => void }) {
 
   return (
     <div className="mt-3 flex flex-col gap-2">
-      <Field
+      <TextField
         label="Address"
         placeholder="https://cloud.example.com/remote.php/dav/files/me/saves"
         value={data?.webdavUrl ?? ""}
         onCommit={(value) => update({ webdavUrl: value })}
       />
-      <Field
+      <TextField
         label="Username"
         value={data?.webdavUsername ?? ""}
         onCommit={(value) => update({ webdavUsername: value })}
       />
-      <Field
+      <TextField
         label="Password"
         type="password"
         value=""
@@ -280,62 +267,46 @@ export function MigrationSection() {
             You switched from {PLACE[switchedFrom]}. Copy your saves from there, so they are
             here too?
           </span>
-          <button
-            type="button"
-            onClick={() => setSwitchedFrom(null)}
-            className="text-foreground/55 underline-offset-2 hover:underline"
-          >
+          <Button size="sm" variant="ghost" onClick={() => setSwitchedFrom(null)}>
             Not now
-          </button>
+          </Button>
         </div>
       )}
 
-      <label className="flex flex-col gap-1 pt-2">
-        <span className="text-xs text-foreground/55">Copy from</span>
-        <select
+      <FormField className="pt-2" label="Copy from" htmlFor="migrate-from">
+        <Select
+          id="migrate-from"
           value={from}
           disabled={busy}
           onChange={(e) => {
             setFrom(e.target.value as SaveBackend);
             setSummary(null);
           }}
-          className={INPUT}
         >
           {sources.map((place) => (
             <option key={place} value={place}>
               {BACKEND_LABELS[place]}
             </option>
           ))}
-        </select>
-      </label>
+        </Select>
+      </FormField>
       {/* The source is set up right here, without making it the place saves are kept. */}
       {from === "folder" && <FolderFields />}
       {from === "webdav" && <WebDavFields />}
 
-      <label className="flex cursor-pointer items-start gap-2 pt-2">
-        <input
-          type="checkbox"
-          className="mt-1"
+      <div className="pt-2">
+        <SwitchField
+          label="Copy every version"
+          hint="Off by default, which copies only each game's newest save."
           checked={allVersions}
-          onChange={(e) => setAllVersions(e.target.checked)}
+          onChange={setAllVersions}
         />
-        <span>
-          <span className="text-sm">Copy every version</span>
-          <span className="block text-[11px] text-foreground/50">
-            Off by default, which copies only each game's newest save.
-          </span>
-        </span>
-      </label>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
-        <button
-          type="button"
-          disabled={busy || !ready}
-          onClick={() => void run()}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-        >
+        <Button variant="primary" disabled={busy || !ready} onClick={() => void run()}>
           {busy ? "Copying…" : "Copy saves"}
-        </button>
+        </Button>
         {busy && progress && (
           <span className="text-xs text-foreground/55">
             {progress.done} of {progress.total} games
@@ -422,7 +393,7 @@ export function SaveToolSection() {
         touched either way.
       </p>
 
-      <div className="mt-2 border-t border-default-200 pt-3">
+      <div className="mt-2 flex flex-col gap-2 border-t border-default-200 pt-3">
         <Row
           label="Game database"
           value={
@@ -431,33 +402,19 @@ export function SaveToolSection() {
               : "Not downloaded yet"
           }
         />
-        <div className="flex flex-wrap items-center gap-3 pt-2">
-          <button
-            type="button"
-            disabled={manifest.busy}
-            onClick={() => void updateManifest()}
-            className="rounded-lg border border-default-200 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-          >
+        <div className="flex flex-wrap items-center gap-3">
+          <Button disabled={manifest.busy} onClick={() => void updateManifest()}>
             {manifest.busy ? "Updating…" : "Update game database"}
-          </button>
+          </Button>
         </div>
-        <label className="flex cursor-pointer items-start gap-2 pt-2">
-          <input
-            type="checkbox"
-            className="mt-1"
-            checked={settings.data?.saveManifestAutoUpdate ?? true}
-            onChange={(e) => void save({ saveManifestAutoUpdate: e.target.checked })}
-          />
-          <span>
-            <span className="text-xs">Keep it up to date automatically</span>
-            <span className="block text-[11px] text-foreground/50">
-              Ludusavi checks once a day while backing up. Turning this off keeps the
-              database you have and leaves updating to the button.
-            </span>
-          </span>
-        </label>
+        <SwitchField
+          label="Keep it up to date automatically"
+          hint="Ludusavi checks once a day while backing up. Turning this off keeps the database you have and leaves updating to the button."
+          checked={settings.data?.saveManifestAutoUpdate ?? true}
+          onChange={(next) => save({ saveManifestAutoUpdate: next })}
+        />
         <SaveError error={manifest.error ?? error} />
-        <p className="pt-2 text-[11px] leading-relaxed text-foreground/45">
+        <p className={HINT}>
           This is the list of where games keep their saves, and it is updated far more
           often than Ludusavi itself. Update it when a game of yours is not recognised. A
           game that is in no version of the list needs its save folder set by hand, on the
@@ -480,14 +437,14 @@ export function DeviceNameField() {
 
   return (
     <>
-      <Field
+      <TextField
         label="This device's name"
         value={settings.data?.deviceName ?? ""}
         placeholder={detected.data ?? "This PC"}
         onCommit={(value) => void save({ deviceName: value })}
       />
       <SaveError error={error} />
-      <p className="pt-1 text-[11px] leading-relaxed text-foreground/45">
+      <p className={`pt-1 ${HINT}`}>
         Shown beside every save this machine uploads, so you can tell which one a save came
         from. Leave it empty to use the name the system reports.
       </p>

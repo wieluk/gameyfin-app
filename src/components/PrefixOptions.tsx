@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { Alert } from "@/components/Alert";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Button, Checkbox, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { formatBytes } from "@/lib/format";
 import { isWindows } from "@/lib/platform";
 import { keys } from "@/lib/queries";
 import { useAction } from "@/lib/useAction";
 import { HINT } from "@/lib/ui";
-import { SmallButton } from "@/views/settings/controls";
 import type { PrefixTool } from "@/bindings/PrefixTool";
 
 /** Windows components worth a checkbox, under the name a player knows them by. */
@@ -108,12 +109,18 @@ export function PrefixOptions({ gameId, title }: { gameId: number; title: string
         The small Windows this game runs inside. Only this game uses it.
       </p>
       <div className="mt-2 flex flex-wrap gap-1.5">
-        <SmallButton onClick={() => open("winecfg")}>Wine settings</SmallButton>
-        <SmallButton onClick={() => open("regedit")}>Registry</SmallButton>
-        <SmallButton onClick={() => open("explorer")}>Browse C:</SmallButton>
-        <SmallButton danger onClick={() => setConfirming(true)}>
+        <Button size="sm" onClick={() => open("winecfg")}>
+          Wine settings
+        </Button>
+        <Button size="sm" onClick={() => open("regedit")}>
+          Registry
+        </Button>
+        <Button size="sm" onClick={() => open("explorer")}>
+          Browse C:
+        </Button>
+        <Button size="sm" variant="destructive" onClick={() => setConfirming(true)}>
           Delete prefix
-        </SmallButton>
+        </Button>
       </div>
 
       <p className="mt-3 text-[11px] font-medium text-foreground/70">Winetricks</p>
@@ -133,40 +140,39 @@ export function PrefixOptions({ gameId, title }: { gameId: number; title: string
             title={component.verb}
             className="flex cursor-pointer items-center gap-2 text-[11px] text-foreground/80"
           >
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(component.verb)}
               disabled={action.busy}
               onChange={() => toggle(component.verb)}
-              className="h-3.5 w-3.5 shrink-0 accent-primary"
             />
             {component.label}
           </label>
         ))}
       </div>
-      <input
+      <TextInput
         aria-label="Other winetricks verbs"
+        mono
         value={other}
         disabled={action.busy}
         onChange={(e) => setOther(e.target.value)}
         spellCheck={false}
         placeholder="Other verbs from ProtonDB, such as dotnet40"
-        className="mt-1.5 w-full rounded-lg border border-default-200 bg-content2 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary"
+        className="mt-1.5"
       />
       <div className="mt-1.5">
-        <SmallButton disabled={action.busy || verbs.length === 0} onClick={() => void install()}>
+        <Button size="sm" disabled={action.busy || verbs.length === 0} onClick={() => void install()}>
           {action.busy
             ? "Installing, this can take minutes…"
             : verbs.length === 1
               ? "Install 1 component"
               : `Install ${verbs.length} components`}
-        </SmallButton>
+        </Button>
       </div>
       {result && <p className="mt-1 text-[11px] text-foreground/70">{result}</p>}
       {action.error && (
-        <p role="alert" className="mt-1 text-[11px] leading-relaxed text-danger">
+        <Alert inline className="mt-1">
           {action.error}
-        </p>
+        </Alert>
       )}
 
       {confirming && (

@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { Select, TextInput } from "@/components/ui";
 import { useAppSettings, useSettingsUpdate } from "@/lib/queries";
 
 /** The download speed cap. Presets cover the common cases; the field takes anything else. */
@@ -78,26 +79,27 @@ export function SpeedLimit() {
 
       {editing ? (
         <div className="flex items-center gap-1">
-          <input
-            id="speed-limit"
-            // `type="number"` blanks unparseable input, which would read as unlimited; `inputMode`
-            // still brings up a numeric keypad.
-            type="text"
-            inputMode="decimal"
-            value={draft}
-            autoFocus
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => void commit()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void commit();
-              if (e.key === "Escape") setEditing(false);
-            }}
-            className="w-20 rounded-lg border border-default-200 bg-content2 px-2 py-1.5 text-xs outline-none focus:border-primary"
-          />
+          <span className="w-20">
+            <TextInput
+              id="speed-limit"
+              // `type="number"` blanks unparseable input, which would read as unlimited; `inputMode`
+              // still brings up a numeric keypad.
+              type="text"
+              inputMode="decimal"
+              value={draft}
+              autoFocus
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => void commit()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void commit();
+                if (e.key === "Escape") setEditing(false);
+              }}
+            />
+          </span>
           <span className="text-xs text-foreground/45">MB/s</span>
         </div>
       ) : (
-        <select
+        <Select
           id="speed-limit"
           value={current}
           onChange={(e) => {
@@ -108,7 +110,6 @@ export function SpeedLimit() {
             }
             void apply(Number(e.target.value));
           }}
-          className="rounded-lg border border-default-200 bg-content2 px-2.5 py-1.5 text-xs outline-none focus:border-primary"
         >
           {options.map((option) => (
             <option key={option.kib} value={option.kib}>
@@ -116,7 +117,7 @@ export function SpeedLimit() {
             </option>
           ))}
           <option value="custom">Custom…</option>
-        </select>
+        </Select>
       )}
     </div>
   );

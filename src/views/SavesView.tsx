@@ -9,6 +9,7 @@ import { SaveMatchDialog } from "@/components/SaveMatchDialog";
 import { SavePathDialog } from "@/components/SavePathDialog";
 import { SaveVersionList, platformLabel } from "@/components/SaveVersionList";
 import { ScanThisPcDialog } from "@/components/ScanThisPcDialog";
+import { Button, IconButton, Switch, ViewHeader } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatBytes, formatRelative } from "@/lib/format";
@@ -21,6 +22,7 @@ import {
 } from "@/lib/saveState";
 import { keys, useEntries, useInvalidate } from "@/lib/queries";
 import { readStored, writeStored } from "@/lib/storage";
+import { PANEL_BODY } from "@/lib/ui";
 import { useAction } from "@/lib/useAction";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { ConflictChoice, SaveSyncState } from "@/types";
@@ -39,11 +41,11 @@ export function useSaveOverview(scope: SaveScope) {
 const EMPTY: Record<SaveScope, { title: string; text: string }> = {
   installed: {
     title: "No installed games yet",
-    text: "Saves are synced for games installed on this PC. Tick Show all saves for games with stored saves, or Show all games for your whole library.",
+    text: "Saves are synced for games installed on this PC. Turn on Show all saves for games with stored saves, or Show all games for your whole library.",
   },
   "with-saves": {
     title: "No saves yet",
-    text: "Nothing is installed here and no saves are stored. Tick Show all games for your whole library.",
+    text: "Nothing is installed here and no saves are stored. Turn on Show all games for your whole library.",
   },
   all: { title: "No games yet", text: "Games appear here once your library has some." },
 };
@@ -161,115 +163,99 @@ export function SavesView() {
   const pathsRow = rows.find((row) => row.gameId === pathsGameId);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
-      <div className="mb-1 flex items-baseline justify-between gap-4">
-        <h1 className="text-lg font-semibold">Saves</h1>
-        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
-          <button
-            type="button"
-            onClick={() => setScanning(true)}
-            className="text-xs text-foreground/60 underline-offset-2 transition-colors hover:text-foreground hover:underline"
-          >
-            Find saves on this PC
-          </button>
-          <button
-            type="button"
-            onClick={() => void openSavesFolder()}
-            className="text-xs text-foreground/60 underline-offset-2 transition-colors hover:text-foreground hover:underline"
-          >
-            Open saves folder
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setNotice(null);
-              setConfirmDeleteAll(true);
-            }}
-            className="text-xs text-danger/80 underline-offset-2 transition-colors hover:text-danger hover:underline"
-          >
-            Delete all saves
-          </button>
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground/60 transition-colors hover:text-foreground">
-            <input
-              type="checkbox"
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ViewHeader
+        title="Saves"
+        actions={
+          <>
+            <Switch
+              label="Show all saves"
               // Every game includes every game with saves, so this one follows along.
               checked={showAllSaves || showAllGames}
               disabled={showAllGames}
-              onChange={(e) => chooseAllSaves(e.target.checked)}
-              className="h-3.5 w-3.5 accent-primary disabled:opacity-50"
+              onChange={chooseAllSaves}
             />
-            Show all saves
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground/60 transition-colors hover:text-foreground">
-            <input
-              type="checkbox"
-              checked={showAllGames}
-              onChange={(e) => chooseAllGames(e.target.checked)}
-              className="h-3.5 w-3.5 accent-primary"
-            />
-            Show all games
-          </label>
-        </div>
+            <Switch label="Show all games" checked={showAllGames} onChange={chooseAllGames} />
+            <Button onClick={() => setScanning(true)}>Find saves on this PC</Button>
+            <Button
+              icon="folder"
+              title="Open the saves folder"
+              onClick={() => void openSavesFolder()}
+            >
+              Open folder
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setNotice(null);
+                setConfirmDeleteAll(true);
+              }}
+            >
+              Delete all saves
+            </Button>
+          </>
+        }
+      />
+
+      <div className={`${PANEL_BODY} flex flex-col`}>
+        <p className="mb-5 text-xs text-foreground/60">
+          Your saves are backed up after you play and restored before you start, on every PC
+          signed in to the same server.
+          {scope === "with-saves" && " Games with stored saves are listed too, installed here or not."}
+          {scope === "all" && " Every game in your library is listed, installed here or not."}
+        </p>
+
+        {notice && (
+          <p role="status" className="mb-3 text-[11px] text-success-600">
+            {notice}
+          </p>
+        )}
+
+        {folderError && (
+          <p role="alert" className="mb-3 text-[11px] text-warning-600">
+            {folderError}
+          </p>
+        )}
+
+        {overview.isLoading ? (
+          <div className="flex flex-1 items-center justify-center">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-default-300 border-t-primary" />
+          </div>
+        ) : overview.error ? (
+          <Alert>{messageOf(overview.error)}</Alert>
+        ) : rows.length === 0 ? (
+          <Empty icon="cloud" title={EMPTY[scope].title}>
+            {EMPTY[scope].text}
+          </Empty>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {rows.map((row) => (
+              <SaveRow
+                key={row.gameId}
+                row={row}
+                busy={busy.has(row.gameId)}
+                outcome={outcome[row.gameId]}
+                onBackup={() => run(row.gameId, () => backend.backupSaves(row.gameId, false))}
+                onRestore={() => run(row.gameId, () => backend.restoreSaves(row.gameId))}
+                onResolve={() => setConflictGameId(row.gameId)}
+                onEnableCrossOs={() =>
+                  run(row.gameId, () => backend.setSaveCrossOs(row.gameId, true))
+                }
+                onIdentify={() => setIdentifyGameId(row.gameId)}
+                onEditPaths={() => setPathsGameId(row.gameId)}
+                expanded={expanded === row.gameId}
+                onToggle={() =>
+                  setExpanded((current) => (current === row.gameId ? null : row.gameId))
+                }
+                onRestoreVersion={(saveId) =>
+                  run(row.gameId, () => backend.restoreSaves(row.gameId, saveId))
+                }
+                onOpenFolder={() => void openGameSaves(row.gameId)}
+              />
+            ))}
+          </div>
+        )}
       </div>
-      <p className="mb-5 text-xs text-foreground/60">
-        Your saves are backed up after you play and restored before you start, on every PC
-        signed in to the same server.
-        {scope === "with-saves" && " Games with stored saves are listed too, installed here or not."}
-        {scope === "all" && " Every game in your library is listed, installed here or not."}
-      </p>
-
-      {notice && (
-        <p role="status" className="mb-3 text-[11px] text-success-600">
-          {notice}
-        </p>
-      )}
-
-      {folderError && (
-        <p role="alert" className="mb-3 text-[11px] text-warning-600">
-          {folderError}
-        </p>
-      )}
-
-      {overview.isLoading ? (
-        <div className="flex flex-1 items-center justify-center">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-default-300 border-t-primary" />
-        </div>
-      ) : overview.error ? (
-        <p role="alert" className="text-xs text-danger">
-          {messageOf(overview.error)}
-        </p>
-      ) : rows.length === 0 ? (
-        <Empty icon="cloud" title={EMPTY[scope].title}>
-          {EMPTY[scope].text}
-        </Empty>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {rows.map((row) => (
-            <SaveRow
-              key={row.gameId}
-              row={row}
-              busy={busy.has(row.gameId)}
-              outcome={outcome[row.gameId]}
-              onBackup={() => run(row.gameId, () => backend.backupSaves(row.gameId, false))}
-              onRestore={() => run(row.gameId, () => backend.restoreSaves(row.gameId))}
-              onResolve={() => setConflictGameId(row.gameId)}
-              onEnableCrossOs={() =>
-                run(row.gameId, () => backend.setSaveCrossOs(row.gameId, true))
-              }
-              onIdentify={() => setIdentifyGameId(row.gameId)}
-              onEditPaths={() => setPathsGameId(row.gameId)}
-              expanded={expanded === row.gameId}
-              onToggle={() =>
-                setExpanded((current) => (current === row.gameId ? null : row.gameId))
-              }
-              onRestoreVersion={(saveId) =>
-                run(row.gameId, () => backend.restoreSaves(row.gameId, saveId))
-              }
-              onOpenFolder={() => void openGameSaves(row.gameId)}
-            />
-          ))}
-        </div>
-      )}
 
       {conflictRow && conflictRow.state.kind === "conflict" && (
         <SaveConflictDialog
@@ -325,22 +311,21 @@ export function SavesView() {
             </div>
           )}
           <ModalFooter>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               disabled={deleteAll.busy}
               onClick={() => setConfirmDeleteAll(false)}
-              className="rounded-lg px-3 py-1.5 text-xs text-foreground/60 hover:bg-default-100 disabled:opacity-50"
             >
               Cancel
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="danger"
+              icon="close"
               disabled={deleteAll.busy}
               onClick={() => void deleteAllSaves()}
-              className="rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-50"
             >
               {deleteAll.busy ? "Deleting…" : "Delete all saves"}
-            </button>
+            </Button>
           </ModalFooter>
         </Modal>
       )}
@@ -391,20 +376,16 @@ function SaveRow({
   const summary = describe(state);
 
   return (
-    <div className="rounded-xl border border-default-200/60 bg-content1">
-      <div className="flex items-center gap-3 px-4 py-3">
-        <button
-          type="button"
-          onClick={onToggle}
+    <div className="rounded-xl border border-default-200 bg-content1">
+      <div className="flex items-center gap-3 p-3">
+        <IconButton
+          icon="chevron"
+          size="sm"
+          label={expanded ? `Hide ${row.title}'s saves` : `Show ${row.title}'s saves`}
           aria-expanded={expanded}
-          aria-label={expanded ? `Hide ${row.title}'s saves` : `Show ${row.title}'s saves`}
-          className="shrink-0 rounded p-0.5 text-foreground/40 transition-colors hover:text-foreground"
-        >
-          <Icon
-            name="chevron"
-            className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-90" : ""}`}
-          />
-        </button>
+          iconClassName={`h-4 w-4 transition-transform ${expanded ? "rotate-90" : ""}`}
+          onClick={onToggle}
+        />
         <Icon name="cloud" className="h-4 w-4 shrink-0 text-foreground/40" />
         <div className="min-w-0 flex-1">
           <p className="flex items-baseline gap-2 truncate text-sm font-medium">
@@ -477,9 +458,9 @@ function SaveRow({
       </div>
 
       {expanded && (
-        <div className="flex flex-col gap-3 border-t border-default-200/60 px-4 py-3">
+        <div className="flex flex-col gap-3 border-t border-default-200/60 px-3 py-3">
           <div>
-            <p className="mb-1.5 text-[11px] font-medium text-foreground/45">Stored versions</p>
+            <p className="mb-1.5 text-xs text-foreground/55">Stored versions</p>
             <SaveVersionList
               gameId={row.gameId}
               busy={busy}
@@ -501,7 +482,9 @@ function SaveRow({
           {/* Reachable whatever the state: a game syncing to the wrong place looks fine
               from the outside, and these two are how that gets fixed. */}
           <div className="flex flex-wrap gap-2">
-            <Action label="Open folder" onClick={onOpenFolder} busy={busy} />
+            <Button icon="folder" onClick={onOpenFolder} disabled={busy}>
+              Open folder
+            </Button>
             <Action label="Set folders" onClick={onEditPaths} busy={busy} />
             <Action label="Choose game" onClick={onIdentify} busy={busy} />
             {state.kind === "conflict" && (
@@ -526,18 +509,9 @@ function Action({
   primary?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={busy}
-      className={`rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
-        primary
-          ? "bg-primary text-white hover:bg-primary/90"
-          : "bg-default-100 hover:bg-default-200"
-      }`}
-    >
-      {busy ? "Working..." : label}
-    </button>
+    <Button variant={primary ? "primary" : "secondary"} onClick={onClick} disabled={busy}>
+      {busy ? "Working…" : label}
+    </Button>
   );
 }
 

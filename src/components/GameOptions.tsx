@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { Alert } from "@/components/Alert";
+import { FormField, Select, SwitchField, TextArea, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { isWindows } from "@/lib/platform";
@@ -32,6 +34,11 @@ function useGameOptions(gameId: number) {
   return { data: options.data, save };
 }
 
+/** Pressing Enter in a single-line box leaves it, which is what saves it. */
+function blurOnEnter(e: React.KeyboardEvent<HTMLInputElement>) {
+  if (e.key === "Enter") e.currentTarget.blur();
+}
+
 /** Everything that applies to running the game: flags, environment and Proton settings. */
 export function LaunchOptions({ gameId }: { gameId: number }) {
   const { data, save } = useGameOptions(gameId);
@@ -44,22 +51,21 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
   const [saved, flashSaved] = useFlash();
   const [error, setError] = useState<string | null>(null);
 
-  // Reset drafts when the query lands or the game changes, so the boxes never show stale values.
-  useEffect(() => {
-    setLaunch(null);
-    setEnvironment(null);
-    setProtonBuild(null);
-    setToggles(null);
-  }, [gameId, data]);
+  // Each draft drops only when its own value lands, so saving one box never wipes another mid-edit.
+  useEffect(() => setLaunch(null), [gameId, data?.launchArguments]);
+  useEffect(() => setEnvironment(null), [gameId, data?.launchEnvironment]);
+  useEffect(() => setProtonBuild(null), [gameId, data?.protonBuild]);
+  useEffect(
+    () => setToggles(null),
+    [gameId, data?.launchToggles?.wayland, data?.launchToggles?.wow64],
+  );
 
-  const currentLaunch = launch ?? data?.launchArguments ?? "";
-  const currentEnvironment = environment ?? data?.launchEnvironment ?? "";
+  const storedLaunch = data?.launchArguments ?? "";
+  const storedEnvironment = data?.launchEnvironment ?? "";
+  const currentLaunch = launch ?? storedLaunch;
+  const currentEnvironment = environment ?? storedEnvironment;
   const currentProtonBuild = protonBuild ?? data?.protonBuild ?? "";
   const currentToggles = toggles ?? data?.launchToggles ?? NO_TOGGLES;
-  // Only the text boxes wait for Save: a half-typed flag must not reach the next launch.
-  const dirty =
-    (launch !== null && launch !== (data?.launchArguments ?? "")) ||
-    (environment !== null && environment !== (data?.launchEnvironment ?? ""));
 
   async function apply(change: GameOptionsPatch) {
     setError(null);
@@ -84,64 +90,55 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
     void apply({ launchToggles: next });
   }
 
-  function commit() {
-    void apply({ launchArguments: currentLaunch, launchEnvironment: currentEnvironment });
+  // Text saves on leaving the box, so a half-typed flag never reaches a launch.
+  function commitLaunch() {
+    if (launch !== null && launch !== storedLaunch) void apply({ launchArguments: launch });
+  }
+
+  function commitEnvironment() {
+    if (environment !== null && environment !== storedEnvironment) {
+      void apply({ launchEnvironment: environment });
+    }
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <div>
-        <label
-          className="mb-1 block text-[11px] text-foreground/45"
-          htmlFor={`launch-args-${gameId}`}
-        >
-          Launch options
-        </label>
-        <input
+      <FormField label="Launch options" htmlFor={`launch-args-${gameId}`}>
+        <TextInput
           id={`launch-args-${gameId}`}
+          mono
           value={currentLaunch}
           onChange={(e) => setLaunch(e.target.value)}
+          onBlur={commitLaunch}
+          onKeyDown={blurOnEnter}
           spellCheck={false}
           placeholder="-windowed -nolauncher"
-          className="w-full rounded-lg border border-default-200 bg-content2 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary"
         />
-      </div>
+      </FormField>
 
-      <div>
-        <label
-          className="mb-1 block text-[11px] text-foreground/45"
-          htmlFor={`launch-env-${gameId}`}
-        >
-          Environment variables
-        </label>
-        <textarea
+      <FormField
+        label="Environment variables"
+        htmlFor={`launch-env-${gameId}`}
+        hint="One KEY=value per line, set when the game starts. This is where a fix copied from ProtonDB goes."
+      >
+        <TextArea
           id={`launch-env-${gameId}`}
+          mono
+          rows={3}
           value={currentEnvironment}
           onChange={(e) => setEnvironment(e.target.value)}
+          onBlur={commitEnvironment}
           spellCheck={false}
-          rows={3}
           placeholder="DXVK_HUD=fps"
-          className="w-full resize-y rounded-lg border border-default-200 bg-content2 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary"
         />
-        <p className="mt-1 text-[11px] leading-relaxed text-foreground/45">
-          One KEY=value per line, set when the game starts. This is where a fix copied from
-          ProtonDB goes.
-        </p>
-      </div>
+      </FormField>
 
       {!isWindows && (data?.protonBuilds.length ?? 0) > 1 && (
-        <div>
-          <label
-            className="mb-1 block text-[11px] text-foreground/45"
-            htmlFor={`proton-build-${gameId}`}
-          >
-            Proton build
-          </label>
-          <select
+        <FormField label="Proton build" htmlFor={`proton-build-${gameId}`}>
+          <Select
             id={`proton-build-${gameId}`}
             value={currentProtonBuild}
             onChange={(e) => changeBuild(e.target.value)}
-            className="w-full rounded-lg border border-default-200 bg-content2 px-2 py-1.5 text-[11px] outline-none focus:border-primary"
           >
             <option value="">UMU-Proton (default)</option>
             {data?.protonBuilds
@@ -151,19 +148,19 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
                   {build.name}
                 </option>
               ))}
-          </select>
-        </div>
+          </Select>
+        </FormField>
       )}
 
       {!isWindows && (
-        <div className="flex flex-col gap-1.5">
-          <ProtonSwitch
+        <div className="flex flex-col gap-2 pt-1">
+          <SwitchField
             label="Wayland"
             hint="Draws the game without XWayland."
             checked={currentToggles.wayland}
             onChange={(wayland) => changeToggles({ ...currentToggles, wayland })}
           />
-          <ProtonSwitch
+          <SwitchField
             label="WOW64"
             hint="Runs 32-bit games without 32-bit system libraries. Can break anti-cheat."
             checked={currentToggles.wow64}
@@ -172,53 +169,9 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
         </div>
       )}
 
-      {error && (
-        <p role="alert" className="text-[11px] leading-relaxed text-danger">
-          {error}
-        </p>
-      )}
-
-      {dirty ? (
-        <div>
-          <button
-            type="button"
-            onClick={commit}
-            className="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-primary-600"
-          >
-            Save options
-          </button>
-        </div>
-      ) : (
-        saved && <p className="text-[11px] text-success-600">Saved</p>
-      )}
+      {error && <Alert inline>{error}</Alert>}
+      {saved && <p className="text-[11px] text-success-600">Saved</p>}
     </div>
-  );
-}
-
-function ProtonSwitch({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <label className="flex cursor-pointer items-start gap-2 text-[11px] text-foreground/80">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-primary"
-      />
-      <span>
-        {label}
-        <span className="block leading-relaxed text-foreground/45">{hint}</span>
-      </span>
-    </label>
   );
 }
 
@@ -235,12 +188,12 @@ export function SetupOptions({ gameId, hint }: { gameId: number; hint?: string }
   useEffect(() => setDraft(null), [stored]);
 
   const current = draft ?? stored;
-  const dirty = draft !== null && draft !== stored;
 
   async function commit() {
+    if (draft === null || draft === stored) return;
     setError(null);
     try {
-      await save({ installerArguments: current });
+      await save({ installerArguments: draft });
       flashSaved();
     } catch (e) {
       setError(messageOf(e));
@@ -248,38 +201,21 @@ export function SetupOptions({ gameId, hint }: { gameId: number; hint?: string }
   }
 
   return (
-    <div>
-      <label
-        className="mb-1 block text-[11px] text-foreground/45"
-        htmlFor={`installer-args-${gameId}`}
-      >
-        Setup options
-      </label>
-      <input
-        id={`installer-args-${gameId}`}
-        value={current}
-        onChange={(e) => setDraft(e.target.value)}
-        spellCheck={false}
-        placeholder="/VERYSILENT"
-        className="w-full rounded-lg border border-default-200 bg-content2 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-primary"
-      />
-      {hint && <p className="mt-1 text-[11px] leading-relaxed text-foreground/45">{hint}</p>}
-
-      {error && (
-        <p role="alert" className="mt-1 text-[11px] leading-relaxed text-danger">
-          {error}
-        </p>
-      )}
-
-      {(dirty || saved) && (
-        <button
-          type="button"
-          onClick={() => void commit()}
-          className="mt-1.5 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-primary-600"
-        >
-          {saved ? "Saved" : "Save"}
-        </button>
-      )}
+    <div className="flex flex-col gap-1">
+      <FormField label="Setup options" htmlFor={`installer-args-${gameId}`} hint={hint}>
+        <TextInput
+          id={`installer-args-${gameId}`}
+          mono
+          value={current}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => void commit()}
+          onKeyDown={blurOnEnter}
+          spellCheck={false}
+          placeholder="/VERYSILENT"
+        />
+      </FormField>
+      {error && <Alert inline>{error}</Alert>}
+      {saved && <p className="text-[11px] text-success-600">Saved</p>}
     </div>
   );
 }

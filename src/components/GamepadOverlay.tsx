@@ -1,4 +1,5 @@
 import { Icon } from "@/components/Icon";
+import { Button, IconButton } from "@/components/ui";
 import { BUTTON_HELP } from "@/lib/gamepad";
 import { useCouch } from "@/state/couch";
 import { useDismissOnEscape } from "@/lib/useDismiss";
@@ -34,14 +35,7 @@ function Overlay() {
         <div className="mb-4 flex items-center gap-2">
           <Icon name="controller" className="h-5 w-5 text-primary" />
           <h2 className="flex-1 text-sm font-semibold">Controller</h2>
-          <button
-            type="button"
-            onClick={closeHelp}
-            aria-label="Close"
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground/45 transition-colors hover:bg-default-100 hover:text-foreground"
-          >
-            <Icon name="close" className="h-4 w-4" />
-          </button>
+          <IconButton icon="close" label="Close" size="sm" onClick={closeHelp} />
         </div>
 
         {name && (
@@ -61,13 +55,9 @@ function Overlay() {
           ))}
         </dl>
 
-        <button
-          type="button"
-          onClick={() => setCouch(!couch)}
-          className="mt-4 w-full rounded-lg border border-default-200 px-3 py-2 text-xs text-foreground/70 transition-colors hover:bg-default-100"
-        >
+        <Button className="mt-4 w-full" onClick={() => setCouch(!couch)}>
           {couch ? "Switch back to the normal layout" : "Switch to the large layout"}
-        </button>
+        </Button>
       </div>
     </div>
   );

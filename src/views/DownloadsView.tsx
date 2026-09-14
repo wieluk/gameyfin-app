@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Icon } from "@/components/Icon";
+import { Alert } from "@/components/Alert";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DownloadProvider } from "@/components/DownloadProvider";
 import { FolderActions } from "@/components/FolderActions";
 import { InstallDialog } from "@/components/InstallDialog";
 import { SpeedLimit } from "@/components/SpeedLimit";
 import { TransferProgress } from "@/components/TransferProgress";
+import { Button, ViewHeader } from "@/components/ui";
 import { isInDownloads, needsChooser, primaryAction } from "@/lib/actions";
 import { backend } from "@/lib/backend";
 import { formatBytes, formatEta, formatSpeed } from "@/lib/format";
@@ -15,7 +16,7 @@ import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
 import { keys, useEntries } from "@/lib/queries";
 import { useRescanOnOpen } from "@/lib/rescan";
-import { BUTTON, PANEL_BODY } from "@/lib/ui";
+import { PANEL_BODY } from "@/lib/ui";
 
 /** Transfers in progress, and finished downloads awaiting the separate decision to install. */
 export function DownloadsView() {
@@ -45,34 +46,23 @@ export function DownloadsView() {
   );
 
   const header = (
-    <div className="flex shrink-0 items-center justify-between border-b border-default-200/60 px-6 py-3">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground/45">
-        Downloads
-      </h2>
-      <div className="flex items-center gap-3">
-        <DownloadProvider onError={setError} />
-        <SpeedLimit />
-        <FolderActions folder="downloads" onError={setError} />
-      </div>
-    </div>
-  );
-
-  // Both actions in the header can fail with the list empty, so the error line travels
-  // with the header rather than living inside the branch that renders rows.
-  const errorLine = error && (
-    <p
-      role="alert"
-      className="mx-6 mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
-    >
-      {error}
-    </p>
+    <ViewHeader
+      title="Downloads"
+      error={error}
+      actions={
+        <>
+          <DownloadProvider onError={setError} />
+          <SpeedLimit />
+          <FolderActions folder="downloads" onError={setError} />
+        </>
+      }
+    />
   );
 
   if (entries.isLoading) {
     return (
       <>
         {header}
-        {errorLine}
         <Empty icon="download" title="Loading…">Reading your library.</Empty>
       </>
     );
@@ -82,7 +72,6 @@ export function DownloadsView() {
     return (
       <>
         {header}
-        {errorLine}
         <Empty icon="download" title="No downloads">
           Downloads appear here and stay until you install them.
         </Empty>
@@ -132,15 +121,6 @@ export function DownloadsView() {
           />
         ))}
       </div>
-
-      {error && (
-        <p
-          role="alert"
-          className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
-        >
-          {error}
-        </p>
-      )}
 
       {installing && (
         <InstallDialog entry={installing} onClose={() => setInstalling(null)} />
@@ -226,22 +206,14 @@ function DownloadRow({
               {/* Extraction always finishes, so it cannot be stopped; an installer can wedge,
                   so it can, and "Retry install" starts it over. */}
               {state.kind === "downloading" && (
-                <button
-                  type="button"
-                  onClick={() => onCancel(entry)}
-                  className="rounded-lg border border-default-200 px-2 py-1 text-[11px] text-foreground/60 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
-                >
+                <Button size="sm" variant="destructive" onClick={() => onCancel(entry)}>
                   Cancel
-                </button>
+                </Button>
               )}
               {state.kind === "installing" && (
-                <button
-                  type="button"
-                  onClick={() => onStopInstall(entry)}
-                  className="rounded-lg border border-default-200 px-2 py-1 text-[11px] text-foreground/60 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
-                >
+                <Button size="sm" variant="destructive" onClick={() => onStopInstall(entry)}>
                   Stop
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -260,10 +232,7 @@ function DownloadRow({
       )}
 
       {state.kind === "failed" && (
-        <p
-          role="alert"
-          className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
-        >
+        <Alert>
           {state.message}
           {needsElevation && (
             <span className="mt-1 block text-foreground/60">
@@ -271,7 +240,7 @@ function DownloadRow({
               Choosing this shows Windows&rsquo; own confirmation.
             </span>
           )}
-        </p>
+        </Alert>
       )}
 
       {(state.kind === "downloaded" ||
@@ -279,43 +248,29 @@ function DownloadRow({
         state.kind === "failed") && (
         <div className="mt-3 flex gap-2">
           {needsElevation ? (
-            <button
-              type="button"
-              onClick={() => onElevate(game.id)}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
-            >
-              <Icon name="installed" className="h-3.5 w-3.5" />
+            <Button variant="primary" icon="installed" onClick={() => onElevate(game.id)}>
               Run as administrator
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              icon={action.icon}
               onClick={() => {
                 // Extracting and installing both involve a choice; retrying a download
                 // does not.
                 if (needsChooser(state)) onInstall(entry);
                 else onRun(() => action.run(game.id));
               }}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
             >
-              <Icon name={action.icon} className="h-3.5 w-3.5" />
               {action.label}
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
-            onClick={() => onOpenFolder(game.id)}
-            className={BUTTON}
-          >
+          <Button icon="folder" onClick={() => onOpenFolder(game.id)}>
             Open folder
-          </button>
-          <button
-            type="button"
-            onClick={() => onDelete(entry)}
-            className="ml-auto rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/60 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
-          >
+          </Button>
+          <Button variant="destructive" className="ml-auto" onClick={() => onDelete(entry)}>
             Delete
-          </button>
+          </Button>
         </div>
       )}
     </article>
@@ -359,4 +314,3 @@ function statusText(entry: LibraryEntry): string {
       return "";
   }
 }
-
