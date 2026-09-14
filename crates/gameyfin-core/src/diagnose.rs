@@ -75,7 +75,7 @@ pub fn explain(output: &str) -> Option<&'static str> {
     if has(&["err:vkd3d"]) || has(&["err:dxgi"]) {
         return Some(
             "The Direct3D translation layer reported an error. Deleting this game's \
-             prefix under Settings, Compatibility rebuilds it with a fresh copy.",
+             prefix, in its options under Installed, rebuilds it with a fresh copy.",
         );
     }
 
@@ -89,9 +89,88 @@ pub fn explain(output: &str) -> Option<&'static str> {
     None
 }
 
+/// A missing library, or the start of a family of them, and the winetricks verb that installs it.
+const LIBRARIES: &[(&[&str], &str)] = &[
+    (
+        &["msvcp140", "vcruntime140", "concrt140", "vcomp140"],
+        "vcrun2022",
+    ),
+    (&["msvcp120", "msvcr120", "vcomp120"], "vcrun2013"),
+    (&["msvcp110", "msvcr110", "vcomp110"], "vcrun2012"),
+    (&["msvcp100", "msvcr100", "vcomp100"], "vcrun2010"),
+    (&["msvcp90", "msvcr90"], "vcrun2008"),
+    (&["d3dx9_"], "d3dx9"),
+    (&["d3dx10_"], "d3dx10"),
+    (&["d3dx11_"], "d3dx11_43"),
+    (&["d3dcompiler_47"], "d3dcompiler_47"),
+    (
+        &["xinput1_1", "xinput1_2", "xinput1_3", "xinput9_1_0"],
+        "xinput",
+    ),
+    (&["xactengine", "x3daudio", "xapofx", "xaudio2_"], "xact"),
+    (&["physxloader", "physxcore", "nxcooking"], "physx"),
+    (&["xnafx40", "xnagame"], "xna40"),
+];
+
+/// Winetricks verbs for the Windows libraries a failed start could not find, so the fix is a
+/// click rather than a search. Only the library that was missing counts, not whatever needed it.
+pub fn winetricks_for(output: &str) -> Vec<&'static str> {
+    let lower = output.to_lowercase();
+    let mut verbs = Vec::new();
+    for name in lower.lines().filter_map(missing_library) {
+        let name = name.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.');
+        for (families, verb) in LIBRARIES {
+            if families.iter().any(|family| name.starts_with(family)) && !verbs.contains(verb) {
+                verbs.push(*verb);
+            }
+        }
+    }
+    verbs
+}
+
+/// The library a line says is missing: Wine's `Library X.dll (which is needed by ...) not
+/// found`, or Windows' `X.dll is missing`.
+fn missing_library(line: &str) -> Option<&str> {
+    if line.contains("not found") {
+        if let Some((_, rest)) = line.split_once("library ") {
+            return rest.split_whitespace().next();
+        }
+    }
+    line.split_once(" is missing")
+        .and_then(|(before, _)| before.split_whitespace().last())
+        .filter(|name| name.contains(".dll"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_visual_cpp_runtime_suggests_its_verb() {
+        let output = r#"err:module:import_dll Library MSVCP140.dll (which is needed by L"Z:\\games\\Game.exe") not found"#;
+        assert_eq!(winetricks_for(output), ["vcrun2022"]);
+    }
+
+    #[test]
+    fn several_missing_libraries_suggest_each_verb_once() {
+        let output = "err:module:import_dll Library VCRUNTIME140_1.dll (which is needed by L\"a.exe\") not found\n\
+                      err:module:import_dll Library d3dx9_43.dll (which is needed by L\"a.exe\") not found\n\
+                      err:module:import_dll Library MSVCP140.dll (which is needed by L\"b.dll\") not found\n\
+                      The program can't start because XINPUT1_3.dll is missing";
+        assert_eq!(winetricks_for(output), ["vcrun2022", "d3dx9", "xinput"]);
+    }
+
+    #[test]
+    fn the_library_that_needed_it_is_not_mistaken_for_the_missing_one() {
+        let output = r#"err:module:import_dll Library steam_api64.dll (which is needed by L"C:\\game\\d3dx9_43.dll") not found"#;
+        assert!(winetricks_for(output).is_empty());
+    }
+
+    #[test]
+    fn output_without_a_missing_library_suggests_nothing() {
+        assert!(winetricks_for("").is_empty());
+        assert!(winetricks_for("fixme:d3d:wined3d_guess_card\nLoading assets").is_empty());
+    }
 
     #[test]
     fn the_message_that_started_all_this_is_recognised() {

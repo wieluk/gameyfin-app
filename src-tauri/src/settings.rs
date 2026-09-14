@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gameyfin_core::wine::WineVariant;
 use serde::{Deserialize, Serialize};
 
 /// A partial update: a field that was not sent keeps its value. For text fields an empty
@@ -26,19 +25,14 @@ pub struct SettingsPatch {
     pub couch_mode_auto: Option<bool>,
     pub umu_fixes: Option<bool>,
     pub umu_auto_update: Option<bool>,
-    pub graphics_components: Option<bool>,
     pub check_for_updates: Option<bool>,
-    pub setup_dismissed: Option<bool>,
     pub installer_memory_limit: Option<InstallerMemoryLimit>,
     pub download_limit_kib: Option<u32>,
     pub delete_archive_after_extract: Option<bool>,
     pub delete_download_after_install: Option<bool>,
-    pub unpack_while_downloading: Option<bool>,
     pub theme: Option<Theme>,
     pub log_level: Option<LogLevel>,
-    pub wine_variant: Option<WineVariant>,
     pub library_root: Option<String>,
-    pub default_proton: Option<String>,
     pub extraction_password: Option<String>,
     pub ignored_executables: Option<Vec<String>>,
     pub save_manifest_auto_update: Option<bool>,
@@ -84,17 +78,13 @@ impl SettingsPatch {
             couch_mode_auto,
             umu_fixes,
             umu_auto_update,
-            graphics_components,
             check_for_updates,
-            setup_dismissed,
             installer_memory_limit,
             download_limit_kib,
             delete_archive_after_extract,
             delete_download_after_install,
-            unpack_while_downloading,
             theme,
             log_level,
-            wine_variant,
             save_manifest_auto_update,
             save_sync_enabled,
             sync_saves_on_launch,
@@ -103,7 +93,6 @@ impl SettingsPatch {
         );
         set_text!(
             library_root,
-            default_proton,
             device_name,
             save_folder,
             webdav_url,
@@ -147,12 +136,8 @@ pub struct Settings {
     pub download_limit_kib: u32,
     /// Repack installers size buffers from all the RAM they find, so they are capped.
     pub installer_memory_limit: InstallerMemoryLimit,
-    pub wine_variant: WineVariant,
-    /// `None` is the newest UMU-Proton Gameyfin has downloaded.
-    pub default_proton: Option<String>,
     /// `None` is the server's highest-priority provider.
     pub download_provider: Option<String>,
-    pub setup_dismissed: bool,
     pub notify_transfers: bool,
     /// Separate so failures stay audible with the routine chatter off.
     pub notify_failures: bool,
@@ -162,12 +147,8 @@ pub struct Settings {
     pub auto_install: bool,
     pub delete_archive_after_extract: bool,
     pub delete_download_after_install: bool,
-    /// Only a folder game qualifies, since Gameyfin zips those on the fly.
-    pub unpack_while_downloading: bool,
     pub umu_fixes: bool,
     pub umu_auto_update: bool,
-    /// DXVK and vkd3d-proton; off falls back to WineD3D, where Direct3D 12 does not start.
-    pub graphics_components: bool,
     pub gamepad_enabled: bool,
     /// 0.0 to 1.0; a worn stick rests off-centre.
     pub gamepad_deadzone: f64,
@@ -208,10 +189,7 @@ impl Default for Settings {
             log_level: LogLevel::default(),
             download_limit_kib: 0,
             installer_memory_limit: InstallerMemoryLimit::default(),
-            wine_variant: WineVariant::default(),
-            default_proton: None,
             download_provider: None,
-            setup_dismissed: false,
             notify_transfers: true,
             notify_failures: true,
             notify_updates: true,
@@ -220,10 +198,8 @@ impl Default for Settings {
             auto_install: false,
             delete_archive_after_extract: true,
             delete_download_after_install: false,
-            unpack_while_downloading: true,
             umu_fixes: true,
             umu_auto_update: true,
-            graphics_components: true,
             gamepad_enabled: true,
             gamepad_deadzone: 0.25,
             couch_mode_auto: true,
@@ -540,19 +516,14 @@ mod tests {
         ("couchModeAuto", "false"),
         ("umuFixes", "false"),
         ("umuAutoUpdate", "false"),
-        ("graphicsComponents", "false"),
         ("checkForUpdates", "false"),
-        ("setupDismissed", "true"),
         ("installerMemoryLimit", "2048"),
         ("downloadLimitKib", "512"),
         ("deleteArchiveAfterExtract", "false"),
         ("deleteDownloadAfterInstall", "true"),
-        ("unpackWhileDownloading", "false"),
         ("theme", "\"light\""),
         ("logLevel", "\"debug\""),
-        ("wineVariant", "\"staging\""),
         ("libraryRoot", "\"/games\""),
-        ("defaultProton", "\"GE-Proton10-1\""),
         ("extractionPassword", "\"hunter2\""),
         ("ignoredExecutables", "[\"x.exe\"]"),
         ("saveManifestAutoUpdate", "false"),

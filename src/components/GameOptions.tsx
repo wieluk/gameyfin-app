@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
+import { isWindows } from "@/lib/platform";
 import { keys } from "@/lib/queries";
 import { useFlash } from "@/lib/useFlash";
 import type { GameOptionsPatch } from "@/bindings/GameOptionsPatch";
@@ -31,13 +32,13 @@ function useGameOptions(gameId: number) {
   return { data: options.data, save };
 }
 
-/** Everything that applies to running the game: flags, environment, runtime, Proton build. */
+/** Everything that applies to running the game: flags, environment and Proton settings. */
 export function LaunchOptions({ gameId }: { gameId: number }) {
   const { data, save } = useGameOptions(gameId);
 
   const [launch, setLaunch] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<string | null>(null);
-  const [runtime, setRuntime] = useState<string | null>(null);
+  // Shown at once while the save runs, since switches and pickers save on change.
   const [protonBuild, setProtonBuild] = useState<string | null>(null);
   const [toggles, setToggles] = useState<LaunchToggles | null>(null);
   const [saved, flashSaved] = useFlash();
@@ -47,42 +48,44 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
   useEffect(() => {
     setLaunch(null);
     setEnvironment(null);
-    setRuntime(null);
     setProtonBuild(null);
     setToggles(null);
   }, [gameId, data]);
 
   const currentLaunch = launch ?? data?.launchArguments ?? "";
   const currentEnvironment = environment ?? data?.launchEnvironment ?? "";
-  const currentRuntime = runtime ?? data?.runtimeOverride ?? "auto";
   const currentProtonBuild = protonBuild ?? data?.protonBuild ?? "";
-  const storedToggles = data?.launchToggles ?? NO_TOGGLES;
-  const currentToggles = toggles ?? storedToggles;
-  // A build only matters when the game runs through Proton, automatically or by choice.
-  const usesProton = currentRuntime === "auto" || currentRuntime === "umu";
+  const currentToggles = toggles ?? data?.launchToggles ?? NO_TOGGLES;
+  // Only the text boxes wait for Save: a half-typed flag must not reach the next launch.
   const dirty =
     (launch !== null && launch !== (data?.launchArguments ?? "")) ||
-    (environment !== null && environment !== (data?.launchEnvironment ?? "")) ||
-    (runtime !== null && runtime !== (data?.runtimeOverride ?? "auto")) ||
-    (protonBuild !== null && protonBuild !== (data?.protonBuild ?? "")) ||
-    (toggles !== null &&
-      (toggles.wayland !== storedToggles.wayland || toggles.wow64 !== storedToggles.wow64));
+    (environment !== null && environment !== (data?.launchEnvironment ?? ""));
 
-  async function commit() {
+  async function apply(change: GameOptionsPatch) {
     setError(null);
     try {
-      await save({
-        launchArguments: currentLaunch,
-        launchEnvironment: currentEnvironment,
-        // An empty value clears the override, so "auto" and "no pin" send exactly that.
-        runtimeOverride: currentRuntime,
-        protonBuild: currentProtonBuild,
-        launchToggles: currentToggles,
-      });
+      await save(change);
       flashSaved();
     } catch (e) {
       setError(messageOf(e));
+      setProtonBuild(null);
+      setToggles(null);
     }
+  }
+
+  function changeBuild(build: string) {
+    setProtonBuild(build);
+    // Empty clears the pin.
+    void apply({ protonBuild: build });
+  }
+
+  function changeToggles(next: LaunchToggles) {
+    setToggles(next);
+    void apply({ launchToggles: next });
+  }
+
+  function commit() {
+    void apply({ launchArguments: currentLaunch, launchEnvironment: currentEnvironment });
   }
 
   return (
@@ -122,40 +125,11 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
         />
         <p className="mt-1 text-[11px] leading-relaxed text-foreground/45">
           One KEY=value per line, set when the game starts. This is where a fix copied from
-          ProtonDB goes. WINEDLLOVERRIDES is merged with the ones Gameyfin sets, so
-          dxgi=builtin turns DXVK off for this game alone.
+          ProtonDB goes.
         </p>
       </div>
 
-      {(data?.availableRuntimes.length ?? 0) > 0 && (
-        <div>
-          <label
-            className="mb-1 block text-[11px] text-foreground/45"
-            htmlFor={`runtime-${gameId}`}
-          >
-            Runtime
-          </label>
-          <select
-            id={`runtime-${gameId}`}
-            value={currentRuntime}
-            onChange={(e) => setRuntime(e.target.value)}
-            className="w-full rounded-lg border border-default-200 bg-content2 px-2 py-1.5 text-[11px] outline-none focus:border-primary"
-          >
-            <option value="auto">Automatic (default)</option>
-            {data?.availableRuntimes.map((choice) => (
-              <option key={choice.kind} value={choice.kind}>
-                {choice.label}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-[11px] leading-relaxed text-foreground/45">
-            Runs this game on something other than the usual choice. Changing it rebuilds
-            the game's prefix on the next launch.
-          </p>
-        </div>
-      )}
-
-      {usesProton && (data?.protonBuilds.length ?? 0) > 0 && (
+      {!isWindows && (data?.protonBuilds.length ?? 0) > 1 && (
         <div>
           <label
             className="mb-1 block text-[11px] text-foreground/45"
@@ -166,35 +140,34 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
           <select
             id={`proton-build-${gameId}`}
             value={currentProtonBuild}
-            onChange={(e) => setProtonBuild(e.target.value)}
+            onChange={(e) => changeBuild(e.target.value)}
             className="w-full rounded-lg border border-default-200 bg-content2 px-2 py-1.5 text-[11px] outline-none focus:border-primary"
           >
-            <option value="">Default</option>
-            {data?.protonBuilds.map((build) => (
-              <option key={`${build.source}:${build.name}`} value={build.name}>
-                {build.source === "steam" ? `${build.name} (from Steam)` : build.name}
-              </option>
-            ))}
+            <option value="">UMU-Proton (default)</option>
+            {data?.protonBuilds
+              .filter((build) => build.family !== "umu-proton")
+              .map((build) => (
+                <option key={build.name} value={build.name}>
+                  {build.name}
+                </option>
+              ))}
           </select>
-          <p className="mt-1 text-[11px] leading-relaxed text-foreground/45">
-            GE-Proton is worth trying for a game whose cutscenes stay black on the default.
-          </p>
         </div>
       )}
 
-      {usesProton && (
+      {!isWindows && (
         <div className="flex flex-col gap-1.5">
           <ProtonSwitch
             label="Wayland"
-            hint="Draws the game without XWayland. Needs Proton 10 or GE-Proton."
+            hint="Draws the game without XWayland."
             checked={currentToggles.wayland}
-            onChange={(wayland) => setToggles({ ...currentToggles, wayland })}
+            onChange={(wayland) => changeToggles({ ...currentToggles, wayland })}
           />
           <ProtonSwitch
             label="WOW64"
-            hint="Runs 32-bit games without 32-bit system libraries. Needs Proton 10 or GE-Proton."
+            hint="Runs 32-bit games without 32-bit system libraries. Can break anti-cheat."
             checked={currentToggles.wow64}
-            onChange={(wow64) => setToggles({ ...currentToggles, wow64 })}
+            onChange={(wow64) => changeToggles({ ...currentToggles, wow64 })}
           />
         </div>
       )}
@@ -205,22 +178,23 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
         </p>
       )}
 
-      {(dirty || saved) && (
+      {dirty ? (
         <div>
           <button
             type="button"
-            onClick={() => void commit()}
+            onClick={commit}
             className="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-primary-600"
           >
-            {saved ? "Saved" : "Save options"}
+            Save options
           </button>
         </div>
+      ) : (
+        saved && <p className="text-[11px] text-success-600">Saved</p>
       )}
     </div>
   );
 }
 
-/** A checkbox with its hint, sized to match the option boxes around it. */
 function ProtonSwitch({
   label,
   hint,

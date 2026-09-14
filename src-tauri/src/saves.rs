@@ -1829,6 +1829,9 @@ async fn bundled_version(app: &AppHandle) -> Option<String> {
     })
 }
 
+/// How many past versions of the save helper are offered.
+const SAVE_TOOL_CHOICES: usize = 10;
+
 #[tauri::command]
 pub async fn save_tool_status(
     app: AppHandle,
@@ -1836,7 +1839,7 @@ pub async fn save_tool_status(
 ) -> CommandResult<gameyfin_core::save_tool::SaveToolStatus> {
     let config_dir = state.config_dir();
     // An unreachable feed must not stop the screen showing what is installed.
-    let releases = gameyfin_core::save_tool::releases(&state.http(), crate::wine::RELEASE_CHOICES)
+    let releases = gameyfin_core::save_tool::releases(&state.http(), SAVE_TOOL_CHOICES)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!(error = %e, "could not check for a save helper update");
@@ -1912,7 +1915,7 @@ pub async fn install_save_tool(
     state: State<'_, AppState>,
     version: Option<String>,
 ) -> CommandResult<gameyfin_core::save_tool::InstalledSaveTool> {
-    let releases = gameyfin_core::save_tool::releases(&state.http(), crate::wine::RELEASE_CHOICES)
+    let releases = gameyfin_core::save_tool::releases(&state.http(), SAVE_TOOL_CHOICES)
         .await
         .context("could not look up the save helper")?;
     let release = match &version {
@@ -1927,7 +1930,7 @@ pub async fn install_save_tool(
         &state.config_dir(),
         &release,
         &downloader,
-        crate::progress::emitter(&app, "save-tool-progress"),
+        crate::progress::emitter(&app, "save-tool-progress", None),
     )
     .await
     .context("could not install it")?;

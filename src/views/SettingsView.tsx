@@ -6,11 +6,9 @@ import { AccountSection } from "./settings/AccountSection";
 import { AboutSection } from "./settings/AboutSection";
 import {
   CompatibilitySection,
-  GraphicsSection,
   PrefixSection,
   ProtonSection,
   UmuSection,
-  WineSection,
 } from "./settings/compatibility";
 import { DiagnosticsSection } from "./settings/diagnostics";
 import { AppearanceSection, GamepadSection, NotificationSection, WindowSection } from "./settings/interface";
@@ -102,8 +100,6 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
             <>
               <ProtonSection />
               <UmuSection />
-              <WineSection />
-              <GraphicsSection />
               <CompatibilitySection />
               <PrefixSection />
             </>

@@ -6,10 +6,6 @@ import type { LaunchToggles } from "./LaunchToggles";
  */
 export type GameOptionsPatch = { launchArguments?: string, installerArguments?: string, launchEnvironment?: string, 
 /**
- * `"auto"` or empty clears the override.
- */
-runtimeOverride?: string, 
-/**
  * Empty clears the pin.
  */
 protonBuild?: string, launchToggles?: LaunchToggles, };

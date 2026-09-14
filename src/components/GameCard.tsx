@@ -157,6 +157,26 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
 
   if (state.kind === "installed") {
     const busy = state.busy;
+    const download = busy?.kind === "preparing" ? busy.progress : undefined;
+    if (download && download.totalBytes > 0) {
+      return (
+        <div
+          className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-sm"
+          title={busy?.kind === "preparing" ? busy.message : undefined}
+        >
+          <div className="mb-1 flex justify-between text-[10px] text-white/80">
+            <span>Setting up</span>
+            <span>{formatSpeed(download.bytesPerSecond)}</span>
+          </div>
+          <div className="h-1 overflow-hidden rounded-full bg-white/20">
+            <div
+              className="h-full rounded-full bg-primary transition-[width]"
+              style={{ width: `${(download.receivedBytes / download.totalBytes) * 100}%` }}
+            />
+          </div>
+        </div>
+      );
+    }
     if (busy) {
       return (
         <span

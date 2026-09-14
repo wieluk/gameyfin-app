@@ -164,6 +164,7 @@ async fn launch(
                     .update_record(game_id, |r| {
                         r.minutes_played += minutes;
                         r.last_played_at = Some(super::now_iso8601());
+                        r.suggested_winetricks.clear();
                     })
                     .await;
                 library.clear_activity(game_id);
@@ -171,13 +172,23 @@ async fn launch(
                 // A launch that died in seconds wrote no saves worth uploading.
                 crate::saves::after_exit(&app, &state, game_id).await;
             }
-            Ok(session) => match failed_to_start(&session) {
-                Some(message) => {
-                    tracing::error!(game_id, output = %session.error_output, "the game exited immediately");
-                    library.fail(game_id, Stage::Launch, message);
+            Ok(session) => {
+                let verbs = gameyfin_core::diagnose::winetricks_for(&session.error_output);
+                match failed_to_start(&session, &verbs) {
+                    Some(message) => {
+                        tracing::error!(game_id, output = %session.error_output, "the game exited immediately");
+                        // Kept so the game's prefix options can offer these ticked.
+                        library
+                            .update_record(game_id, |r| {
+                                r.suggested_winetricks =
+                                    verbs.iter().map(|v| v.to_string()).collect();
+                            })
+                            .await;
+                        library.fail(game_id, Stage::Launch, message);
+                    }
+                    None => library.clear_activity(game_id),
                 }
-                None => library.clear_activity(game_id),
-            },
+            }
             Err(e) => library.fail(game_id, Stage::Launch, e.to_string()),
         }
         notify(&app);
@@ -200,7 +211,7 @@ pub async fn stop_game(
 }
 
 /// Explains a non-zero exit from a short run. A clean quick exit is a launcher handing off.
-fn failed_to_start(session: &gameyfin_core::Session) -> Option<String> {
+fn failed_to_start(session: &gameyfin_core::Session, verbs: &[&str]) -> Option<String> {
     let code = match session.end {
         gameyfin_core::SessionEnd::Exited { code: Some(code) } if code != 0 => code,
         _ => return None,
@@ -212,9 +223,18 @@ fn failed_to_start(session: &gameyfin_core::Session) -> Option<String> {
         .filter(|l| !l.trim().is_empty())
         .collect();
     let tail = lines[lines.len().saturating_sub(12)..].join("\n");
-    let advice = gameyfin_core::diagnose::explain(&session.error_output);
+    // A named missing component has a precise fix, ahead of the general advice.
+    let advice = if verbs.is_empty() {
+        gameyfin_core::diagnose::explain(&session.error_output).map(str::to_string)
+    } else {
+        Some(format!(
+            "Windows components the game needs are missing: {}. Install them from the game's \
+             Compatibility prefix under Installed, where they are already ticked.",
+            verbs.join(", ")
+        ))
+    };
     Some(match (advice, tail.is_empty()) {
-        (Some(advice), true) => advice.to_string(),
+        (Some(advice), true) => advice,
         (Some(advice), false) => format!("{advice}\n\nThe game exited with code {code}:\n{tail}"),
         (None, true) => {
             format!(
@@ -252,7 +272,7 @@ pub async fn ready_windows_prefix(
     let preparing = |message: String| {
         state
             .library()
-            .set_activity(game_id, Activity::Preparing { message });
+            .set_activity(game_id, Activity::preparing(message));
         super::notify_state(app, game_id);
     };
 
@@ -276,11 +296,11 @@ pub async fn ready_windows_prefix(
                 "Downloading {name} for Windows games. This happens once and can take several minutes."
             ));
             if wine_only {
-                if let Err(e) = crate::wine::ensure(app, &state).await {
+                if let Err(e) = crate::wine::ensure(app, &state, game_id).await {
                     tracing::warn!(game_id, error = %e, "could not download Wine");
                 }
             } else {
-                crate::proton::ensure_default(app, &state).await;
+                crate::proton::ensure_default(app, &state, Some(game_id)).await;
             }
         }
     }
@@ -297,7 +317,7 @@ pub async fn ready_windows_prefix(
         WindowsRuntime::Umu { build, .. } => format!("umu {build}"),
         _ => gameyfin_core::wine::installed(&config_dir).map_or_else(
             || runtime.kind().to_string(),
-            |w| format!("{} {}", w.variant.as_str(), w.version),
+            |w| format!("wine {}", w.version),
         ),
     };
     let mut wanted = PrefixState {
@@ -307,7 +327,7 @@ pub async fn ready_windows_prefix(
     };
     let needs_setup = !gameyfin_core::prefix::is_prepared(&prefix, &wanted);
     if needs_setup {
-        let container = if runtime.is_wine_family() {
+        let container = if runtime.is_wine() {
             ""
         } else {
             " It may also download the Steam Runtime."
@@ -319,11 +339,11 @@ pub async fn ready_windows_prefix(
     }
 
     // Proton manages its own DXVK; only resolved when needed, so a plain launch stays offline.
-    let components = if !runtime.is_wine_family() {
+    let components = if !runtime.is_wine() {
         gameyfin_core::InstalledGraphics::default()
     } else if needs_setup {
         let _runtime_lock = state.runtime_lock().await;
-        crate::graphics::ensure_installed(app, &state).await?
+        crate::graphics::ensure_installed(app, &state, game_id).await?
     } else {
         gameyfin_core::graphics::installed(&config_dir)
     };
@@ -362,7 +382,7 @@ async fn prepare_prefix(
 ) -> Result<(), String> {
     use gameyfin_core::prefix;
 
-    if !runtime.is_wine_family() {
+    if !runtime.is_wine() {
         return prepare_umu_prefix(runtime, prefix, wanted, mounts).await;
     }
     tracing::info!(

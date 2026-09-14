@@ -1,11 +1,10 @@
-//! Unpacking a zip while it downloads. Gameyfin zips a folder game on the fly with a data
-//! descriptor after every entry, which neither a seeking reader nor `zip`'s stream reader handles.
+//! Unpacking a zip while it downloads, including the ones Gameyfin builds on the fly with a data
+//! descriptor after every entry, which `zip`'s own stream reader cannot follow.
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use flate2::bufread::DeflateDecoder;
 use flate2::Crc;
@@ -30,29 +29,25 @@ const ZIP64_EXTRA: u16 = 0x0001;
 
 const BUFFER: usize = 256 * 1024;
 
-/// Whether a body starts like a zip written on the fly: a deflated first entry whose sizes
-/// follow its data. Only such a zip is unpacked while it arrives.
-pub fn looks_streamable(head: &[u8]) -> bool {
-    head.len() >= 10
-        && head[..4] == LOCAL_HEADER.to_le_bytes()
-        && u16_at(head, 6) & FLAG_DESCRIPTOR != 0
-        && u16_at(head, 8) == DEFLATED
+/// Whether a zip's first entry reads front to back: deflated, or stored with its size. An
+/// encrypted one needs the password, which only the file extractor takes.
+pub fn is_streamable(head: &[u8]) -> bool {
+    if head.len() < 10 || head[..4] != LOCAL_HEADER.to_le_bytes() {
+        return false;
+    }
+    let (flags, method) = (u16_at(head, 6), u16_at(head, 8));
+    flags & FLAG_ENCRYPTED == 0
+        && (method == DEFLATED || (method == STORED && flags & FLAG_DESCRIPTOR == 0))
 }
 
-/// Unpacks a zip read front to back into `destination` and returns the bytes written, adding
-/// each to `written` for progress. A body that ends before the central directory is an error,
-/// never a partial game.
-pub fn extract_stream<R: Read>(
-    reader: R,
-    destination: &Path,
-    cancel: &Cancel,
-    written: &AtomicU64,
-) -> CoreResult<u64> {
+/// Unpacks a zip read front to back and returns the bytes written. Ending before the central
+/// directory is an error, never a partial game.
+pub fn extract_stream<R: Read>(reader: R, destination: &Path, cancel: &Cancel) -> CoreResult<u64> {
     std::fs::create_dir_all(destination)?;
     let mut input = BufReader::with_capacity(BUFFER, reader);
     let mut buffer = vec![0u8; BUFFER];
     let mut total = 0u64;
-    // Where each entry went, so the central directory's Unix modes can be applied at the end.
+    // Where each entry went, for the Unix modes only the central directory records.
     let mut placed = HashMap::new();
 
     loop {
@@ -64,19 +59,12 @@ pub fn extract_stream<R: Read>(
                 return Ok(total);
             }
             END_OF_CENTRAL => return Ok(total),
-            _ => {
-                return Err(other(
-                    "The download is not a zip that can be unpacked while it arrives.",
-                ))
-            }
+            _ => return Err(cannot_stream("the download is not a zip")),
         }
 
         let header = read_local_header(&mut input).map_err(truncated)?;
         if header.flags & FLAG_ENCRYPTED != 0 {
-            return Err(other(format!(
-                "{} is encrypted, so it cannot be unpacked while it downloads.",
-                header.name
-            )));
+            return Err(cannot_stream(format!("{} is encrypted", header.name)));
         }
         let descriptor = header.flags & FLAG_DESCRIPTOR != 0;
         let is_dir = header.name.ends_with('/') || header.name.ends_with('\\');
@@ -99,25 +87,18 @@ pub fn extract_stream<R: Read>(
             }
         };
 
-        let body = match header.method {
-            DEFLATED => inflate(&mut input, &mut *out, &mut buffer, cancel, written)?,
-            STORED if !descriptor => copy_stored(
+        let body = match (header.method, descriptor) {
+            (DEFLATED, _) => inflate(&mut input, &mut *out, &mut buffer, cancel)?,
+            (STORED, false) => copy_stored(
                 &mut input,
                 header.compressed,
                 &mut *out,
                 &mut buffer,
                 cancel,
-                written,
             )?,
-            STORED => {
-                return Err(other(format!(
-                    "{} is stored without its size, so it cannot be unpacked while it downloads.",
-                    header.name
-                )))
-            }
-            method => {
-                return Err(other(format!(
-                    "{} uses compression method {method}, which is not supported.",
+            (method, _) => {
+                return Err(cannot_stream(format!(
+                    "{} uses compression method {method}",
                     header.name
                 )))
             }
@@ -135,7 +116,7 @@ pub fn extract_stream<R: Read>(
             }
         };
         if expected != body {
-            return Err(other(format!(
+            return Err(CoreError::Other(format!(
                 "{} arrived damaged: its checksum or size does not match.",
                 header.name
             )));
@@ -183,13 +164,11 @@ fn read_local_header<R: Read>(input: &mut R) -> std::io::Result<LocalHeader> {
         compressed,
         uncompressed,
         zip64,
-        // Java marks names as UTF-8; anything else is shown as best it can be.
         name: String::from_utf8_lossy(&name).into_owned(),
     })
 }
 
-/// Replaces each size set to the marker with its value from the zip64 extra field, and says
-/// whether that field was present.
+/// Swaps each size set to the marker for its zip64 value, and says whether that field was there.
 fn apply_zip64(extra: &[u8], uncompressed: &mut u64, compressed: &mut u64) -> bool {
     let mut rest = extra;
     while rest.len() >= 4 {
@@ -221,7 +200,6 @@ fn inflate<B: BufRead>(
     out: &mut dyn Write,
     buffer: &mut [u8],
     cancel: &Cancel,
-    written: &AtomicU64,
 ) -> CoreResult<Sizes> {
     // The bufread decoder consumes exactly the deflate data, leaving the descriptor unread.
     let mut decoder = DeflateDecoder::new(input);
@@ -234,7 +212,6 @@ fn inflate<B: BufRead>(
         }
         crc.update(&buffer[..read]);
         out.write_all(&buffer[..read])?;
-        written.fetch_add(read as u64, Ordering::Relaxed);
     }
     Ok(Sizes {
         crc: crc.sum(),
@@ -249,7 +226,6 @@ fn copy_stored<R: Read>(
     out: &mut dyn Write,
     buffer: &mut [u8],
     cancel: &Cancel,
-    written: &AtomicU64,
 ) -> CoreResult<Sizes> {
     let mut crc = Crc::new();
     let mut remaining = size;
@@ -264,7 +240,6 @@ fn copy_stored<R: Read>(
         }
         crc.update(&buffer[..read]);
         out.write_all(&buffer[..read])?;
-        written.fetch_add(read as u64, Ordering::Relaxed);
         remaining -= read as u64;
     }
     Ok(Sizes {
@@ -276,7 +251,7 @@ fn copy_stored<R: Read>(
 
 fn read_descriptor<R: Read>(input: &mut R, body: &Sizes, zip64: bool) -> std::io::Result<Sizes> {
     let first = read_u32(input)?;
-    // The signature is optional, so without it the first four bytes are already the checksum.
+    // The signature is optional, so without it the first four bytes are the checksum.
     let crc = if first == DESCRIPTOR {
         read_u32(input)?
     } else {
@@ -295,14 +270,12 @@ fn read_descriptor<R: Read>(input: &mut R, body: &Sizes, zip64: bool) -> std::io
     })
 }
 
-/// Whether a descriptor's sizes take 8 bytes. Java widens them once a size no longer fits in
-/// 32 bits, and a header that announced zip64 always gets them wide.
+/// Java widens a descriptor's sizes once one no longer fits 32 bits; zip64 headers always do.
 fn descriptor_is_wide(compressed: u64, uncompressed: u64, zip64: bool) -> bool {
     zip64 || compressed >= ZIP64_MARKER || uncompressed >= ZIP64_MARKER
 }
 
-/// Reads the directory that closes the archive, for the Unix modes only it records and so a
-/// body cut off inside it still counts as incomplete.
+/// Reads the closing directory for its Unix modes, and so a body cut off inside it fails.
 fn finish_central_directory<R: Read>(
     input: &mut R,
     placed: &HashMap<String, PathBuf>,
@@ -314,7 +287,7 @@ fn finish_central_directory<R: Read>(
         input.read_exact(&mut name).map_err(truncated)?;
         let skip = u64::from(u16_at(&fixed, 26)) + u64::from(u16_at(&fixed, 28));
         std::io::copy(&mut input.by_ref().take(skip), &mut std::io::sink())?;
-        // The high byte of "version made by" names the system, whose attributes follow.
+        // The high byte of "version made by" names the system the attributes belong to.
         restore_mode(
             placed,
             &String::from_utf8_lossy(&name),
@@ -325,7 +298,11 @@ fn finish_central_directory<R: Read>(
         match read_u32(input).map_err(truncated)? {
             CENTRAL_HEADER => {}
             END_OF_CENTRAL | ZIP64_END_OF_CENTRAL => return Ok(()),
-            _ => return Err(other("The download ends in a damaged zip directory.")),
+            _ => {
+                return Err(CoreError::Other(
+                    "The download ends in a damaged zip directory.".into(),
+                ))
+            }
         }
     }
 }
@@ -352,13 +329,13 @@ fn stop_if_cancelled(cancel: &Cancel) -> CoreResult<()> {
     }
 }
 
-fn other(message: impl Into<String>) -> CoreError {
-    CoreError::Other(message.into())
+fn cannot_stream(reason: impl Into<String>) -> CoreError {
+    CoreError::CannotStream(reason.into())
 }
 
 fn truncated(e: std::io::Error) -> CoreError {
     if e.kind() == std::io::ErrorKind::UnexpectedEof {
-        other("The download ended before the whole game arrived.")
+        CoreError::Other("The download ended before the whole game arrived.".into())
     } else {
         e.into()
     }
@@ -368,7 +345,7 @@ fn damaged(e: std::io::Error) -> CoreError {
     match e.kind() {
         std::io::ErrorKind::UnexpectedEof => truncated(e),
         std::io::ErrorKind::InvalidInput | std::io::ErrorKind::InvalidData => {
-            other(format!("The download arrived damaged: {e}"))
+            CoreError::Other(format!("The download arrived damaged: {e}"))
         }
         _ => e.into(),
     }
@@ -519,16 +496,12 @@ mod tests {
     }
 
     fn unpack(bytes: &[u8], dir: &Path) -> CoreResult<u64> {
-        extract_stream(Trickle(bytes), dir, &Cancel::new(), &AtomicU64::new(0))
-    }
-
-    fn game_data() -> Vec<u8> {
-        (0..300_000u32).map(|i| (i % 97) as u8).collect()
+        extract_stream(Trickle(bytes), dir, &Cancel::new())
     }
 
     #[test]
     fn a_zip_written_on_the_fly_unpacks_into_its_folders() {
-        let game = game_data();
+        let game: Vec<u8> = (0..300_000u32).map(|i| (i % 97) as u8).collect();
         let bytes = zip(
             &[
                 ("Game/game.exe", &game),
@@ -537,12 +510,8 @@ mod tests {
             ON_THE_FLY,
         );
         let dir = scratch("on-the-fly");
-        let written = AtomicU64::new(0);
 
-        let total = extract_stream(Trickle(&bytes), &dir, &Cancel::new(), &written).unwrap();
-
-        assert_eq!(total, game.len() as u64 + 9);
-        assert_eq!(written.load(Ordering::Relaxed), total);
+        assert_eq!(unpack(&bytes, &dir).unwrap(), game.len() as u64 + 9);
         assert_eq!(std::fs::read(dir.join("Game/game.exe")).unwrap(), game);
         assert_eq!(
             std::fs::read(dir.join("Game/data/level.dat")).unwrap(),
@@ -620,13 +589,17 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_entry_without_its_size_is_refused() {
+    fn a_stored_entry_without_its_size_cannot_stream() {
         let style = Style {
             deflate: false,
             ..ON_THE_FLY
         };
         let bytes = zip(&[("a.txt", b"hello")], style);
-        assert!(unpack(&bytes, &scratch("stored-descriptor")).is_err());
+        let result = unpack(&bytes, &scratch("stored-descriptor"));
+        assert!(
+            matches!(result, Err(CoreError::CannotStream(_))),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -634,28 +607,58 @@ mod tests {
         let bytes = zip(&[("a.txt", b"hello")], ON_THE_FLY);
         let cancel = Cancel::new();
         cancel.cancel();
-        let result = extract_stream(&bytes[..], &scratch("cancel"), &cancel, &AtomicU64::new(0));
+        let result = extract_stream(&bytes[..], &scratch("cancel"), &cancel);
         assert!(matches!(result, Err(CoreError::Cancelled)));
     }
 
     #[test]
-    fn only_a_deflated_entry_with_a_descriptor_looks_streamable() {
+    fn a_zip_streams_unless_encrypted_or_stored_without_its_size() {
         let entries: &[(&str, &[u8])] = &[("a.txt", b"hello")];
-        assert!(looks_streamable(&zip(entries, ON_THE_FLY)));
-        let sized = Style {
-            descriptor: false,
-            ..ON_THE_FLY
-        };
-        assert!(!looks_streamable(&zip(entries, sized)));
-        let stored = Style {
-            deflate: false,
-            ..ON_THE_FLY
-        };
-        assert!(!looks_streamable(&zip(entries, stored)));
-        assert!(!looks_streamable(&[
-            0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0, 4, 0, 0
-        ]));
-        assert!(!looks_streamable(b"PK\x03\x04"));
+        for (deflate, descriptor, expected) in [
+            (true, true, true),
+            (true, false, true),
+            (false, false, true),
+            (false, true, false),
+        ] {
+            let style = Style {
+                deflate,
+                descriptor,
+                ..ON_THE_FLY
+            };
+            assert_eq!(
+                is_streamable(&zip(entries, style)),
+                expected,
+                "deflate {deflate}, descriptor {descriptor}"
+            );
+        }
+        let mut encrypted = zip(entries, ON_THE_FLY);
+        encrypted[6] |= FLAG_ENCRYPTED as u8;
+        assert!(!is_streamable(&encrypted));
+        assert!(!is_streamable(b"PK\x03\x04"));
+    }
+
+    #[test]
+    fn only_zip_and_tar_are_unpacked_while_downloading() {
+        use crate::extract::{streamable_kind, ArchiveKind, TarCompression};
+
+        let zipped = zip(&[("a.txt", b"hello")], ON_THE_FLY);
+        assert_eq!(streamable_kind(&zipped), Some(ArchiveKind::Zip));
+        assert_eq!(
+            streamable_kind(&[0x1F, 0x8B, 8, 0]),
+            Some(ArchiveKind::Tar(TarCompression::Gzip))
+        );
+        let mut plain_tar = vec![0u8; 512];
+        plain_tar[257..262].copy_from_slice(b"ustar");
+        assert_eq!(
+            streamable_kind(&plain_tar),
+            Some(ArchiveKind::Tar(TarCompression::None))
+        );
+        assert_eq!(
+            streamable_kind(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0, 4]),
+            None
+        );
+        assert_eq!(streamable_kind(b"Rar!\x1a\x07\x01\x00"), None);
+        assert_eq!(streamable_kind(b"MZ\x90\x00"), None);
     }
 
     #[test]

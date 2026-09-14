@@ -319,8 +319,8 @@ pub enum Outcome {
     Unpacked { dir: PathBuf, bytes: u64 },
 }
 
-/// Enough of a body to recognise a zip's first local header.
-const SNIFF_BYTES: usize = 30;
+/// Enough of a body to see a zip header, or a plain tar's `ustar` marker at byte 257.
+const SNIFF_BYTES: usize = 262;
 
 pub struct Downloader {
     http: reqwest::Client,
@@ -371,8 +371,7 @@ impl Downloader {
         }
     }
 
-    /// As [`Self::download`], but the zip Gameyfin builds on the fly for a folder game, one
-    /// without a length, is unpacked into `unpack_into` while it arrives.
+    /// As [`Self::download`], but a zip or tar is unpacked into `unpack_into` as it arrives.
     pub async fn download_or_unpack<F, A>(
         &self,
         url: &str,
@@ -448,8 +447,8 @@ impl Downloader {
 
         let mut stream = response.bytes_stream();
         let mut head = Vec::new();
-        // A single-file game comes with a length and is saved as sent, whatever it contains.
-        if let (Some(dir), StartMode::Fresh, None) = (unpack_into, mode, total_bytes) {
+        // A resumed transfer continues a file, so only a whole body is unpacked.
+        if let Some(dir) = unpack_into.filter(|_| mode != StartMode::Resumed) {
             let mut seen = 0;
             while seen < SNIFF_BYTES {
                 match stream.next().await {
@@ -466,10 +465,17 @@ impl Downloader {
                 .flat_map(|chunk| chunk.iter().copied())
                 .take(SNIFF_BYTES)
                 .collect();
-            if crate::zip_stream::looks_streamable(&first) {
+            if let Some(kind) = crate::extract::streamable_kind(&first) {
                 let stream = futures_util::stream::iter(head.into_iter().map(Ok)).chain(stream);
                 return self
-                    .unpack(stream, destination, dir, &mut on_progress)
+                    .unpack(
+                        stream,
+                        destination,
+                        dir,
+                        kind,
+                        total_bytes,
+                        &mut on_progress,
+                    )
                     .await;
             }
         }
@@ -571,13 +577,15 @@ impl Downloader {
         }))
     }
 
-    /// Unpacks a zip into `dir` while it downloads. None of it can resume, so a failed or
+    /// Unpacks an archive into `dir` as it downloads. None of it can resume, so a failed or
     /// cancelled attempt removes the folder rather than leaving half a game.
     async fn unpack<S, B, F>(
         &self,
         mut stream: S,
         destination: &Path,
         dir: &Path,
+        kind: crate::extract::ArchiveKind,
+        total_bytes: Option<u64>,
         on_progress: &mut F,
     ) -> CoreResult<Outcome>
     where
@@ -585,24 +593,18 @@ impl Downloader {
         B: AsRef<[u8]>,
         F: FnMut(Progress),
     {
-        // Left by an earlier attempt that was saved as a file, and not part of this one.
+        // Left by an earlier attempt that was saved as a file.
         let _ = tokio::fs::remove_file(destination).await;
         let _ = Checkpoint::clear(destination).await;
         if tokio::fs::try_exists(dir).await.unwrap_or(false) {
             tokio::fs::remove_dir_all(dir).await?;
         }
 
-        let written = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let (chunks, receiver) = tokio::sync::mpsc::channel::<std::io::Result<Vec<u8>>>(16);
         let unpacker = {
-            let (dir, cancel, written) = (dir.to_path_buf(), self.cancel.clone(), written.clone());
+            let (dir, cancel) = (dir.to_path_buf(), self.cancel.clone());
             tokio::task::spawn_blocking(move || {
-                crate::zip_stream::extract_stream(
-                    ChunkReader::new(receiver),
-                    &dir,
-                    &cancel,
-                    &written,
-                )
+                crate::extract::unpack_stream(kind, ChunkReader::new(receiver), &dir, &cancel)
             })
         };
 
@@ -626,8 +628,8 @@ impl Downloader {
             received += len;
             let elapsed = started.elapsed().as_secs_f64();
             on_progress(Progress {
-                received_bytes: written.load(std::sync::atomic::Ordering::Relaxed),
-                total_bytes: None,
+                received_bytes: received,
+                total_bytes,
                 bytes_per_second: if elapsed > 0.0 {
                     received as f64 / elapsed
                 } else {
@@ -640,7 +642,6 @@ impl Downloader {
         };
 
         if let Err(e) = &pumped {
-            // The unpacker is waiting on bytes that will not come.
             let _ = chunks.send(Err(std::io::Error::other(e.to_string()))).await;
         }
         drop(chunks);

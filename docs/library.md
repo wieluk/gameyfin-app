@@ -18,10 +18,10 @@ trailers.
 Press **Download** on a game. With more than one games folder, you choose where it goes and
 see the free space on each.
 
-- A game the server stores as a folder arrives as a zip and is unpacked while it downloads,
-  so it needs only its own size in free space. An interrupted one starts over.
-- A game stored as a single file, such as an archive or a setup program, is saved as it is
-  and unpacked or installed afterwards.
+- Zip and tar downloads are unpacked while they arrive, so a game needs only its own size in
+  free space. 7z and rar are unpacked as soon as the download finishes. An interrupted
+  download starts over.
+- A setup program or disc image is saved as it is and waits for **Install**.
 - **Speed limit**: set one on the Downloads page. It is off by default.
 - **Cancel** stops a download; **Delete download** removes a finished one.
 - Progress shows on the taskbar or dock icon, and a notification tells you when a game is
@@ -31,8 +31,6 @@ see the free space on each.
 
 - **Install automatically when a download finishes**. Downloads with a setup program still
   wait for you.
-- **Unpack games while they download** (on by default). Only affects games stored as a
-  folder.
 - **Delete the archive after extracting** (on by default).
 - **Delete the download after installing**.
 

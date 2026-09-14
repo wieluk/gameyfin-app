@@ -18,9 +18,8 @@ const LEGACY_DXVK: &str = "1.10.3";
 /// GitHub page size. Both projects release often enough that this reaches well back.
 const FEED_PAGE: usize = 50;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[ts(export)]
 pub enum Component {
     /// Direct3D 8, 9, 10 and 11, plus the DXGI both layers share.
     Dxvk,
@@ -79,9 +78,7 @@ impl Component {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentRelease {
     pub component: Component,
     pub version: String,
@@ -93,9 +90,8 @@ pub struct ComponentRelease {
     pub sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct InstalledComponent {
     pub component: Component,
     pub version: String,
@@ -103,9 +99,8 @@ pub struct InstalledComponent {
     pub root: PathBuf,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-#[ts(export)]
 pub struct InstalledGraphics {
     pub dxvk: Option<InstalledComponent>,
     pub vkd3d: Option<InstalledComponent>,
@@ -161,18 +156,6 @@ pub fn installed(config_dir: &Path) -> InstalledGraphics {
         dxvk: alive(record.dxvk),
         vkd3d: alive(record.vkd3d),
     }
-}
-
-/// Versions available for a component, newest first.
-pub async fn available_versions(
-    http: &reqwest::Client,
-    component: Component,
-) -> CoreResult<Vec<String>> {
-    Ok(releases(http, component)
-        .await?
-        .into_iter()
-        .map(|r| r.version)
-        .collect())
 }
 
 /// Every release that publishes a usable asset, newest first.
@@ -379,15 +362,6 @@ async fn sha256_of(path: &Path) -> CoreResult<String> {
         hasher.update(&buffer[..read]);
     }
     Ok(format!("{:x}", hasher.finalize()))
-}
-
-/// Remove everything this module downloaded. Prefixes keep the copies they already have.
-pub async fn remove(config_dir: &Path) -> CoreResult<()> {
-    let root = graphics_root(config_dir);
-    if root.exists() {
-        tokio::fs::remove_dir_all(&root).await?;
-    }
-    Ok(())
 }
 
 /// Copies the components' DLLs into a prefix. Copies, not symlinks: a link into the shared

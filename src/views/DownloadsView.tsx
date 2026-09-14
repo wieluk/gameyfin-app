@@ -6,6 +6,7 @@ import { DownloadProvider } from "@/components/DownloadProvider";
 import { FolderActions } from "@/components/FolderActions";
 import { InstallDialog } from "@/components/InstallDialog";
 import { SpeedLimit } from "@/components/SpeedLimit";
+import { TransferProgress } from "@/components/TransferProgress";
 import { isInDownloads, needsChooser, primaryAction } from "@/lib/actions";
 import { backend } from "@/lib/backend";
 import { formatBytes, formatEta, formatSpeed } from "@/lib/format";
@@ -248,9 +249,14 @@ function DownloadRow({
       )}
 
       {state.kind === "preparing" && (
-        <p className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-foreground/70">
-          {state.message}
-        </p>
+        <div className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-foreground/70">
+          <p>{state.message}</p>
+          {state.progress && (
+            <div className="mt-2">
+              <TransferProgress {...state.progress} />
+            </div>
+          )}
+        </div>
       )}
 
       {state.kind === "failed" && (

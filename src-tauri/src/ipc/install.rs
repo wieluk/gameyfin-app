@@ -151,7 +151,7 @@ fn method_label(
         RunWindowsInstaller => "Run the installer",
         // No runtime yet reads as Proton: umu downloads one on first run.
         RunWindowsInstallerViaProton => match runtime {
-            Some(r) if r.is_wine_family() => "Run the installer with Wine",
+            Some(r) if r.is_wine() => "Run the installer with Wine",
             _ => "Run the installer with Proton",
         },
         CopyExecutable => "Move into your games folder",
@@ -529,7 +529,7 @@ async fn run_installer(
         &state.library().record(game_id).installer_arguments,
     ));
 
-    let mut command =
+    let command =
         gameyfin_core::resolve_command(&config).context("could not build the installer command")?;
     tracing::debug!(game_id, program = ?command.program, args = ?command.args, kind = kind.label(), "installer command");
     tokio::fs::create_dir_all(install_dir)
@@ -550,15 +550,9 @@ async fn run_installer(
     } else {
         limit.resolve(gameyfin_core::process::total_memory_bytes())
     };
-    let address_space = cap_mib.and_then(|mib| {
-        let cap = command.cap_address_space(mib * 1024 * 1024);
-        tracing::info!(
-            game_id,
-            mib,
-            via = cap.label(),
-            "capping the installer's address space"
-        );
-        cap.before_exec()
+    let address_space = cap_mib.map(|mib| {
+        tracing::info!(game_id, mib, "capping the installer's address space");
+        mib * 1024 * 1024
     });
 
     let stopper = state.processes.register(game_id);

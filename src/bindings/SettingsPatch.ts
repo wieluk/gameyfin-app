@@ -3,10 +3,9 @@ import type { InstallerMemoryLimit } from "./InstallerMemoryLimit";
 import type { LogLevel } from "./LogLevel";
 import type { SaveBackend } from "./SaveBackend";
 import type { Theme } from "./Theme";
-import type { WineVariant } from "./WineVariant";
 
 /**
  * A partial update: a field that was not sent keeps its value. For text fields an empty
  * string clears the value.
  */
-export type SettingsPatch = { notifyTransfers?: boolean, notifyFailures?: boolean, notifyUpdates?: boolean, closeToTray?: boolean, startMinimized?: boolean, autostart?: boolean, autoInstall?: boolean, gamepadEnabled?: boolean, gamepadDeadzone?: number, couchModeAuto?: boolean, umuFixes?: boolean, umuAutoUpdate?: boolean, graphicsComponents?: boolean, checkForUpdates?: boolean, setupDismissed?: boolean, installerMemoryLimit?: InstallerMemoryLimit, downloadLimitKib?: number, deleteArchiveAfterExtract?: boolean, deleteDownloadAfterInstall?: boolean, unpackWhileDownloading?: boolean, theme?: Theme, logLevel?: LogLevel, wineVariant?: WineVariant, libraryRoot?: string, defaultProton?: string, extractionPassword?: string, ignoredExecutables?: Array<string>, saveManifestAutoUpdate?: boolean, deviceName?: string, saveSyncEnabled?: boolean, syncSavesOnLaunch?: boolean, syncSavesOnExit?: boolean, saveBackend?: SaveBackend, saveFolder?: string, webdavUrl?: string, webdavUsername?: string, webdavPassword?: string, saveMaxVersions?: number, };
+export type SettingsPatch = { notifyTransfers?: boolean, notifyFailures?: boolean, notifyUpdates?: boolean, closeToTray?: boolean, startMinimized?: boolean, autostart?: boolean, autoInstall?: boolean, gamepadEnabled?: boolean, gamepadDeadzone?: number, couchModeAuto?: boolean, umuFixes?: boolean, umuAutoUpdate?: boolean, checkForUpdates?: boolean, installerMemoryLimit?: InstallerMemoryLimit, downloadLimitKib?: number, deleteArchiveAfterExtract?: boolean, deleteDownloadAfterInstall?: boolean, theme?: Theme, logLevel?: LogLevel, libraryRoot?: string, extractionPassword?: string, ignoredExecutables?: Array<string>, saveManifestAutoUpdate?: boolean, deviceName?: string, saveSyncEnabled?: boolean, syncSavesOnLaunch?: boolean, syncSavesOnExit?: boolean, saveBackend?: SaveBackend, saveFolder?: string, webdavUrl?: string, webdavUsername?: string, webdavPassword?: string, saveMaxVersions?: number, };

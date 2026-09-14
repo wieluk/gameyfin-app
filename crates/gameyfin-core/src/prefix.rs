@@ -202,65 +202,37 @@ pub fn winetricks_verbs(input: &str) -> Result<Vec<String>, String> {
     Ok(verbs)
 }
 
-/// The command that installs winetricks verbs into a prefix without prompts. umu-run fetches
-/// winetricks itself; Wine needs the `winetricks` given, so `None` without one.
+/// Installs winetricks verbs into a prefix without prompts. umu-run fetches winetricks itself;
+/// Wine needs one installed on this system, so `None` without it.
 pub fn winetricks_command(
     runtime: &WindowsRuntime,
     prefix: &Path,
     verbs: &[String],
     winetricks: Option<&Path>,
 ) -> Option<crate::launch::ResolvedCommand> {
-    use std::collections::BTreeMap;
     use std::ffi::OsString;
 
-    if let WindowsRuntime::Umu { .. } = runtime {
-        let args: Vec<&str> = ["winetricks", "-q"]
-            .into_iter()
-            .chain(verbs.iter().map(String::as_str))
-            .collect();
-        return Some(registry_command(runtime, prefix, &args));
+    match runtime {
+        WindowsRuntime::Umu { .. } => {
+            let args: Vec<&str> = ["winetricks", "-q"]
+                .into_iter()
+                .chain(verbs.iter().map(String::as_str))
+                .collect();
+            Some(registry_command(runtime, prefix, &args))
+        }
+        WindowsRuntime::Wine { path } => {
+            let mut command = registry_command(runtime, prefix, &[]);
+            command.program = winetricks?.as_os_str().to_owned();
+            command.args = std::iter::once(OsString::from("-q"))
+                .chain(verbs.iter().map(OsString::from))
+                .collect();
+            // Otherwise winetricks runs whichever `wine` is on PATH.
+            command
+                .env
+                .insert("WINE".to_string(), path.to_string_lossy().into_owned());
+            Some(command)
+        }
     }
-
-    let winetricks = winetricks?;
-    let mut env = BTreeMap::new();
-    env.insert(
-        "WINEDLLOVERRIDES".to_string(),
-        DllOverrides::no_prompts().to_env(),
-    );
-    without_input_method(&mut env);
-    env.insert(
-        "WINEPREFIX".to_string(),
-        prefix.to_string_lossy().into_owned(),
-    );
-    // Otherwise winetricks picks whichever `wine` is on PATH, not the game's.
-    if let WindowsRuntime::Wine { path } | WindowsRuntime::Bundled { path } = runtime {
-        env.insert("WINE".to_string(), path.to_string_lossy().into_owned());
-    }
-    let tail = std::iter::once("-q".to_string()).chain(verbs.iter().cloned());
-
-    if runtime.runs_on_host() {
-        // Variables do not cross `flatpak-spawn` on their own, so they travel as arguments.
-        let mut args: Vec<OsString> = vec!["--host".into()];
-        args.extend(
-            env.iter()
-                .map(|(key, value)| OsString::from(format!("--env={key}={value}"))),
-        );
-        args.push(winetricks.as_os_str().to_owned());
-        args.extend(tail.map(OsString::from));
-        return Some(crate::launch::ResolvedCommand {
-            program: runtime.program().to_path_buf().into_os_string(),
-            args,
-            env: BTreeMap::new(),
-            working_dir: None,
-        });
-    }
-
-    Some(crate::launch::ResolvedCommand {
-        program: winetricks.as_os_str().to_owned(),
-        args: tail.map(OsString::from).collect(),
-        env,
-        working_dir: None,
-    })
 }
 
 /// The command that sets a prefix's DPI, applied through the runtime since Wine rewrites
@@ -364,7 +336,7 @@ fn registry_command_with(
     let mut env = BTreeMap::new();
     // Proton ships wine-mono and gecko and installs them itself, so the prompt suppression
     // is Wine's alone: applied to Proton it breaks .NET games instead.
-    let overrides = if runtime.is_wine_family() {
+    let overrides = if runtime.is_wine() {
         DllOverrides::no_prompts().merged_with(overrides.clone())
     } else {
         overrides.clone()
@@ -390,13 +362,9 @@ fn registry_command_with(
         env.insert("STORE".to_string(), "none".to_string());
     }
 
-    // The same wrapper the launcher uses, so environment handling cannot diverge between
-    // preparing a prefix and running a game in it.
-    let full_args = runtime.wrap_args(&env, None, args.iter().map(|a| a.to_string()));
-
     crate::launch::ResolvedCommand {
         program: runtime.program().to_path_buf().into_os_string(),
-        args: full_args,
+        args: args.iter().map(std::ffi::OsString::from).collect(),
         env,
         working_dir: None,
     }
@@ -594,25 +562,6 @@ mod tests {
             command.env.get("WINEPREFIX").map(String::as_str),
             Some("/pfx")
         );
-    }
-
-    #[test]
-    fn host_wine_passes_the_environment_through_flatpak_spawn() {
-        let verbs = vec!["d3dx9".to_string()];
-        let command = winetricks_command(
-            &WindowsRuntime::HostWine,
-            Path::new("/pfx"),
-            &verbs,
-            Some(Path::new("winetricks")),
-        )
-        .unwrap();
-        assert_eq!(command.program, crate::runtime::FLATPAK_SPAWN);
-        assert_eq!(command.args[0], "--host");
-        assert!(command
-            .args
-            .contains(&std::ffi::OsString::from("--env=WINEPREFIX=/pfx")));
-        let at = command.args.iter().position(|a| a == "winetricks").unwrap();
-        assert_eq!(command.args[at..], ["winetricks", "-q", "d3dx9"]);
     }
 
     fn scratch(name: &str) -> PathBuf {

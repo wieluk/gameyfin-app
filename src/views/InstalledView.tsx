@@ -3,7 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderActions } from "@/components/FolderActions";
 import { LaunchOptions, SetupOptions } from "@/components/GameOptions";
 import { Icon } from "@/components/Icon";
+import { PrefixOptions } from "@/components/PrefixOptions";
 import { ShortcutOptions } from "@/components/ShortcutOptions";
+import { TransferProgress } from "@/components/TransferProgress";
 import { UninstallDialog } from "@/components/UninstallDialog";
 import { installedFiles, isInstalled } from "@/lib/actions";
 import { backend } from "@/lib/backend";
@@ -258,15 +260,20 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
       )}
 
       {busy && (
-        <p
+        <div
           className={`border-t px-3 py-2 text-xs ${
             busy.kind === "failed"
               ? "border-danger/30 bg-danger/10 text-danger"
               : "border-primary/30 bg-primary/10 text-foreground/70"
           }`}
         >
-          {busy.kind === "installing" ? "Running a setup program…" : busy.message}
-        </p>
+          <p>{busy.kind === "installing" ? "Running a setup program…" : busy.message}</p>
+          {busy.kind === "preparing" && busy.progress && (
+            <div className="mt-2">
+              <TransferProgress {...busy.progress} />
+            </div>
+          )}
+        </div>
       )}
 
       {error && (
@@ -421,6 +428,8 @@ function Options({
       )}
 
       <LaunchOptions gameId={gameId} />
+
+      <PrefixOptions gameId={gameId} title={entry.game.title} />
 
       <ShortcutOptions gameId={gameId} />
 

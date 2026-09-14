@@ -42,9 +42,7 @@ pub use extract::{extract, extract_with, ArchiveKind, ExtractProgress, TarCompre
 pub use graphics::{Component, InstalledGraphics};
 pub use install::InstallLayout;
 pub use installer::{identify, InstallerKind};
-pub use launch::{
-    needs_proton, resolve_command, AddressSpaceCap, LaunchConfig, ResolvedCommand, Runtime,
-};
+pub use launch::{needs_proton, resolve_command, LaunchConfig, ResolvedCommand, Runtime};
 pub use payload::{classify, methods_for, InstallMethod, Payload};
 pub use prefix::{
     dpi_for_screen, games_drive_path, map_drive, map_drive_letter, windows_safe_name, wine_root,
@@ -54,10 +52,7 @@ pub use process::{
     run_capturing, run_capturing_limited, run_capturing_stoppable, run_elevated, CapturedRun,
     Session, SessionEnd, Stopper, Supervisor,
 };
-pub use runtime::{
-    detect_windows_runtime, find_windows_runtime, windows_runtime_hint, RuntimeContext,
-    WindowsRuntime,
-};
+pub use runtime::{detect_windows_runtime, windows_runtime_hint, RuntimeContext, WindowsRuntime};
 pub use save_store::{FolderStore, SaveStore, ServerStore, StoreResult, WebDavStore};
 pub use save_sync::{decide, ConflictChoice, LocalSaveState, SaveSync, SaveSyncState};
 pub use vulkan::{GraphicsTier, VulkanSupport};

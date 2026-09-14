@@ -404,22 +404,17 @@ pub async fn run_winetricks(
         ));
     }
     let runtime = crate::proton::runtime_for_game(&state, game_id, None).await?;
-    let winetricks = match &runtime {
-        gameyfin_core::WindowsRuntime::Umu { .. } => None,
-        gameyfin_core::WindowsRuntime::HostWine => {
-            tokio::task::spawn_blocking(|| gameyfin_core::runtime::host_has_program("winetricks"))
-                .await
-                .unwrap_or(false)
-                .then(|| PathBuf::from("winetricks"))
-        }
-        _ => gameyfin_core::runtime::find_program("winetricks"),
-    };
+    let winetricks = runtime
+        .is_wine()
+        .then(|| gameyfin_core::runtime::find_program("winetricks"))
+        .flatten();
     let Some(mut command) =
         gameyfin_core::prefix::winetricks_command(&runtime, &prefix, &verbs, winetricks.as_deref())
     else {
-        return Err(CommandError::msg(
-            "Winetricks is not installed. Install it, or run this game on Proton.",
-        ));
+        return Err(CommandError::msg(format!(
+            "This game runs on Wine here, which needs winetricks installed: {}.",
+            gameyfin_core::runtime::install_command("winetricks")
+        )));
     };
     command
         .env
@@ -436,6 +431,13 @@ pub async fn run_winetricks(
         .context("could not start winetricks")?;
     if run.success() {
         tracing::info!(game_id, "winetricks finished");
+        // Installed now, so no longer worth offering.
+        state
+            .library()
+            .update_record(game_id, |r| {
+                r.suggested_winetricks.retain(|verb| !verbs.contains(verb));
+            })
+            .await;
         Ok(format!("Installed {}.", verbs.join(" ")))
     } else {
         tracing::warn!(game_id, status = ?run.status, output = %run.diagnostic_tail(20), "winetricks failed");

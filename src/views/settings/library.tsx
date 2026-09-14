@@ -144,12 +144,6 @@ export function DownloadSection() {
         onChange={(next) => save({ autoInstall: next })}
       />
       <Check
-        label="Unpack games while they download"
-        hint="A game stored as a folder on the server arrives as a zip and is unpacked as it comes in, so it needs only its own size in free space. An interrupted one starts over. Games stored as a single file download as before."
-        checked={settings.data?.unpackWhileDownloading ?? true}
-        onChange={(next) => save({ unpackWhileDownloading: next })}
-      />
-      <Check
         label="Delete the archive after extracting"
         hint="Frees the space the archive takes once its files are unpacked. Also the starting choice in the install dialog. Reinstalling means downloading again."
         checked={settings.data?.deleteArchiveAfterExtract ?? true}

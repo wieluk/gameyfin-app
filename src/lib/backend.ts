@@ -7,11 +7,8 @@ import type { ConflictChoice } from "@/bindings/ConflictChoice";
 import type { ConnectionStatus } from "@/bindings/ConnectionStatus";
 import type { GameOptions } from "@/bindings/GameOptions";
 import type { GameOptionsPatch } from "@/bindings/GameOptionsPatch";
-import type { GraphicsStatus } from "@/bindings/GraphicsStatus";
-import type { InstalledGraphics } from "@/bindings/InstalledGraphics";
 import type { InstalledProton } from "@/bindings/InstalledProton";
 import type { InstalledSaveTool } from "@/bindings/InstalledSaveTool";
-import type { InstalledWine } from "@/bindings/InstalledWine";
 import type { InstallPlan } from "@/bindings/InstallPlan";
 import type { Library } from "@/bindings/Library";
 import type { LibraryEntry } from "@/bindings/LibraryEntry";
@@ -43,7 +40,6 @@ import type { SettingsPatch } from "@/bindings/SettingsPatch";
 import type { ShortcutStatus } from "@/bindings/ShortcutStatus";
 import type { UmuStatus } from "@/bindings/UmuStatus";
 import type { UpdateStatus } from "@/bindings/UpdateStatus";
-import type { WineStatus } from "@/bindings/WineStatus";
 
 export type {
   LibraryFolder,
@@ -148,18 +144,9 @@ export const backend = {
   /** Put an interface crash in the log file, which is all a packaged build leaves. */
   reportCrash: (details: string) => invoke<void>("report_crash", { details }),
 
-  wineStatus: () => invoke<WineStatus>("wine_status"),
-  /** Download and install Wine, replacing any existing build. Also used to update. */
-  installWine: (version?: string) => invoke<InstalledWine>("install_wine", { version }),
-  removeWine: () => invoke<void>("remove_wine"),
-  graphicsStatus: () => invoke<GraphicsStatus>("graphics_status"),
-  installGraphics: (component: "dxvk" | "vkd3d", version?: string) =>
-    invoke<InstalledGraphics>("install_graphics", { component, version }),
-  removeGraphics: () => invoke<void>("remove_graphics"),
   protonStatus: () => invoke<ProtonStatus>("proton_status"),
-  /** Download a Proton build: the newest of a family, or one named tag. */
-  installProton: (family: ProtonFamily, tag?: string) =>
-    invoke<InstalledProton>("install_proton", { family, tag }),
+  /** Download the newest build of a family, replacing the older one. */
+  installProton: (family: ProtonFamily) => invoke<InstalledProton>("install_proton", { family }),
   removeProton: (name: string) => invoke<void>("remove_proton", { name }),
   /** Flatpak only: installs the runtime's 32-bit libraries on the host. */
   install32bitSupport: () => invoke<string>("install_32bit_support"),

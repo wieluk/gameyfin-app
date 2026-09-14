@@ -374,8 +374,8 @@ async fn a_folder_zip_without_a_length_is_unpacked_while_it_downloads() {
 }
 
 #[tokio::test]
-async fn the_same_zip_with_a_length_is_saved_as_a_file() {
-    // A single-file game that happens to be a zip: served raw, with its size.
+async fn a_zip_file_with_a_length_is_unpacked_too() {
+    // A single-file game stored as a zip: served raw, with its size.
     let zip = zip_on_the_fly(&[("Game/readme.txt", b"hello")]);
     let mut server = mockito::Server::new_async().await;
     let _mock = server
@@ -398,15 +398,16 @@ async fn the_same_zip_with_a_length_is_saved_as_a_file() {
         .await
         .unwrap();
 
-    match outcome {
-        Outcome::File(file) => assert_eq!(std::fs::read(file.path).unwrap(), zip),
-        other => panic!("expected a saved file, got {other:?}"),
-    }
-    assert!(!dir.exists());
+    assert!(matches!(outcome, Outcome::Unpacked { .. }), "{outcome:?}");
+    assert_eq!(
+        std::fs::read(dir.join("Game/readme.txt")).unwrap(),
+        b"hello"
+    );
+    assert!(!dest.exists());
 }
 
 #[tokio::test]
-async fn another_body_without_a_length_is_saved_as_a_file() {
+async fn a_7z_is_saved_as_a_file() {
     let mut payload = vec![0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C];
     payload.extend(body(4096));
     let mut server = mockito::Server::new_async().await;
@@ -485,5 +486,115 @@ async fn a_resumed_download_is_never_unpacked() {
         other => panic!("expected a saved file, got {other:?}"),
     }
     assert_eq!(std::fs::read(&dest).unwrap(), payload);
+    assert!(!dir.exists());
+}
+
+#[tokio::test]
+async fn a_download_retried_after_a_cancel_is_still_unpacked() {
+    // The partial file asks for a resume, which Gameyfin answers with the whole body again.
+    let zip = zip_on_the_fly(&[("Game/readme.txt", b"hello")]);
+    let mut server = mockito::Server::new_async().await;
+    let served = zip.clone();
+    let _mock = server
+        .mock("GET", "/game")
+        .with_status(200)
+        .with_chunked_body(move |w| w.write_all(&served))
+        .create_async()
+        .await;
+
+    let dest = scratch("retry");
+    let dir = dest.with_file_name("extracted");
+    std::fs::write(&dest, &zip[..10]).unwrap();
+    let mut cp = Checkpoint::new(Some(zip.len() as u64), None, None);
+    cp.received_bytes = 10;
+    cp.save(&dest).await.unwrap();
+
+    let outcome = Downloader::new(reqwest::Client::new())
+        .download_or_unpack(
+            &format!("{}/game", server.url()),
+            &dest,
+            Some(&dir),
+            |r| r,
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(outcome, Outcome::Unpacked { .. }), "{outcome:?}");
+    assert!(!dest.exists());
+}
+
+fn tar_gz(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    let mut builder = tar::Builder::new(encoder);
+    for (name, data) in entries {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o644);
+        builder.append_data(&mut header, name, *data).unwrap();
+    }
+    builder.into_inner().unwrap().finish().unwrap()
+}
+
+#[tokio::test]
+async fn a_tar_gz_is_unpacked_while_it_downloads() {
+    let archive = tar_gz(&[("Game/game.bin", &body(50_000))]);
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+        .mock("GET", "/game")
+        .with_status(200)
+        .with_body(&archive)
+        .create_async()
+        .await;
+
+    let dest = scratch("tar-gz");
+    let dir = dest.with_file_name("extracted");
+    let outcome = Downloader::new(reqwest::Client::new())
+        .download_or_unpack(
+            &format!("{}/game", server.url()),
+            &dest,
+            Some(&dir),
+            |r| r,
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(outcome, Outcome::Unpacked { .. }), "{outcome:?}");
+    assert_eq!(
+        std::fs::read(dir.join("Game/game.bin")).unwrap(),
+        body(50_000)
+    );
+}
+
+#[tokio::test]
+async fn a_gzip_holding_no_tar_reports_it_cannot_be_unpacked_on_the_way() {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&body(4096)).unwrap();
+    let payload = encoder.finish().unwrap();
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+        .mock("GET", "/game")
+        .with_status(200)
+        .with_body(&payload)
+        .create_async()
+        .await;
+
+    let dest = scratch("gzip-no-tar");
+    let dir = dest.with_file_name("extracted");
+    let result = Downloader::new(reqwest::Client::new())
+        .download_or_unpack(
+            &format!("{}/game", server.url()),
+            &dest,
+            Some(&dir),
+            |r| r,
+            |_| {},
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(gameyfin_core::CoreError::CannotStream(_))),
+        "{result:?}"
+    );
     assert!(!dir.exists());
 }

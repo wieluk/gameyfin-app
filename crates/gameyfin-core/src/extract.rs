@@ -94,6 +94,41 @@ pub(crate) fn detect_bytes(magic: &[u8]) -> ArchiveKind {
     ArchiveKind::None
 }
 
+/// The archive a download can be unpacked from as it arrives. A 7z keeps its index at the end
+/// and a rar needs an external tool, so both wait until the file is complete.
+pub fn streamable_kind(head: &[u8]) -> Option<ArchiveKind> {
+    let marker = TAR_MAGIC_OFFSET as usize;
+    match detect_bytes(head) {
+        ArchiveKind::Zip => crate::zip_stream::is_streamable(head).then_some(ArchiveKind::Zip),
+        kind @ ArchiveKind::Tar(_) => Some(kind),
+        _ => (head.get(marker..marker + 5) == Some(&b"ustar"[..]))
+            .then_some(ArchiveKind::Tar(TarCompression::None)),
+    }
+}
+
+/// Unpacks a download as it arrives, for a kind [`streamable_kind`] accepted.
+pub fn unpack_stream<R: Read>(
+    kind: ArchiveKind,
+    reader: R,
+    destination: &Path,
+    cancel: &crate::download::Cancel,
+) -> CoreResult<u64> {
+    match kind {
+        ArchiveKind::Zip => crate::zip_stream::extract_stream(reader, destination, cancel),
+        ArchiveKind::Tar(compression) => unpack_tar(reader, destination, compression, |_| {
+            if cancel.is_cancelled() {
+                Err(CoreError::Cancelled)
+            } else {
+                Ok(())
+            }
+        }),
+        other => Err(CoreError::CannotStream(format!(
+            "a {} cannot be unpacked while it downloads",
+            other.label()
+        ))),
+    }
+}
+
 /// Whether a download is BitTorrent metainfo rather than the game: the torrent provider
 /// answers with a 40 KB `.torrent` that opens as nothing.
 pub fn is_torrent_metainfo(path: &Path) -> bool {
@@ -407,8 +442,7 @@ impl<R: Read> Read for Counting<R> {
     }
 }
 
-/// Unpack a tar, decompressing on the way. Progress is measured by bytes consumed from the
-/// archive, since a tar has no index to give an uncompressed total.
+/// Unpack a tar file. Progress counts bytes read from the file, since a tar has no index.
 fn extract_tar<F>(
     archive: &Path,
     destination: &Path,
@@ -424,33 +458,41 @@ where
         inner: BufReader::new(File::open(archive)?),
         read: consumed.clone(),
     };
-
-    let stream: Box<dyn Read> = match compression {
-        TarCompression::None => Box::new(file),
-        TarCompression::Gzip => Box::new(flate2::read::MultiGzDecoder::new(file)),
-        TarCompression::Xz => Box::new(liblzma::read::XzDecoder::new(file)),
-        TarCompression::Bzip2 => Box::new(bzip2::read::MultiBzDecoder::new(file)),
-        TarCompression::Zstd => Box::new(
-            zstd::stream::read::Decoder::new(file)
-                .map_err(|e| CoreError::Other(format!("could not read the zstd stream: {e}")))?,
-        ),
-    };
-
-    let mut tar = tar::Archive::new(stream);
-    // Ownership and timestamps come from whoever built the archive and mean nothing on
-    // this machine; the executable bit is set explicitly below, where it matters.
-    tar.set_preserve_permissions(false);
-    tar.set_preserve_mtime(false);
-
-    let progress = |entries_done: u64, on_progress: &mut F| {
+    unpack_tar(file, destination, compression, |entries_done| {
         on_progress(ExtractProgress {
             entries_done,
             entries_total: 0,
             bytes_written: consumed.load(std::sync::atomic::Ordering::Relaxed),
             bytes_total,
         });
+        Ok(())
+    })
+}
+
+/// Unpack a tar from any reader, decompressing on the way. `after_chunk` runs as data lands and
+/// can stop the unpack by returning an error.
+fn unpack_tar<'a, R: Read + 'a>(
+    reader: R,
+    destination: &Path,
+    compression: TarCompression,
+    mut after_chunk: impl FnMut(u64) -> CoreResult<()>,
+) -> CoreResult<u64> {
+    let stream: Box<dyn Read + 'a> = match compression {
+        TarCompression::None => Box::new(reader),
+        TarCompression::Gzip => Box::new(flate2::read::MultiGzDecoder::new(reader)),
+        TarCompression::Xz => Box::new(liblzma::read::XzDecoder::new(reader)),
+        TarCompression::Bzip2 => Box::new(bzip2::read::MultiBzDecoder::new(reader)),
+        TarCompression::Zstd => Box::new(
+            zstd::stream::read::Decoder::new(reader)
+                .map_err(|e| CoreError::Other(format!("could not read the zstd stream: {e}")))?,
+        ),
     };
-    progress(0, on_progress);
+
+    let mut tar = tar::Archive::new(stream);
+    // Ownership and timestamps mean nothing here; the executable bit is set explicitly below.
+    tar.set_preserve_permissions(false);
+    tar.set_preserve_mtime(false);
+    after_chunk(0)?;
 
     let entries = tar
         .entries()
@@ -461,8 +503,11 @@ where
     let mut buffer = vec![0u8; 256 * 1024];
 
     for entry in entries {
-        let mut entry =
-            entry.map_err(|e| CoreError::Other(format!("could not read a tar entry: {e}")))?;
+        // A bad first header means the compressed data was never a tar at all.
+        let mut entry = entry.map_err(|e| match entries_done {
+            0 => CoreError::CannotStream(format!("not a tar archive: {e}")),
+            _ => CoreError::Other(format!("could not read a tar entry: {e}")),
+        })?;
         let name = entry
             .path()
             .map(|p| p.to_string_lossy().into_owned())
@@ -492,7 +537,7 @@ where
                 }
                 std::io::Write::write_all(&mut out, &buffer[..read])?;
                 written += read as u64;
-                progress(entries_done, on_progress);
+                after_chunk(entries_done)?;
             }
 
             #[cfg(unix)]
@@ -508,7 +553,7 @@ where
         }
 
         entries_done += 1;
-        progress(entries_done, on_progress);
+        after_chunk(entries_done)?;
     }
 
     Ok(written)

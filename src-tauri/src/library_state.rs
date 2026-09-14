@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::progress::TransferProgress;
 use crate::state::{read, write};
 
 pub const RECORDS_FILE: &str = "library.json";
@@ -37,9 +38,10 @@ pub struct GameRecord {
     pub installer_arguments: String,
     /// One `KEY=value` per line.
     pub launch_environment: String,
-    pub runtime_override: Option<String>,
     pub proton_build: Option<String>,
     pub launch_toggles: gameyfin_core::environment::LaunchToggles,
+    /// Winetricks verbs the last failed start pointed at, offered ticked until installed.
+    pub suggested_winetricks: Vec<String>,
     /// A setup program Windows refused without elevation, so the retry runs that exact file.
     pub elevation_program: Option<PathBuf>,
     pub saves: gameyfin_core::LocalSaveState,
@@ -127,6 +129,8 @@ pub enum Activity {
     /// Anything else that takes a while, described for the row.
     Preparing {
         message: String,
+        /// Set while it waits on a download that measures itself.
+        progress: Option<TransferProgress>,
     },
     Running {
         since: String,
@@ -156,6 +160,9 @@ impl Activity {
                 0.0
             }),
             Activity::Extracting { percent } => Some(*percent),
+            Activity::Preparing {
+                progress: Some(p), ..
+            } if p.total_bytes > 0 => Some(p.received_bytes as f64 / p.total_bytes as f64 * 100.0),
             _ => None,
         }
     }
@@ -163,6 +170,7 @@ impl Activity {
     pub fn preparing(message: impl Into<String>) -> Self {
         Activity::Preparing {
             message: message.into(),
+            progress: None,
         }
     }
 }
@@ -197,9 +205,16 @@ impl Stage {
 )]
 #[ts(export)]
 pub enum InstalledBusy {
-    Preparing { message: String },
+    Preparing {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        progress: Option<TransferProgress>,
+    },
     Installing,
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
 }
 
 /// What the UI renders for a game.
@@ -232,6 +247,9 @@ pub enum GameState {
     Installing,
     Preparing {
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        progress: Option<TransferProgress>,
     },
     Installed {
         path: String,
@@ -373,6 +391,20 @@ impl LibraryState {
         );
     }
 
+    /// Puts a download's progress on a preparing game; false when the game is doing something else.
+    pub fn show_progress(&self, game_id: i64, progress: TransferProgress) -> bool {
+        let mut slots = write(&self.activity);
+        match slots.get_mut(&game_id).map(|slot| &mut slot.activity) {
+            Some(Activity::Preparing {
+                progress: shown, ..
+            }) => {
+                *shown = Some(progress);
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn clear_activity(&self, game_id: i64) {
         write(&self.activity).remove(&game_id);
     }
@@ -417,7 +449,7 @@ impl LibraryState {
             },
             Activity::Extracting { percent } => GameState::Extracting { percent },
             Activity::Installing => GameState::Installing,
-            Activity::Preparing { message } => GameState::Preparing { message },
+            Activity::Preparing { message, progress } => GameState::Preparing { message, progress },
             Activity::Running {
                 since,
                 executable,
@@ -548,8 +580,9 @@ fn resting_state(record: GameRecord) -> GameState {
 /// Downloading and extracting stay Downloads-side work even for an installed game.
 fn busy_for(activity: &Activity) -> Option<InstalledBusy> {
     match activity {
-        Activity::Preparing { message } => Some(InstalledBusy::Preparing {
+        Activity::Preparing { message, progress } => Some(InstalledBusy::Preparing {
             message: message.clone(),
+            progress: progress.clone(),
         }),
         Activity::Installing => Some(InstalledBusy::Installing),
         Activity::Failed {
