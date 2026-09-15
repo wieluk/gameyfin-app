@@ -17,6 +17,7 @@ import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
 import { keys, useEntries } from "@/lib/queries";
 import { useRescanOnOpen } from "@/lib/rescan";
+import { usePreloaded } from "@/lib/usePreloaded";
 import { PANEL_BODY } from "@/lib/ui";
 
 /** Games actually present on this machine and ready to play. */
@@ -83,7 +84,8 @@ export function InstalledView() {
 function InstalledRow({ entry }: { entry: LibraryEntry }) {
   const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmUninstall, setConfirmUninstall] = useState(false);
+  // The uninstaller is looked for first, so the dialog opens knowing what it will run.
+  const uninstallPrompt = usePreloaded((gameId: number) => backend.findUninstaller(gameId));
   const queryClient = useQueryClient();
 
   // Awaited, so a failure shows an error instead of looking like nothing happened.
@@ -100,7 +102,7 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
   const runSetup = (setup: string) => run(() => backend.runSetup(entry.game.id, setup));
 
   function uninstall(options: { runUninstaller: boolean; uninstaller: string | null }) {
-    setConfirmUninstall(false);
+    uninstallPrompt.close();
     // The uninstaller (chosen in the dialog) runs first to clear registry entries and shortcuts.
     return run(async () => {
       await backend.uninstall(entry.game.id, options.runUninstaller, options.uninstaller);
@@ -273,17 +275,17 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
           setups={setups}
           onRunSetup={runSetup}
           stagingSetups={stagingSetups}
-          onUninstall={() => setConfirmUninstall(true)}
+          onUninstall={() => void run(() => uninstallPrompt.open(entry.game.id))}
         />
       )}
 
-      {confirmUninstall && (
+      {uninstallPrompt.opened && (
         <UninstallDialog
           title={entry.game.title}
-          gameId={entry.game.id}
+          detected={uninstallPrompt.opened.data}
           installDir={path}
           onConfirm={(options) => void uninstall(options)}
-          onCancel={() => setConfirmUninstall(false)}
+          onCancel={uninstallPrompt.close}
         />
       )}
     </article>

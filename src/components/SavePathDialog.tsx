@@ -14,6 +14,27 @@ import {
 import { HINT } from "@/lib/ui";
 import { Modal, ModalFooter } from "./Modal";
 import type { SaveLocations } from "@/bindings/SaveLocations";
+import type { SavePathSettings } from "@/bindings/SavePathSettings";
+
+export type LoadedSavePaths = {
+  current: SavePathSettings | null;
+  locations: SaveLocations | null;
+  error: string | null;
+};
+
+/** What the dialog opens on. Never rejects: a failed read opens the dialog saying so. */
+export async function loadSavePaths(gameId: number): Promise<LoadedSavePaths> {
+  const [current, locations] = await Promise.allSettled([
+    backend.savePaths(gameId),
+    // Answers at once, so Browse knows where to start while the full scan runs.
+    backend.saveLocations(gameId, false),
+  ]);
+  return {
+    current: current.status === "fulfilled" ? current.value : null,
+    locations: locations.status === "fulfilled" ? locations.value : null,
+    error: current.status === "rejected" ? messageOf(current.reason) : null,
+  };
+}
 
 /** A folder picker for a path field, so nobody has to type one out. */
 function Browse({
@@ -40,48 +61,37 @@ function Browse({
 export function SavePathDialog({
   gameId,
   gameTitle,
+  initial,
   onClose,
   onSaved,
 }: {
   gameId: number;
   gameTitle: string;
+  initial: LoadedSavePaths;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [locations, setLocations] = useState<SaveLocations | null>(null);
+  const current = initial.current;
+  const [locations, setLocations] = useState<SaveLocations | null>(initial.locations);
   const [scanning, setScanning] = useState(true);
-  const [folders, setFolders] = useState<string[]>([""]);
-  const [mappings, setMappings] = useState<Mapping[]>([]);
-  const [translate, setTranslate] = useState(false);
-  const [advanced, setAdvanced] = useState(false);
+  const [folders, setFolders] = useState<string[]>(
+    current && current.customPaths.length > 0 ? current.customPaths : [""],
+  );
+  const [mappings, setMappings] = useState<Mapping[]>(
+    (current?.redirects ?? []).map(([source, target]) => ({ source, target })),
+  );
+  const [translate, setTranslate] = useState(current?.crossOs ?? false);
+  // Whatever is configured must not hide behind a closed section.
+  const [advanced, setAdvanced] = useState(
+    Boolean(current && (current.redirects.length > 0 || current.crossOs)),
+  );
   const [busy, setBusy] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Saving without what is set would wipe it.
+  const loaded = current !== null;
+  const [error, setError] = useState<string | null>(initial.error);
 
   useEffect(() => {
     let cancelled = false;
-    // Read here, so the dialog opens on what is set and saving cannot wipe it.
-    void backend.savePaths(gameId).then(
-      (current) => {
-        if (cancelled) return;
-        setFolders(current.customPaths.length > 0 ? current.customPaths : [""]);
-        setMappings(current.redirects.map(([source, target]) => ({ source, target })));
-        setTranslate(current.crossOs);
-        // Whatever is configured must not hide behind a closed section.
-        setAdvanced(current.redirects.length > 0 || current.crossOs);
-        setLoaded(true);
-      },
-      (e) => {
-        if (!cancelled) setError(messageOf(e));
-      },
-    );
-    // Answers at once, so Browse knows where to start while the scan below runs.
-    void backend.saveLocations(gameId, false).then(
-      (quick) => {
-        if (!cancelled) setLocations((current) => current ?? quick);
-      },
-      () => {},
-    );
     void backend
       .saveLocations(gameId, true)
       .then(

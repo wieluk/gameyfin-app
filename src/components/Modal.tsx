@@ -30,6 +30,7 @@ export function Modal({
   pad = 6,
   onDismiss,
   dismissOnBackdrop = true,
+  fitted = false,
   children,
 }: {
   label: string;
@@ -41,6 +42,8 @@ export function Modal({
   onDismiss: () => void;
   /** Off for a prompt that must be answered rather than clicked past. */
   dismissOnBackdrop?: boolean;
+  /** Held to the window's height, for a dialog whose body scrolls between a fixed header and footer. */
+  fitted?: boolean;
   children: React.ReactNode;
 }) {
   useDismissOnEscape(onDismiss);
@@ -48,14 +51,18 @@ export function Modal({
   return (
     <div
       data-nav-scope
-      className={`fixed inset-0 ${LAYER[layer]} flex items-center justify-center bg-black/60 ${PAD[pad]} backdrop-blur-sm`}
+      // Scrolls itself, so a dialog taller than the window can still be read top to bottom.
+      className={`fixed inset-0 ${LAYER[layer]} flex overflow-y-auto bg-black/60 ${PAD[pad]} backdrop-blur-sm`}
       role={role}
       aria-modal="true"
       aria-label={label}
       onClick={dismissOnBackdrop ? onDismiss : undefined}
     >
       <div
-        className={`w-full ${WIDTH[size]} overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl`}
+        // `m-auto` centres a dialog that fits and starts a taller one at the top, where centring would cut it off.
+        className={`m-auto w-full ${WIDTH[size]} ${
+          fitted ? "flex max-h-full flex-col" : ""
+        } overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
         {children}
