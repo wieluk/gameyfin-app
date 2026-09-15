@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { Modal } from "./Modal";
 import type { ConflictChoice, SaveVersion } from "@/types";
@@ -45,38 +46,18 @@ export function SaveConflictDialog({
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-default-200/60 px-5 py-3">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={busy}
-          className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100 disabled:opacity-50"
-        >
+        <Button variant="ghost" onClick={onCancel} disabled={busy}>
           Decide later
-        </button>
-        <button
-          type="button"
-          onClick={() => onChoose("keep-remote")}
-          disabled={busy}
-          className="rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
-        >
+        </Button>
+        <Button onClick={() => onChoose("keep-remote")} disabled={busy}>
           Keep the cloud save
-        </button>
-        <button
-          type="button"
-          onClick={() => onChoose("keep-both")}
-          disabled={busy}
-          className="rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
-        >
+        </Button>
+        <Button onClick={() => onChoose("keep-both")} disabled={busy}>
           Keep both
-        </button>
-        <button
-          type="button"
-          onClick={() => onChoose("keep-local")}
-          disabled={busy}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90 disabled:opacity-50"
-        >
+        </Button>
+        <Button variant="primary" onClick={() => onChoose("keep-local")} disabled={busy}>
           Keep this PC's save
-        </button>
+        </Button>
       </div>
     </Modal>
   );

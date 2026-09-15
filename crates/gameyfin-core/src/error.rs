@@ -28,6 +28,10 @@ pub enum CoreError {
     #[error("{path} is not an archive this app can unpack")]
     UnsupportedArchive { path: String },
 
+    /// A download that cannot be unpacked while it arrives, so the caller saves it as a file.
+    #[error("{0}")]
+    CannotStream(String),
+
     /// Windows requires administrator rights. A variant, not a message, so the caller can ask
     /// the user and relaunch through the shell's consent dialog.
     #[error("{program} will only run with administrator rights")]

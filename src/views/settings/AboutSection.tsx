@@ -1,31 +1,17 @@
-import { Check, Row, Section } from "./controls";
-import { updateChannelNote, useUpdate } from "@/components/UpdateBanner";
+import { Row, Section } from "./controls";
+import { Alert } from "@/components/Alert";
+import { Button, SwitchField } from "@/components/ui";
+import { updateChannelNote, useInstallUpdate, useUpdate } from "@/components/UpdateBanner";
 import { backend } from "@/lib/backend";
-import { messageOf } from "@/lib/errors";
 import { useAppSettings, useSettingsUpdate } from "@/lib/queries";
-import { BUTTON, BUTTON_MAYBE_DISABLED, HINT } from "@/lib/ui";
-import { useState } from "react";
+import { HINT } from "@/lib/ui";
 
 export function AboutSection() {
   const update = useUpdate();
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, outcome, error, install, restart } = useInstallUpdate();
   const settings = useAppSettings();
   const save = useSettingsUpdate();
   const status = update.data;
-
-  async function install() {
-    setBusy(true);
-    setError(null);
-    try {
-      setMessage(await backend.installUpdate());
-    } catch (e) {
-      setError(messageOf(e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <Section title="About">
@@ -43,54 +29,39 @@ export function AboutSection() {
       />
 
       <div className="flex flex-wrap gap-2 pt-1">
-        <button
-          type="button"
-          disabled={update.isFetching}
-          onClick={() => void update.refetch()}
-          className={BUTTON_MAYBE_DISABLED}
-        >
+        <Button disabled={update.isFetching} onClick={() => void update.refetch()}>
           {update.isFetching ? "Checking…" : "Check now"}
-        </button>
-        {status?.available && status.canInstall && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void install()}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
-          >
-            {busy ? "Updating…" : `Update to ${status.latestVersion}`}
-          </button>
+        </Button>
+        {outcome?.restartNeeded ? (
+          <Button variant="primary" disabled={busy} onClick={() => void restart()}>
+            {busy ? "Restarting…" : outcome.message}
+          </Button>
+        ) : (
+          status?.available &&
+          status.canInstall && (
+            <Button variant="primary" disabled={busy} onClick={() => void install()}>
+              {busy ? "Updating…" : `Update to ${status.latestVersion}`}
+            </Button>
+          )
         )}
         {status && (
-          <button
-            type="button"
-            onClick={() => void backend.openUrl(status.releaseUrl)}
-            className={BUTTON}
-          >
-            Release notes
-          </button>
+          <Button onClick={() => void backend.openUrl(status.releaseUrl)}>Release notes</Button>
         )}
       </div>
 
-      {message && <p className="text-[11px] text-foreground/60">{message}</p>}
-      {error && (
-        <p role="alert" className="text-[11px] text-danger">
-          {error}
-        </p>
+      {outcome && !outcome.restartNeeded && (
+        <p className="text-[11px] text-foreground/60">{outcome.message}</p>
       )}
+      {error && <Alert inline>{error}</Alert>}
 
-      <Check
+      <SwitchField
         label="Check for updates at startup"
         hint="One request to GitHub when the app opens. Nothing is downloaded until you ask."
         checked={settings.data?.checkForUpdates ?? true}
         onChange={(next) => save({ checkForUpdates: next })}
       />
 
-      {status && (
-        <p className={HINT}>
-          {updateChannelNote(status)}
-        </p>
-      )}
+      {status && <p className={HINT}>{updateChannelNote(status)}</p>}
     </Section>
   );
 }

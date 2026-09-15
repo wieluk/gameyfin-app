@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Icon } from "@/components/Icon";
+import { Button } from "@/components/ui";
 import { backend, type LibraryRoot } from "@/lib/backend";
 import { readStored, writeStored } from "@/lib/storage";
 import { useDismissOnEscape } from "@/lib/useDismiss";
 import { formatBytes } from "@/lib/format";
-import { BUTTON } from "@/lib/ui";
 
 /** The configured games folders. Invalidated as `["library-roots"]`. */
 export function useLibraryRoots() {
@@ -84,21 +84,12 @@ export function RootChooser({
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className={BUTTON}
-          >
+          <Button variant="ghost" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={confirm}
-            disabled={!selected}
-            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-40"
-          >
+          </Button>
+          <Button variant="primary" onClick={confirm} disabled={!selected}>
             Download here
-          </button>
+          </Button>
         </div>
       </div>
     </div>

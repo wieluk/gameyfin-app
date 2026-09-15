@@ -1,4 +1,5 @@
 import React from "react";
+import { Button } from "@/components/ui";
 import { backend, isMockBackend } from "@/lib/backend";
 
 /**
@@ -38,13 +39,9 @@ export class ErrorBoundary extends React.Component<
         <pre className="max-h-40 max-w-xl overflow-auto rounded-lg bg-content2 p-3 text-left text-[11px] text-foreground/70">
           {this.state.error.message}
         </pre>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-        >
+        <Button variant="primary" size="lg" onClick={() => window.location.reload()}>
           Reload
-        </button>
+        </Button>
       </div>
     );
   }

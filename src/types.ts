@@ -17,3 +17,4 @@ export type { SaveVersion } from "@/bindings/SaveVersion";
 export type { SettingsPatch } from "@/bindings/SettingsPatch";
 export type { Stage } from "@/bindings/Stage";
 export type { Theme } from "@/bindings/Theme";
+export type { TransferProgress } from "@/bindings/TransferProgress";

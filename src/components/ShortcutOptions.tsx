@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { Alert } from "@/components/Alert";
+import { Button } from "@/components/ui";
 import { backend, type ShortcutLocation } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 
@@ -51,7 +53,7 @@ export function ShortcutOptions({ gameId }: { gameId: number }) {
 
   return (
     <div>
-      <p className="mb-1.5 text-[11px] text-foreground/45">Add to</p>
+      <p className="mb-1 text-xs text-foreground/55">Add to</p>
       <div className="flex flex-wrap gap-1.5">
         <Toggle
           label="Applications menu"
@@ -82,9 +84,9 @@ export function ShortcutOptions({ gameId }: { gameId: number }) {
 
       {note && <p className="mt-1.5 text-[11px] text-foreground/50">{note}</p>}
       {error && (
-        <p role="alert" className="mt-1.5 text-[11px] leading-relaxed text-danger">
+        <Alert inline className="mt-1.5">
           {error}
-        </p>
+        </Alert>
       )}
     </div>
   );
@@ -104,18 +106,8 @@ function Toggle({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={busy || disabled}
-      aria-pressed={on}
-      className={`rounded-lg border px-2.5 py-1 text-[11px] transition-colors disabled:opacity-50 ${
-        on
-          ? "border-primary/40 bg-primary/15 text-primary"
-          : "border-default-200 text-foreground/70 hover:bg-default-100"
-      }`}
-    >
+    <Button size="sm" pressed={on} onClick={onClick} disabled={busy || disabled}>
       {busy ? "…" : label}
-    </button>
+    </Button>
   );
 }

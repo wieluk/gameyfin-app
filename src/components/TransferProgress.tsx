@@ -32,7 +32,9 @@ export function TransferProgress({
           {bytesPerSecond !== undefined && bytesPerSecond > 0 ? formatSpeed(bytesPerSecond) : ""}
           {totalBytes !== undefined && totalBytes > 0
             ? ` ${formatBytes(receivedBytes ?? 0)} of ${formatBytes(totalBytes)}`
-            : ""}
+            : receivedBytes
+              ? ` ${formatBytes(receivedBytes)}`
+              : ""}
         </span>
       </div>
     </div>

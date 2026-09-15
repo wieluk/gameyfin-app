@@ -7,11 +7,8 @@ import type { ConflictChoice } from "@/bindings/ConflictChoice";
 import type { ConnectionStatus } from "@/bindings/ConnectionStatus";
 import type { GameOptions } from "@/bindings/GameOptions";
 import type { GameOptionsPatch } from "@/bindings/GameOptionsPatch";
-import type { GraphicsStatus } from "@/bindings/GraphicsStatus";
-import type { InstalledGraphics } from "@/bindings/InstalledGraphics";
 import type { InstalledProton } from "@/bindings/InstalledProton";
 import type { InstalledSaveTool } from "@/bindings/InstalledSaveTool";
-import type { InstalledWine } from "@/bindings/InstalledWine";
 import type { InstallPlan } from "@/bindings/InstallPlan";
 import type { Library } from "@/bindings/Library";
 import type { LibraryEntry } from "@/bindings/LibraryEntry";
@@ -42,8 +39,8 @@ import type { ServerProbe } from "@/bindings/ServerProbe";
 import type { SettingsPatch } from "@/bindings/SettingsPatch";
 import type { ShortcutStatus } from "@/bindings/ShortcutStatus";
 import type { UmuStatus } from "@/bindings/UmuStatus";
+import type { UpdateOutcome } from "@/bindings/UpdateOutcome";
 import type { UpdateStatus } from "@/bindings/UpdateStatus";
-import type { WineStatus } from "@/bindings/WineStatus";
 
 export type {
   LibraryFolder,
@@ -74,11 +71,12 @@ export const backend = {
     invoke<void>("start_download", { gameId, root: root ?? null }),
   cancelDownload: (gameId: number) => invoke<void>("cancel_download", { gameId }),
   installOptions: (gameId: number) => invoke<InstallPlan>("install_options", { gameId }),
-  install: (gameId: number, method?: string, deleteArchive?: boolean) =>
+  install: (gameId: number, method?: string, deleteArchive?: boolean, deleteDownload?: boolean) =>
     invoke<void>("install_game", {
       gameId,
       method: method ?? null,
       deleteArchive: deleteArchive ?? null,
+      deleteDownload: deleteDownload ?? null,
     }),
   rescanLibrary: () => invoke<number>("rescan_library"),
   locateInstall: (gameId: number, path: string) => invoke<void>("locate_install", { gameId, path }),
@@ -93,7 +91,8 @@ export const backend = {
   deleteStaging: (gameId: number) => invoke<void>("delete_staging", { gameId }),
   deleteDownload: (gameId: number) => invoke<void>("delete_download", { gameId }),
   runSetup: (gameId: number, relative: string) => invoke<void>("run_setup", { gameId, relative }),
-  runSetupPath: (gameId: number, path: string) => invoke<void>("run_setup_path", { gameId, path }),
+  runSetupPath: (gameId: number, path: string, deleteDownload?: boolean) =>
+    invoke<void>("run_setup_path", { gameId, path, deleteDownload: deleteDownload ?? null }),
   /** Retry the setup program Windows refused to start, as administrator. */
   runSetupElevated: (gameId: number) => invoke<void>("run_setup_elevated", { gameId }),
   launch: (gameId: number) => invoke<void>("launch_game", { gameId }),
@@ -130,6 +129,8 @@ export const backend = {
   getSettings: () => invoke<PublicSettings>("get_settings"),
   /** Change some settings. Rejects a value it does not know. */
   updateSettings: (patch: SettingsPatch) => invoke<void>("update_settings", { patch }),
+  /** Preferences back to defaults; server, games folders and save location stay. */
+  resetSettings: () => invoke<void>("reset_settings"),
   suggestLibraryRoot: () => invoke<string>("suggest_library_root"),
   listLibraryRoots: () => invoke<LibraryRoot[]>("list_library_roots"),
   addLibraryRoot: (path: string) => invoke<void>("add_library_root", { path }),
@@ -148,18 +149,9 @@ export const backend = {
   /** Put an interface crash in the log file, which is all a packaged build leaves. */
   reportCrash: (details: string) => invoke<void>("report_crash", { details }),
 
-  wineStatus: () => invoke<WineStatus>("wine_status"),
-  /** Download and install Wine, replacing any existing build. Also used to update. */
-  installWine: (version?: string) => invoke<InstalledWine>("install_wine", { version }),
-  removeWine: () => invoke<void>("remove_wine"),
-  graphicsStatus: () => invoke<GraphicsStatus>("graphics_status"),
-  installGraphics: (component: "dxvk" | "vkd3d", version?: string) =>
-    invoke<InstalledGraphics>("install_graphics", { component, version }),
-  removeGraphics: () => invoke<void>("remove_graphics"),
   protonStatus: () => invoke<ProtonStatus>("proton_status"),
-  /** Download a Proton build: the newest of a family, or one named tag. */
-  installProton: (family: ProtonFamily, tag?: string) =>
-    invoke<InstalledProton>("install_proton", { family, tag }),
+  /** Download the newest build of a family, replacing the older one. */
+  installProton: (family: ProtonFamily) => invoke<InstalledProton>("install_proton", { family }),
   removeProton: (name: string) => invoke<void>("remove_proton", { name }),
   /** Flatpak only: installs the runtime's 32-bit libraries on the host. */
   install32bitSupport: () => invoke<string>("install_32bit_support"),
@@ -174,6 +166,9 @@ export const backend = {
   deletePrefix: (gameId: number) => invoke<void>("delete_prefix", { gameId }),
   openPrefixTool: (gameId: number, tool: PrefixTool) =>
     invoke<void>("open_prefix_tool", { gameId, tool }),
+  /** Returns a sentence to show. Can take minutes while winetricks downloads. */
+  runWinetricks: (gameId: number, verbs: string) =>
+    invoke<string>("run_winetricks", { gameId, verbs }),
   umuStatus: (gameId?: number) => invoke<UmuStatus>("umu_status", { gameId: gameId ?? null }),
   refreshUmuDatabase: () => invoke<number>("refresh_umu_database"),
 
@@ -241,7 +236,9 @@ export const backend = {
 
   updateStatus: () => invoke<UpdateStatus>("update_status"),
   /** Returns what to tell the user; what happens next differs by package format. */
-  installUpdate: () => invoke<string>("install_update"),
+  installUpdate: () => invoke<UpdateOutcome>("install_update"),
+  /** Quits and starts the freshly installed version. */
+  restartApp: () => invoke<void>("restart_app"),
 
   async copyToClipboard(text: string): Promise<void> {
     if (isMockBackend) return;

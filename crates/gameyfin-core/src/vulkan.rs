@@ -12,13 +12,12 @@ pub const PROBE_FLAG: &str = "--vulkan-probe";
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What the driver reports, or nothing at all when there is no usable Vulkan.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-#[ts(export)]
 pub struct VulkanSupport {
     /// Highest `apiVersion` across the physical devices, as major and minor.
     pub api_version: Option<(u32, u32)>,
-    /// The device that reported it, for the settings screen.
+    /// The device that reported it, for the log.
     pub device: Option<String>,
 }
 
@@ -44,9 +43,8 @@ impl VulkanSupport {
 
 /// Upstream's floors: DXVK 3.x needs Vulkan 1.4, 2.x needs 1.3, older hardware the 1.10.3
 /// branch. vkd3d-proton needs 1.3 whatever DXVK is used.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[ts(export)]
 pub enum GraphicsTier {
     /// Vulkan 1.4 or newer: the current DXVK line.
     Current,

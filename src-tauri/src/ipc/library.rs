@@ -120,6 +120,11 @@ pub async fn start_download(
         &game.title,
         &crate::downloads::provisional_filename(&game.title),
     );
+    let unpack_into = destination
+        .parent()
+        .filter(|_| settings.auto_extract || settings.auto_install)
+        .map(|dir| dir.join(EXTRACT_DIR));
+    let expected_bytes = game.metadata.file_size;
     let cookie_header = gameyfin_api::cookie_header(&settings.cookies);
     let rate_limit = state.download_limit();
     rate_limit.set(u64::from(settings.download_limit_kib) * 1024);
@@ -129,7 +134,7 @@ pub async fn start_download(
 
     tauri::async_runtime::spawn(async move {
         let _claim = claim;
-        let on_progress = {
+        let mut on_progress = {
             let (library, app) = (library.clone(), app.clone());
             let mut throttle = Throttle::new(300);
             move |p: gameyfin_core::Progress| {
@@ -137,7 +142,7 @@ pub async fn start_download(
                     game_id,
                     Activity::Downloading {
                         received_bytes: p.received_bytes,
-                        total_bytes: p.total_bytes.unwrap_or(0),
+                        total_bytes: p.total_bytes.unwrap_or(expected_bytes),
                         bytes_per_second: p.bytes_per_second,
                     },
                 );
@@ -153,14 +158,34 @@ pub async fn start_download(
                 req.header(reqwest::header::COOKIE, &cookie_header)
             }
         };
-        let result = downloader
-            .download(&url, &destination, authorize, on_progress)
-            .await;
+        let mut unpack_into = unpack_into;
+        let result = loop {
+            let result = downloader
+                .download_or_unpack(
+                    &url,
+                    &destination,
+                    unpack_into.as_deref(),
+                    &authorize,
+                    &mut on_progress,
+                )
+                .await;
+            match result {
+                // A format the stream reader refuses is fetched again as a plain file.
+                Err(gameyfin_core::CoreError::CannotStream(reason)) if unpack_into.is_some() => {
+                    tracing::info!(game_id, %reason, "saving the download as a file instead");
+                    unpack_into = None;
+                }
+                result => break result,
+            }
+        };
         app.state::<AppState>().downloads.finish(game_id);
 
+        use gameyfin_core::download::Outcome;
         match result {
             // The torrent provider answers with metainfo, which is not a game to install.
-            Ok(outcome) if gameyfin_core::extract::is_torrent_metainfo(&outcome.path) => {
+            Ok(Outcome::File(outcome))
+                if gameyfin_core::extract::is_torrent_metainfo(&outcome.path) =>
+            {
                 let _ = tokio::fs::remove_file(&outcome.path).await;
                 let message = format!(
                     "{} hands back a torrent, which Gameyfin cannot download from. Pick another provider under Downloads.",
@@ -168,7 +193,7 @@ pub async fn start_download(
                 );
                 fail(&app, game_id, Stage::Download, &game.title, message).await;
             }
-            Ok(outcome) => {
+            Ok(Outcome::File(outcome)) => {
                 tracing::info!(game_id, path = ?outcome.path, bytes = outcome.bytes, "download finished");
                 library
                     .update_record(game_id, |r| {
@@ -177,16 +202,30 @@ pub async fn start_download(
                     })
                     .await;
                 library.clear_activity(game_id);
-                if app.state::<AppState>().settings().auto_install {
-                    notify(&app);
-                    let installed =
-                        super::install::auto_install_download(&app, game_id, &game.title).await;
-                    if let Err(e) = installed {
-                        fail(&app, game_id, Stage::Install, &game.title, e.to_string()).await;
-                    }
+                notify(&app);
+                // A program always waits for Install; an archive waits only with auto extract off.
+                let current = app.state::<AppState>().settings();
+                let next = if current.auto_install {
+                    super::install::auto_install_download(&app, game_id, &game.title).await
+                } else if current.auto_extract && is_archive(&outcome.path).await {
+                    extract_download(&app, game_id, None).await
                 } else {
                     crate::notify::download_finished(&app, &game.title).await;
+                    Ok(())
+                };
+                if let Err(e) = next {
+                    fail(&app, game_id, Stage::Install, &game.title, e.to_string()).await;
                 }
+            }
+            Ok(Outcome::Unpacked { dir, bytes }) => {
+                tracing::info!(game_id, ?dir, bytes, "download unpacked as it arrived");
+                let setups = {
+                    let dir = dir.clone();
+                    tokio::task::spawn_blocking(move || scan_setups(&dir))
+                        .await
+                        .unwrap_or_default()
+                };
+                record_extracted(&app, game_id, &game.title, dir, setups, true).await;
             }
             Err(gameyfin_core::CoreError::Cancelled) => {
                 tracing::info!(game_id, "download cancelled");
@@ -208,7 +247,7 @@ pub async fn fail(app: &AppHandle, game_id: i64, stage: Stage, title: &str, mess
     crate::notify::failed(app, stage.label(), title, &message).await;
 }
 
-/// Keeps the partial file and checkpoint for a resume.
+/// A saved file keeps its checkpoint for a resume; a download being unpacked starts over.
 #[tauri::command]
 pub async fn cancel_download(
     app: AppHandle,
@@ -297,36 +336,94 @@ pub async fn extract_download(
                 tracing::warn!(game_id, error = %e, "could not remove the archive");
             }
         }
-        library
-            .update_record(game_id, |r| {
-                r.extracted_dir = Some(staging.clone());
-                r.staging_setups = setups.clone();
-                r.setup_candidates = setups.clone();
-                if delete_archive {
-                    r.archive_path = None;
-                    r.archive_bytes = 0;
-                }
-            })
-            .await;
-        library.clear_activity(game_id);
+        record_extracted(&app, game_id, &title, staging, setups, delete_archive).await;
+    });
+    Ok(())
+}
 
-        // A setup wizard asks questions a checkbox should not answer for the user.
-        if app.state::<AppState>().settings().auto_install {
-            if setups.is_empty() {
-                super::install::finish_auto_install(&app, game_id).await;
-            } else {
-                crate::notify::send(
-                    &app,
-                    crate::notify::Category::Transfer,
-                    "Setup needed",
-                    &format!("{title} came with an installer. Run it from Downloads."),
+/// Records unpacked files, then installs them when that is switched on. Shared by the extract
+/// step and a download that unpacked as it arrived.
+async fn record_extracted(
+    app: &AppHandle,
+    game_id: i64,
+    title: &str,
+    staging: PathBuf,
+    setups: Vec<String>,
+    archive_gone: bool,
+) {
+    let library = app.state::<AppState>().library().clone();
+    library
+        .update_record(game_id, |r| {
+            r.extracted_dir = Some(staging.clone());
+            r.staging_setups = setups.clone();
+            r.setup_candidates = setups.clone();
+            if archive_gone {
+                r.archive_path = None;
+                r.archive_bytes = 0;
+            }
+        })
+        .await;
+    library.clear_activity(game_id);
+
+    if app.state::<AppState>().settings().auto_install {
+        match auto_setup(&setups) {
+            AutoSetup::Move => super::install::finish_auto_install(app, game_id).await,
+            AutoSetup::Run(setup) => {
+                let started = match super::contained(&staging, setup) {
+                    Ok(program) => {
+                        super::install::auto_run_setup(app, game_id, title, &program).await
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = started {
+                    fail(app, game_id, Stage::Install, title, e.to_string()).await;
+                }
+            }
+            AutoSetup::Choose => {
+                crate::notify::setup_needed(
+                    app,
+                    &format!(
+                        "{title} has {} setup programs. Choose which to run in Downloads.",
+                        setups.len()
+                    ),
                 )
                 .await;
             }
         }
-        notify_state(&app, game_id);
-    });
-    Ok(())
+    } else {
+        crate::notify::download_finished(app, title).await;
+    }
+    notify_state(app, game_id);
+}
+
+/// Several setups, such as a game and its DLC, keep the download for the next one.
+fn deletes_download(choice: Option<bool>, setting: bool, staging_setups: usize) -> bool {
+    choice.unwrap_or(setting && staging_setups <= 1)
+}
+
+#[derive(Debug, PartialEq)]
+enum AutoSetup<'a> {
+    Move,
+    Run(&'a str),
+    /// Several setups, such as a game and its DLC, need someone to choose.
+    Choose,
+}
+
+fn auto_setup(setups: &[String]) -> AutoSetup<'_> {
+    match setups {
+        [] => AutoSetup::Move,
+        [setup] => AutoSetup::Run(setup),
+        _ => AutoSetup::Choose,
+    }
+}
+
+async fn is_archive(path: &Path) -> bool {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        gameyfin_core::classify(&path).is_ok_and(|payload| payload.is_archive())
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Adopts games restored from a backup or copied from another machine, in every games folder.
@@ -457,10 +554,20 @@ async fn remove_download(state: &AppState, game_id: i64, keep: Option<&Path>) ->
     Ok(())
 }
 
-/// After an install, deletes the download if the user asked. Failure only logs.
-pub async fn discard_download_if_asked(app: &AppHandle, game_id: i64, install_dir: &Path) {
+/// After an install, deletes the download if asked. `choice` overrides the setting. Failure only logs.
+pub async fn discard_download_if_asked(
+    app: &AppHandle,
+    game_id: i64,
+    install_dir: &Path,
+    choice: Option<bool>,
+) {
     let state = app.state::<AppState>();
-    if !state.settings().delete_download_after_install {
+    let setups = state.library().record(game_id).staging_setups.len();
+    if !deletes_download(
+        choice,
+        state.settings().delete_download_after_install,
+        setups,
+    ) {
         return;
     }
     if let Err(e) = remove_download(&state, game_id, Some(install_dir)).await {
@@ -566,10 +673,9 @@ pub struct GameOptionsPatch {
     pub launch_arguments: Option<String>,
     pub installer_arguments: Option<String>,
     pub launch_environment: Option<String>,
-    /// `"auto"` or empty clears the override.
-    pub runtime_override: Option<String>,
     /// Empty clears the pin.
     pub proton_build: Option<String>,
+    pub launch_toggles: Option<gameyfin_core::environment::LaunchToggles>,
 }
 
 #[tauri::command]
@@ -592,11 +698,11 @@ pub async fn set_game_options(
             if let Some(v) = options.launch_environment {
                 r.launch_environment = v;
             }
-            if let Some(v) = options.runtime_override {
-                r.runtime_override = chosen(v);
-            }
             if let Some(v) = options.proton_build {
                 r.proton_build = chosen(v);
+            }
+            if let Some(v) = options.launch_toggles {
+                r.launch_toggles = v;
             }
         })
         .await;
@@ -611,54 +717,30 @@ pub struct GameOptions {
     pub launch_arguments: String,
     pub installer_arguments: String,
     pub launch_environment: String,
-    pub runtime_override: Option<String>,
-    /// Only runtimes this machine has, so the picker cannot name one that fails at launch.
-    pub available_runtimes: Vec<RuntimeChoice>,
     pub proton_build: Option<String>,
     pub proton_builds: Vec<gameyfin_core::proton::InstalledProton>,
-}
-
-#[derive(Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct RuntimeChoice {
-    pub kind: String,
-    pub label: String,
+    pub launch_toggles: gameyfin_core::environment::LaunchToggles,
+    /// Winetricks verbs the last failed start pointed at.
+    pub suggested_winetricks: Vec<String>,
 }
 
 #[tauri::command]
 pub async fn game_options(state: State<'_, AppState>, game_id: i64) -> CommandResult<GameOptions> {
     let record = state.library().record(game_id);
     let config_dir = state.config_dir();
-    let ctx = crate::proton::runtime_context(&state, Some(game_id), None).await;
-    let (available_runtimes, proton_builds) = tokio::task::spawn_blocking(move || {
-        let runtimes = ["umu", "bundled-wine", "wine", "host-wine"]
-            .into_iter()
-            .filter_map(|kind| {
-                gameyfin_core::find_windows_runtime(&ctx, kind).map(|runtime| RuntimeChoice {
-                    kind: kind.to_string(),
-                    // The Proton build is picked separately.
-                    label: if runtime.is_wine_family() {
-                        runtime.description()
-                    } else {
-                        "Proton (umu)".to_string()
-                    },
-                })
-            })
-            .collect();
-        (runtimes, gameyfin_core::proton::available(&config_dir))
+    let proton_builds = blocking("could not list Proton builds", move || {
+        Ok::<_, std::convert::Infallible>(gameyfin_core::proton::installed(&config_dir))
     })
-    .await
-    .unwrap_or_default();
+    .await?;
 
     Ok(GameOptions {
         launch_arguments: record.launch_arguments,
         installer_arguments: record.installer_arguments,
         launch_environment: record.launch_environment,
-        runtime_override: record.runtime_override,
-        available_runtimes,
         proton_build: record.proton_build,
         proton_builds,
+        launch_toggles: record.launch_toggles,
+        suggested_winetricks: record.suggested_winetricks,
     })
 }
 
@@ -742,6 +824,28 @@ pub async fn list_executables(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn several_setups_keep_the_download_unless_the_user_says_otherwise() {
+        assert!(deletes_download(None, true, 1));
+        assert!(!deletes_download(None, true, 2));
+        assert!(!deletes_download(None, false, 0));
+        assert!(deletes_download(Some(true), false, 2));
+        assert!(!deletes_download(Some(false), true, 0));
+    }
+
+    #[test]
+    fn automatic_install_asks_when_there_is_more_than_one_setup() {
+        let setups = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(auto_setup(&[]), AutoSetup::Move);
+        let one = setups(&["setup.exe"]);
+        assert_eq!(auto_setup(&one), AutoSetup::Run("setup.exe"));
+        let game_and_dlc = setups(&[
+            "setup_wall_world_1.2.4.513_(64bit)_(67993).exe",
+            "setup_wall_world_deep_threat_1.2.4.513_(64bit)_(67993).exe",
+        ]);
+        assert_eq!(auto_setup(&game_and_dlc), AutoSetup::Choose);
+    }
 
     #[test]
     fn a_browsed_file_is_stored_relative_to_the_game() {

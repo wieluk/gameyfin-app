@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { Select } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 
@@ -35,19 +36,18 @@ export function DownloadProvider({ onError }: { onError: (message: string | null
       <label className="text-xs text-foreground/45" htmlFor="download-provider">
         From
       </label>
-      <select
+      <Select
         id="download-provider"
         value={selected.key}
         title={selected.description}
         onChange={(e) => void change(e.target.value)}
-        className="rounded-lg border border-default-200 bg-content2 px-2.5 py-1.5 text-xs outline-none focus:border-primary"
       >
         {options.map((provider) => (
           <option key={provider.key} value={provider.key}>
             {provider.name}
           </option>
         ))}
-      </select>
+      </Select>
       {selected.needsTorrentClient && (
         <span className="text-[11px] text-warning-600">
           Gives a .torrent, which Gameyfin cannot download from yet.

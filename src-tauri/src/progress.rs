@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub struct Throttle {
     every: Duration,
@@ -47,14 +47,27 @@ impl From<&gameyfin_core::Progress> for TransferProgress {
     }
 }
 
-/// A download callback emitting `event` at most five times a second.
-pub fn emitter(app: &AppHandle, event: &'static str) -> impl FnMut(gameyfin_core::Progress) + Send {
+/// A download callback emitting `event` at most five times a second, and showing it on the
+/// row of the game waiting for it.
+pub fn emitter(
+    app: &AppHandle,
+    event: &'static str,
+    game_id: Option<i64>,
+) -> impl FnMut(gameyfin_core::Progress) + Send {
     let app = app.clone();
     let mut throttle = Throttle::new(200);
     move |p| {
-        if throttle.ready() {
-            let _ = app.emit(event, TransferProgress::from(&p));
+        if !throttle.ready() {
+            return;
         }
+        let progress = TransferProgress::from(&p);
+        if let Some(game_id) = game_id {
+            let library = app.state::<crate::state::AppState>().library().clone();
+            if library.show_progress(game_id, progress.clone()) {
+                crate::ipc::notify_state(&app, game_id);
+            }
+        }
+        let _ = app.emit(event, progress);
     }
 }
 

@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
-import { Icon } from "@/components/Icon";
+import { Alert } from "@/components/Alert";
+import { Button } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { Modal } from "./Modal";
-import { BUTTON } from "@/lib/ui";
 
 /**
  * Confirmation for removing an installed game. A detected uninstaller runs first to clear
@@ -91,60 +91,43 @@ export function UninstallDialog({
           )}
 
           <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void choose()}
-              className="rounded-lg border border-default-200 px-2.5 py-1 text-[11px] text-foreground/70 transition-colors hover:bg-default-100"
-            >
+            <Button size="sm" onClick={() => void choose()}>
               {uninstaller ? "Choose a different one…" : "Choose uninstaller…"}
-            </button>
+            </Button>
             {chosen && (
-              <button
-                type="button"
-                onClick={() => setChosen(null)}
-                className="rounded-lg border border-default-200 px-2.5 py-1 text-[11px] text-foreground/60 transition-colors hover:bg-default-100"
-              >
+              <Button size="sm" variant="ghost" onClick={() => setChosen(null)}>
                 Undo
-              </button>
+              </Button>
             )}
           </div>
         </div>
 
         {error && (
-          <p role="alert" className="mt-2 text-[11px] leading-relaxed text-danger">
+          <Alert inline className="mt-2">
             {error}
-          </p>
+          </Alert>
         )}
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-default-200/60 px-5 py-3">
-        <button
-          type="button"
-          onClick={onCancel}
-          className={BUTTON}
-        >
+        <Button variant="ghost" onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
         {/* Offered only when there is something to skip: an uninstaller that hangs or
             refuses should not be the only way out of an uninstall. */}
         {uninstaller && (
-          <button
-            type="button"
-            onClick={() => onConfirm({ runUninstaller: false, uninstaller: null })}
-            className={BUTTON}
-          >
+          <Button onClick={() => onConfirm({ runUninstaller: false, uninstaller: null })}>
             Delete files only
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
+        <Button
+          variant="danger"
+          icon="close"
           autoFocus
           onClick={() => onConfirm({ runUninstaller: true, uninstaller: chosen })}
-          className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-danger-600"
         >
-          <Icon name="close" className="h-3 w-3" />
           {uninstaller ? "Run uninstaller" : "Uninstall"}
-        </button>
+        </Button>
       </div>
     </Modal>
   );

@@ -6,15 +6,13 @@ import { AccountSection } from "./settings/AccountSection";
 import { AboutSection } from "./settings/AboutSection";
 import {
   CompatibilitySection,
-  GraphicsSection,
   PrefixSection,
   ProtonSection,
   UmuSection,
-  WineSection,
 } from "./settings/compatibility";
 import { DiagnosticsSection } from "./settings/diagnostics";
 import { AppearanceSection, GamepadSection, NotificationSection, WindowSection } from "./settings/interface";
-import { DownloadSection, ExtractionSection, RootsSection } from "./settings/library";
+import { AutomationSection, RootsSection } from "./settings/library";
 import { MigrationSection, SaveToolSection, SavesSection } from "./settings/saves";
 
 /** Which pane of Settings is showing. */
@@ -60,7 +58,7 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
       <div
         role="tablist"
         aria-label="Settings"
-        className="flex shrink-0 items-center gap-1 border-b border-default-200/60 px-6"
+        className="flex shrink-0 items-center gap-1 border-b-2 border-default-200 px-6 dark:border-default-200/60"
       >
         {tabs.map((item) => (
           <button
@@ -69,7 +67,7 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
             role="tab"
             aria-selected={tab === item.id}
             onClick={() => select(item.id)}
-            className={`-mb-px border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
+            className={`-mb-0.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
               tab === item.id
                 ? "border-primary text-primary"
                 : "border-transparent text-foreground/50 hover:text-foreground"
@@ -81,13 +79,12 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
       </div>
 
       <div className={PANEL_BODY}>
-        <div className="mx-auto flex max-w-2xl flex-col gap-5">
+        <div className="mx-auto flex max-w-3xl flex-col gap-5">
           {tab === "account" && <AccountSection onSignedOut={onSignedOut} />}
           {tab === "library" && (
             <>
               <RootsSection />
-              <DownloadSection />
-              <ExtractionSection />
+              <AutomationSection />
             </>
           )}
           {tab === "interface" && (
@@ -102,8 +99,6 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
             <>
               <ProtonSection />
               <UmuSection />
-              <WineSection />
-              <GraphicsSection />
               <CompatibilitySection />
               <PrefixSection />
             </>

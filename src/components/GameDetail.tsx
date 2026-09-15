@@ -1,3 +1,4 @@
+import { Alert } from "@/components/Alert";
 import { Trailers } from "@/components/Trailers";
 import { useRef, useState } from "react";
 import { GameSaves } from "./GameSaves";
@@ -7,6 +8,7 @@ import { formatBytes, formatPlaytime } from "@/lib/format";
 import { useLibraryView, type FacetKey } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
 import { PANEL_BODY } from "@/lib/ui";
+import { Button } from "@/components/ui";
 import { useDismissOnEscape } from "@/lib/useDismiss";
 
 /** Game details as a dialog over the library, so the grid keeps its scroll and filters. */
@@ -65,12 +67,7 @@ export function GameDetail({
           </div>
 
           {state.kind === "failed" && (
-            <p
-              role="alert"
-              className="mb-5 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
-            >
-              {state.message}
-            </p>
+            <Alert className="mb-5">{state.message}</Alert>
           )}
 
           {/* Side by side where there is room, as on the web interface; stacked when narrow. */}
@@ -136,15 +133,16 @@ function PrimaryButton({
   const action = primaryAction(entry.state);
 
   return (
-    <button
-      type="button"
+    <Button
+      variant="primary"
+      size="lg"
+      icon={action.icon}
+      iconFilled={action.icon === "play"}
       onClick={onClick}
       disabled={action.disabled}
-      className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
     >
-      <Icon name={action.icon} className="h-4 w-4" filled={action.icon === "play"} />
       {action.label}
-    </button>
+    </Button>
   );
 }
 

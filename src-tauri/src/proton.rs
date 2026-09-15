@@ -1,5 +1,5 @@
-//! Running Windows games through umu and Proton: the launcher, managed builds, and which
-//! runtime a game gets.
+//! Running Windows games through umu and Proton: the launcher, the downloaded builds, and
+//! which runtime a game gets.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -12,7 +12,6 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::error::{blocking, CommandError, CommandResult, Context};
 use crate::state::AppState;
-use crate::wine::RELEASE_CHOICES;
 
 /// Tells the Steam Runtime container which extra host folders to share.
 pub const CONTAINER_MOUNTS_VAR: &str = "PRESSURE_VESSEL_FILESYSTEMS_RW";
@@ -20,14 +19,8 @@ pub const CONTAINER_MOUNTS_VAR: &str = "PRESSURE_VESSEL_FILESYSTEMS_RW";
 static LAUNCHER: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Cached, since a missing python3 does not turn up while the app runs.
-static PREFLIGHT: tokio::sync::OnceCell<Result<Launcher, String>> =
+static PREFLIGHT: tokio::sync::OnceCell<Result<PathBuf, String>> =
     tokio::sync::OnceCell::const_new();
-
-#[derive(Debug, Clone)]
-pub struct Launcher {
-    pub path: PathBuf,
-    pub version: Option<String>,
-}
 
 /// Needs the app handle for the resource directory, so it runs at startup.
 pub fn remember_launcher(app: &AppHandle) {
@@ -37,7 +30,7 @@ pub fn remember_launcher(app: &AppHandle) {
 }
 
 /// The launcher, once it has run. The zipapp needs python3 3.10+, which a package cannot guarantee.
-pub async fn umu_launcher() -> Result<Launcher, String> {
+pub async fn umu_launcher() -> Result<PathBuf, String> {
     PREFLIGHT
         .get_or_init(|| async {
             let Some(path) = LAUNCHER.get().cloned().flatten() else {
@@ -67,13 +60,8 @@ pub async fn umu_launcher() -> Result<Launcher, String> {
                     "umu-run could not start ({detail}). It needs python3 3.10 or newer."
                 ));
             }
-            let version = text
-                .split_whitespace()
-                .skip_while(|word| *word != "version")
-                .nth(1)
-                .map(str::to_string);
-            tracing::info!(?path, ?version, "umu-run is ready");
-            Ok(Launcher { path, version })
+            tracing::info!(?path, output = %text.trim(), "umu-run is ready");
+            Ok(path)
         })
         .await
         .clone()
@@ -82,7 +70,7 @@ pub async fn umu_launcher() -> Result<Launcher, String> {
 /// Library folders outside home, /media, /mnt and /run/media are invisible in the container,
 /// so an installer writing there would land in a copy that vanishes.
 pub fn container_mounts(state: &AppState, runtime: &WindowsRuntime) -> Option<(String, String)> {
-    if runtime.is_wine_family() {
+    if runtime.is_wine() {
         return None;
     }
     let roots = state.settings().library_roots();
@@ -102,48 +90,36 @@ pub async fn runtime_context(
     });
     RuntimeContext {
         config_dir: Some(state.config_dir()),
-        umu_launcher: umu_launcher().await.ok().map(|launcher| launcher.path),
-        proton_build: record
-            .and_then(|record| record.proton_build)
-            .or(state.settings().default_proton),
+        umu_launcher: umu_launcher().await.ok(),
+        proton_build: record.and_then(|record| record.proton_build),
         program,
         supports_32bit: gameyfin_core::runtime::has_32bit_support(),
     }
 }
 
-/// The runtime a game runs with, honouring its override. A missing override is an error,
-/// since silently using another runtime looks like the setting did nothing.
+/// The runtime a game runs with: Proton where it can, Gameyfin's Wine otherwise.
 pub async fn runtime_for_game(
     state: &AppState,
     game_id: i64,
     program: Option<&Path>,
 ) -> CommandResult<WindowsRuntime> {
-    let override_kind = state.library().record(game_id).runtime_override;
     let ctx = runtime_context(state, Some(game_id), program).await;
-    let kind = override_kind.clone();
-    let found = tokio::task::spawn_blocking(move || match kind.as_deref() {
-        Some(kind) => gameyfin_core::find_windows_runtime(&ctx, kind),
-        None => gameyfin_core::detect_windows_runtime(&ctx),
-    })
-    .await
-    .context("could not look for a runtime")?;
+    let found = tokio::task::spawn_blocking(move || gameyfin_core::detect_windows_runtime(&ctx))
+        .await
+        .context("could not look for a runtime")?;
     if let Some(runtime) = found {
         return Ok(runtime);
     }
-    Err(CommandError::msg(
-        match (override_kind, umu_launcher().await.err()) {
-            (Some(kind), _) => format!(
-                "This game is set to run with {kind}, which is not available on this system."
-            ),
-            (None, Some(problem)) => format!("{problem} {}", gameyfin_core::windows_runtime_hint()),
-            (None, None) => gameyfin_core::windows_runtime_hint(),
-        },
-    ))
+    let hint = gameyfin_core::windows_runtime_hint();
+    Err(CommandError::msg(match umu_launcher().await.err() {
+        Some(problem) => format!("{problem} {hint}"),
+        None => hint,
+    }))
 }
 
-/// Downloads UMU-Proton when there is no build yet. Not fatal: Steam's builds or Wine remain.
-/// The caller holds the runtime lock.
-pub async fn ensure_default(app: &AppHandle, state: &AppState) {
+/// Downloads UMU-Proton when there is no build yet. Not fatal: Wine remains. The caller holds
+/// the runtime lock.
+pub async fn ensure_default(app: &AppHandle, state: &AppState, game_id: Option<i64>) {
     if umu_launcher().await.is_err() || !proton::installed(&state.config_dir()).is_empty() {
         return;
     }
@@ -151,7 +127,7 @@ pub async fn ensure_default(app: &AppHandle, state: &AppState) {
         Ok(release) => release,
         Err(e) => return tracing::warn!(error = %e, "could not look up UMU-Proton"),
     };
-    if let Err(e) = download(app, state, &release).await {
+    if let Err(e) = download(app, state, &release, game_id).await {
         tracing::warn!("{e}");
     }
 }
@@ -160,6 +136,7 @@ async fn download(
     app: &AppHandle,
     state: &AppState,
     release: &ProtonRelease,
+    game_id: Option<i64>,
 ) -> CommandResult<InstalledProton> {
     tracing::info!(tag = %release.tag, "downloading Proton");
     let downloader = gameyfin_core::Downloader::new(state.transfer_http());
@@ -168,7 +145,7 @@ async fn download(
         &state.http(),
         release,
         &downloader,
-        crate::progress::emitter(app, "proton-progress"),
+        crate::progress::emitter(app, "proton-progress", game_id),
     )
     .await
     .context(format!("Could not install {}", release.tag))?;
@@ -180,72 +157,43 @@ async fn download(
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ProtonStatus {
-    /// Gameyfin's builds, then Steam's.
+    /// At most one build per family, newest first.
     pub installed: Vec<InstalledProton>,
-    pub default_build: Option<String>,
-    /// What a game without its own pin runs with.
-    pub in_use: Option<String>,
     pub latest_umu: Option<ProtonRelease>,
     pub latest_ge: Option<ProtonRelease>,
-    pub umu_tags: Vec<String>,
-    pub ge_tags: Vec<String>,
-    pub launcher_version: Option<String>,
     pub launcher_problem: Option<String>,
-    /// Whether 32-bit programs can run in the container at all.
     pub supports_32bit: bool,
-    /// Whether the missing 32-bit support is the Flatpak extension, which the app can
-    /// install for the user. False everywhere else, where it is the distribution's job.
+    /// Whether the missing 32-bit support is the Flatpak extension, which the app can install.
     pub missing_i386_extension: bool,
 }
 
 #[tauri::command]
 pub async fn proton_status(state: State<'_, AppState>) -> CommandResult<ProtonStatus> {
     let config_dir = state.config_dir();
-    let default_build = state.settings().default_proton;
     let http = state.http();
-    // An unreachable feed is empty rather than an error, so what is installed still shows.
-    let listed = |family: ProtonFamily| {
+    // An unreachable feed only hides the update offer.
+    let latest = |family: ProtonFamily| {
         let http = http.clone();
         async move {
-            proton::releases(&http, family).await.unwrap_or_else(|e| {
-                tracing::warn!(family = family.as_str(), error = %e, "could not check for Proton");
-                Vec::new()
-            })
+            proton::latest_release(&http, family)
+                .await
+                .inspect_err(|e| tracing::warn!(family = family.as_str(), error = %e, "could not check for Proton"))
+                .ok()
         }
     };
-    let (umu, ge) = tokio::join!(
-        listed(ProtonFamily::UmuProton),
-        listed(ProtonFamily::GeProton)
+    let (latest_umu, latest_ge) = tokio::join!(
+        latest(ProtonFamily::UmuProton),
+        latest(ProtonFamily::GeProton)
     );
-    let latest = |releases: &[ProtonRelease]| {
-        releases
-            .iter()
-            .find(|r| !proton::is_prerelease_tag(&r.tag))
-            .cloned()
-    };
-    let tags = |releases: &[ProtonRelease]| {
-        releases
-            .iter()
-            .take(RELEASE_CHOICES)
-            .map(|r| r.tag.clone())
-            .collect()
-    };
-
     let installed = blocking("could not list Proton builds", move || {
-        Ok::<_, std::convert::Infallible>(proton::available(&config_dir))
+        Ok::<_, std::convert::Infallible>(proton::installed(&config_dir))
     })
     .await?;
-    let launcher = umu_launcher().await;
     Ok(ProtonStatus {
-        in_use: proton::pick(&installed, default_build.as_deref()).map(|b| b.name),
-        latest_umu: latest(&umu),
-        latest_ge: latest(&ge),
-        umu_tags: tags(&umu),
-        ge_tags: tags(&ge),
         installed,
-        default_build,
-        launcher_version: launcher.as_ref().ok().and_then(|l| l.version.clone()),
-        launcher_problem: launcher.err(),
+        latest_umu,
+        latest_ge,
+        launcher_problem: umu_launcher().await.err(),
         supports_32bit: gameyfin_core::runtime::has_32bit_support(),
         missing_i386_extension: missing_i386_extension(),
     })
@@ -255,8 +203,8 @@ pub async fn proton_status(state: State<'_, AppState>) -> CommandResult<ProtonSt
 /// freedesktop base, which a test checks.
 const I386_EXTENSION: &str = "org.freedesktop.Platform.Compat.i386//25.08";
 
-/// Whether this is a Flatpak missing its 32-bit extension. Flatpak never installs it with the
-/// app, since neither the bundle nor our repository carries freedesktop extensions.
+/// Flatpak never installs the extension with the app: neither the bundle nor our repository
+/// carries freedesktop extensions.
 fn missing_i386_extension() -> bool {
     gameyfin_core::runtime::in_flatpak() && !gameyfin_core::runtime::has_32bit_support()
 }
@@ -335,8 +283,7 @@ async fn has_remote(scope: Scope, name: &str) -> bool {
 const FLATHUB: &str = "flathub";
 const FLATHUB_URL: &str = "https://flathub.org/repo/flathub.flatpakrepo";
 
-/// Installs the runtime's 32-bit libraries, on the host, since flatpak cannot run inside
-/// the sandbox. Returns what to tell the user.
+/// Installs the runtime's 32-bit libraries on the host. Returns what to tell the user.
 #[tauri::command]
 pub async fn install_32bit_support() -> CommandResult<String> {
     if !gameyfin_core::runtime::in_flatpak() {
@@ -345,8 +292,8 @@ pub async fn install_32bit_support() -> CommandResult<String> {
         ));
     }
 
-    // Where the runtime is, since this extends the runtime rather than Gameyfin; then
-    // where Gameyfin is; then wherever flathub happens to be.
+    // Where the runtime is, since this extends the runtime; then where Gameyfin is; then
+    // wherever flathub happens to be.
     let info = std::fs::read_to_string("/.flatpak-info").unwrap_or_default();
     let app_scope = scope_of(&info).unwrap_or(Scope::System);
     let mut preferred = app_scope;
@@ -416,31 +363,23 @@ pub async fn install_32bit_support() -> CommandResult<String> {
     Ok("Installed. Restart Gameyfin to use it.".to_string())
 }
 
-/// The newest release of a family, or one named tag.
+/// Downloads the newest build of a family, replacing the older one.
 #[tauri::command]
 pub async fn install_proton(
     app: AppHandle,
     state: State<'_, AppState>,
     family: String,
-    tag: Option<String>,
 ) -> CommandResult<InstalledProton> {
     let family = ProtonFamily::parse(&family)
         .ok_or_else(|| CommandError::msg(format!("{family} is not a Proton family.")))?;
-    let releases = proton::releases(&state.http(), family)
+    let release = proton::latest_release(&state.http(), family)
         .await
         .context(format!("could not look up {}", family.label()))?;
-    let release = match tag {
-        Some(tag) => releases.into_iter().find(|r| r.tag == tag),
-        None => releases
-            .into_iter()
-            .find(|r| !proton::is_prerelease_tag(&r.tag)),
-    }
-    .ok_or_else(|| CommandError::msg(format!("That {} release was not found.", family.label())))?;
     let _runtime_lock = state.runtime_lock().await;
-    download(&app, &state, &release).await
+    download(&app, &state, &release, None).await
 }
 
-/// A game pinned to the removed build runs the default next time.
+/// A game pinned to the removed build runs UMU-Proton next time.
 #[tauri::command]
 pub async fn remove_proton(
     app: AppHandle,
@@ -450,9 +389,6 @@ pub async fn remove_proton(
     proton::remove(&state.config_dir(), &name)
         .await
         .context(format!("could not remove {name}"))?;
-    if state.settings().default_proton.as_deref() == Some(name.as_str()) {
-        state.set_settings(|s| s.default_proton = None).await?;
-    }
     let _ = app.emit("proton-changed", ());
     Ok(())
 }
@@ -463,8 +399,7 @@ mod tests {
 
     #[test]
     fn the_installation_is_read_from_the_sandbox_description() {
-        // Which one it is decides the flag an install needs: "--user" against a system
-        // installation finds no flathub and fails with "no remote refs found".
+        // "--user" against a system installation finds no flathub and fails.
         let user = "[Instance]\napp-path=/home/ana/.local/share/flatpak/app/org.gameyfin.gameyfin-app/x86_64/stable/abc/files\n";
         assert_eq!(Some(Scope::User), scope_of(user));
 
@@ -479,8 +414,6 @@ mod tests {
 
     #[test]
     fn the_runtime_is_read_from_the_sandbox_description() {
-        // The extension extends the runtime, so the runtime's installation is the one to
-        // put it in.
         let info = "[Application]\nname=org.gameyfin.gameyfin-app\nruntime=runtime/org.gnome.Platform/x86_64/50\n";
         assert_eq!(
             Some("runtime/org.gnome.Platform/x86_64/50".to_string()),
@@ -491,7 +424,6 @@ mod tests {
 
     #[test]
     fn the_i386_extension_matches_the_flatpak_manifest() {
-        // The manifest mounts the extension and the command installs it, so the versions must agree.
         let manifest = include_str!("../../flatpak/org.gameyfin.gameyfin-app.yml");
         let (name, version) = I386_EXTENSION
             .split_once("//")

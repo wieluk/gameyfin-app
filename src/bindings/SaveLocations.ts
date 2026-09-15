@@ -21,6 +21,14 @@ prefixHome: string | null,
  */
 prefixDriveC: string | null, installDir: string | null, home: string | null, 
 /**
+ * Whether this game writes saves inside its prefix, so browsing should start there.
+ */
+savesInPrefix: boolean, 
+/**
  * Where the helper actually found files. Only filled when asked for: it runs a scan.
  */
-detected: Array<string>, };
+detected: Array<string>, 
+/**
+ * Folders named like the game in the usual save places. Filled with `detected`.
+ */
+suggested: Array<string>, };

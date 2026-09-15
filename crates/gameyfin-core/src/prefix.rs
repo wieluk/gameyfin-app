@@ -176,6 +176,65 @@ pub fn tool_command(
     registry_command(runtime, prefix, &[tool])
 }
 
+const MAX_WINETRICKS_VERBS: usize = 20;
+
+/// Splits typed winetricks verbs, refusing anything but a plain verb so the input can never
+/// become an option or a path.
+pub fn winetricks_verbs(input: &str) -> Result<Vec<String>, String> {
+    let verbs: Vec<String> = input.split_whitespace().map(str::to_string).collect();
+    if verbs.is_empty() {
+        return Err("Type at least one winetricks verb, such as vcrun2022.".to_string());
+    }
+    if verbs.len() > MAX_WINETRICKS_VERBS {
+        return Err(format!(
+            "Run at most {MAX_WINETRICKS_VERBS} verbs at a time."
+        ));
+    }
+    let plain = |verb: &String| {
+        !verb.starts_with('-')
+            && verb.chars().all(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '=' | '-')
+            })
+    };
+    if let Some(bad) = verbs.iter().find(|verb| !plain(verb)) {
+        return Err(format!("{bad} is not a winetricks verb."));
+    }
+    Ok(verbs)
+}
+
+/// Installs winetricks verbs into a prefix without prompts. umu-run fetches winetricks itself;
+/// Wine needs one installed on this system, so `None` without it.
+pub fn winetricks_command(
+    runtime: &WindowsRuntime,
+    prefix: &Path,
+    verbs: &[String],
+    winetricks: Option<&Path>,
+) -> Option<crate::launch::ResolvedCommand> {
+    use std::ffi::OsString;
+
+    match runtime {
+        WindowsRuntime::Umu { .. } => {
+            let args: Vec<&str> = ["winetricks", "-q"]
+                .into_iter()
+                .chain(verbs.iter().map(String::as_str))
+                .collect();
+            Some(registry_command(runtime, prefix, &args))
+        }
+        WindowsRuntime::Wine { path } => {
+            let mut command = registry_command(runtime, prefix, &[]);
+            command.program = winetricks?.as_os_str().to_owned();
+            command.args = std::iter::once(OsString::from("-q"))
+                .chain(verbs.iter().map(OsString::from))
+                .collect();
+            // Otherwise winetricks runs whichever `wine` is on PATH.
+            command
+                .env
+                .insert("WINE".to_string(), path.to_string_lossy().into_owned());
+            Some(command)
+        }
+    }
+}
+
 /// The command that sets a prefix's DPI, applied through the runtime since Wine rewrites
 /// `user.reg` on start and an appended fragment can be lost.
 pub fn dpi_command(
@@ -277,7 +336,7 @@ fn registry_command_with(
     let mut env = BTreeMap::new();
     // Proton ships wine-mono and gecko and installs them itself, so the prompt suppression
     // is Wine's alone: applied to Proton it breaks .NET games instead.
-    let overrides = if runtime.is_wine_family() {
+    let overrides = if runtime.is_wine() {
         DllOverrides::no_prompts().merged_with(overrides.clone())
     } else {
         overrides.clone()
@@ -303,13 +362,9 @@ fn registry_command_with(
         env.insert("STORE".to_string(), "none".to_string());
     }
 
-    // The same wrapper the launcher uses, so environment handling cannot diverge between
-    // preparing a prefix and running a game in it.
-    let full_args = runtime.wrap_args(&env, None, args.iter().map(|a| a.to_string()));
-
     crate::launch::ResolvedCommand {
         program: runtime.program().to_path_buf().into_os_string(),
-        args: full_args,
+        args: args.iter().map(std::ffi::OsString::from).collect(),
         env,
         working_dir: None,
     }
@@ -457,6 +512,57 @@ pub fn dpi_for_screen(scale: f64, logical_height: Option<u32>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn winetricks_verbs_are_split_and_checked() {
+        assert_eq!(
+            winetricks_verbs(" vcrun2022  d3dcompiler_47 renderer=vulkan ").unwrap(),
+            ["vcrun2022", "d3dcompiler_47", "renderer=vulkan"]
+        );
+        for bad in ["", "   ", "--force", "vcrun2022;rm", "Vcrun2022", "../x"] {
+            assert!(winetricks_verbs(bad).is_err(), "{bad:?}");
+        }
+        assert!(winetricks_verbs(&"a ".repeat(21)).is_err());
+    }
+
+    #[test]
+    fn umu_runs_winetricks_itself() {
+        let runtime = WindowsRuntime::Umu {
+            launcher: PathBuf::from("/app/umu-run"),
+            proton: PathBuf::from("/p/UMU-Proton"),
+            build: "UMU-Proton".to_string(),
+        };
+        let verbs = vec!["vcrun2022".to_string()];
+        let command = winetricks_command(&runtime, Path::new("/pfx"), &verbs, None).unwrap();
+        assert_eq!(command.program, "/app/umu-run");
+        assert_eq!(command.args, ["winetricks", "-q", "vcrun2022"]);
+        assert_eq!(
+            command.env.get("WINEPREFIX").map(String::as_str),
+            Some("/pfx")
+        );
+    }
+
+    #[test]
+    fn wine_needs_winetricks_and_points_it_at_that_wine() {
+        let runtime = WindowsRuntime::Wine {
+            path: PathBuf::from("/usr/bin/wine"),
+        };
+        let verbs = vec!["d3dx9".to_string()];
+        assert!(winetricks_command(&runtime, Path::new("/pfx"), &verbs, None).is_none());
+
+        let tool = Path::new("/usr/bin/winetricks");
+        let command = winetricks_command(&runtime, Path::new("/pfx"), &verbs, Some(tool)).unwrap();
+        assert_eq!(command.program, "/usr/bin/winetricks");
+        assert_eq!(command.args, ["-q", "d3dx9"]);
+        assert_eq!(
+            command.env.get("WINE").map(String::as_str),
+            Some("/usr/bin/wine")
+        );
+        assert_eq!(
+            command.env.get("WINEPREFIX").map(String::as_str),
+            Some("/pfx")
+        );
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir =

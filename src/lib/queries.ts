@@ -21,9 +21,7 @@ export const keys = {
   saveOverviewAll: ["save-overview"] as const,
   saveVersions: (gameId: number) => ["save-versions", gameId] as const,
   saveTool: ["save-tool-status"] as const,
-  wine: ["wine-status"] as const,
   proton: ["proton-status"] as const,
-  graphics: ["graphics-status"] as const,
   umu: ["umu-status"] as const,
   prefixes: ["prefix-list"] as const,
   update: ["update-status"] as const,
@@ -81,16 +79,8 @@ export function useStatus() {
   });
 }
 
-export function useWineStatus() {
-  return useQuery({ queryKey: keys.wine, queryFn: () => backend.wineStatus() });
-}
-
 export function useProtonStatus() {
   return useQuery({ queryKey: keys.proton, queryFn: () => backend.protonStatus() });
-}
-
-export function useGraphicsStatus() {
-  return useQuery({ queryKey: keys.graphics, queryFn: () => backend.graphicsStatus() });
 }
 
 export function useSaveToolStatus() {

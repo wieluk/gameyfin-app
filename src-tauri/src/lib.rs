@@ -266,6 +266,7 @@ pub fn run() {
             ipc::session::quit_app,
             ipc::session::get_settings,
             ipc::session::update_settings,
+            ipc::session::reset_settings,
             ipc::session::suggest_library_root,
             ipc::session::config_directory,
             ipc::session::log_directory,
@@ -304,12 +305,6 @@ pub fn run() {
             ipc::install::uninstall_game,
             ipc::launch::launch_game,
             ipc::launch::stop_game,
-            wine::wine_status,
-            wine::install_wine,
-            wine::remove_wine,
-            graphics::graphics_status,
-            graphics::install_graphics,
-            graphics::remove_graphics,
             proton::proton_status,
             proton::install_proton,
             proton::install_32bit_support,
@@ -320,6 +315,7 @@ pub fn run() {
             integrations::list_prefixes,
             integrations::delete_prefix,
             integrations::open_prefix_tool,
+            integrations::run_winetricks,
             integrations::umu_status,
             integrations::refresh_umu_database,
             saves::save_state,
@@ -349,6 +345,7 @@ pub fn run() {
             saves::answer_save_pull_offer,
             updater::update_status,
             updater::install_update,
+            updater::restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gameyfin");

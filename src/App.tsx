@@ -9,7 +9,6 @@ import { TitleBar } from "@/components/TitleBar";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { SavePullPrompt } from "@/components/SavePullPrompt";
 import { SaveSyncStatus } from "@/components/SaveSyncStatus";
-import { SetupWizard } from "@/components/SetupWizard";
 import { isMockBackend } from "@/lib/backend";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import { useGamepad } from "@/lib/useGamepad";
@@ -120,15 +119,11 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     );
   });
   useTauriEvent("library-changed", () => void invalidate(keys.entries));
-  // The runtimes each have their own settings screen, which must not show a stale answer.
-  useTauriEvent("wine-changed", () => void invalidate(keys.wine));
   useTauriEvent("proton-changed", () => void invalidate(keys.proton));
-  useTauriEvent("graphics-changed", () => void invalidate(keys.graphics));
   useTauriEvent("save-tool-changed", () => void invalidate(keys.saveTool, keys.saveOverviewAll));
 
   return (
     <div className="flex min-h-0 flex-1">
-      <SetupWizard />
       <SavePullPrompt />
       <SaveSyncStatus />
       <Sidebar downloadCount={pending} conflictCount={conflicts} />

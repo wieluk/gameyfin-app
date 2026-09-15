@@ -1,6 +1,5 @@
-import { Icon } from "./Icon";
+import { Button } from "@/components/ui";
 import { Modal, ModalFooter } from "./Modal";
-import { BUTTON } from "@/lib/ui";
 
 /** Confirmation for actions that destroy files: neither should happen on one stray click. */
 export function ConfirmDialog({
@@ -23,22 +22,12 @@ export function ConfirmDialog({
         <div className="text-xs leading-relaxed text-foreground/60">{body}</div>
       </div>
       <ModalFooter>
-        <button
-          type="button"
-          onClick={onCancel}
-          className={BUTTON}
-        >
+        <Button variant="ghost" onClick={onCancel}>
           Cancel
-        </button>
-        <button
-          type="button"
-          autoFocus
-          onClick={onConfirm}
-          className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-danger-600"
-        >
-          <Icon name="close" className="h-3 w-3" />
+        </Button>
+        <Button variant="danger" icon="close" autoFocus onClick={onConfirm}>
           {confirmLabel}
-        </button>
+        </Button>
       </ModalFooter>
     </Modal>
   );

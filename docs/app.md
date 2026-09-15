@@ -45,6 +45,8 @@ It also holds **This device's name**, shown beside every save this PC uploads, a
 - **Log detail**: set it to Debug while reproducing a problem.
 - **App data**: settings, session and local records.
 - **Artwork cache**: cleans itself, or press **Clear** if covers look wrong.
+- **Reset settings**: puts every setting back to its default. Your server, sign-in, games
+  folders, save location and per-game options stay.
 
 Passwords for archives and WebDAV are stored in the settings file, readable only by your
 user account, but not encrypted.

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
+import { Alert } from "@/components/Alert";
 import { Modal } from "@/components/Modal";
+import { Button } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { keys } from "@/lib/queries";
@@ -84,7 +86,7 @@ export function SaveSyncStatus() {
             uploaded when you stop until you decide which save to keep.
           </p>
         )}
-        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+        {error && <Alert className="mt-2">{error}</Alert>}
 
         {!isFinal(progress) && (
           <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-default-200">
@@ -96,51 +98,36 @@ export function SaveSyncStatus() {
       <div className="flex justify-end gap-2 border-t border-default-200/60 px-5 py-3">
         {held ? (
           <>
-            <button
-              type="button"
-              onClick={() => setProgress(null)}
-              className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100"
-            >
+            <Button variant="ghost" onClick={() => setProgress(null)}>
               Cancel
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
               onClick={() => {
                 setProgress(null);
                 navigate("/saves");
               }}
-              className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100"
             >
               Open Saves
-            </button>
-            <button
-              type="button"
-              onClick={() => void startAnyway(progress.gameId)}
-              className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90"
-            >
+            </Button>
+            <Button variant="primary" onClick={() => void startAnyway(progress.gameId)}>
               Start anyway
-            </button>
+            </Button>
           </>
         ) : isFinal(progress) ? (
-          <button
-            type="button"
-            onClick={() => setProgress(null)}
-            className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100"
-          >
+          <Button variant="ghost" onClick={() => setProgress(null)}>
             Close
-          </button>
+          </Button>
         ) : (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             disabled={!progress.skippable}
             title={
               progress.skippable ? undefined : "Stopping now would leave the save half written."
             }
             onClick={() => void backend.skipSaveSync(progress.gameId)}
-            className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100 disabled:opacity-40"
           >
             Skip
-          </button>
+          </Button>
         )}
       </div>
     </Modal>

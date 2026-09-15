@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { Alert } from "@/components/Alert";
+import { Button } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatBytes, formatRelative } from "@/lib/format";
@@ -55,11 +57,7 @@ export function SaveVersionList({
     return <p className="text-[11px] text-foreground/40">Looking…</p>;
   }
   if (versions.error) {
-    return (
-      <p role="alert" className="text-[11px] text-danger">
-        {messageOf(versions.error)}
-      </p>
-    );
+    return <Alert inline>{messageOf(versions.error)}</Alert>;
   }
   const list = versions.data ?? [];
   if (list.length === 0) {
@@ -73,7 +71,7 @@ export function SaveVersionList({
     <div className="flex flex-col gap-2">
       <ul className="flex flex-col gap-1">
         {list.map((version) => (
-          <li key={version.id} className="flex items-center gap-3 text-[11px]">
+          <li key={version.id} className="flex items-center gap-2 text-[11px]">
             <span className="min-w-0 flex-1 truncate text-foreground/70">
               {formatRelative(version.createdAt)}
               {version.deviceName ? ` from ${version.deviceName}` : ""}
@@ -84,30 +82,26 @@ export function SaveVersionList({
             {!deletingAll && confirming?.ids[0] === version.id ? (
               <>
                 <span className="shrink-0 text-danger">Delete for good?</span>
-                <button
-                  type="button"
+                <Button
+                  size="sm"
+                  variant="danger"
                   disabled={disabled}
                   onClick={() =>
                     void change(() => backend.deleteSaveVersions(gameId, [version.id]))
                   }
-                  className="shrink-0 rounded bg-danger px-2 py-0.5 text-white hover:bg-danger/90 disabled:opacity-50"
                 >
                   Delete
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirming(null)}
-                  className="shrink-0 rounded px-2 py-0.5 text-foreground/60 hover:bg-default-100"
-                >
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                   Cancel
-                </button>
+                </Button>
               </>
             ) : (
               <>
-                <button
-                  type="button"
+                <Button
+                  size="sm"
                   disabled={disabled}
-                  aria-pressed={version.locked}
+                  pressed={version.locked}
                   title={
                     version.locked
                       ? "Kept forever. Press to let it be cleaned up with old versions."
@@ -118,41 +112,33 @@ export function SaveVersionList({
                       backend.setSaveLocked(gameId, version.id, !version.locked),
                     )
                   }
-                  className={`shrink-0 rounded px-2 py-0.5 hover:bg-default-100 disabled:opacity-50 ${
-                    version.locked ? "text-primary" : "text-foreground/60"
-                  }`}
                 >
                   {version.locked ? "Kept" : "Keep"}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  size="sm"
                   disabled={disabled || !canRestore}
                   title={canRestore ? undefined : "Install this game to restore its save."}
                   onClick={() => onRestore(version.id)}
-                  className="shrink-0 rounded px-2 py-0.5 text-foreground/60 hover:bg-default-100 disabled:opacity-50"
                 >
                   Restore
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
                   disabled={disabled}
                   aria-label="Delete this version"
                   onClick={() => setConfirming({ ids: [version.id], all: false })}
-                  className="shrink-0 rounded px-2 py-0.5 text-danger/80 hover:bg-danger/10 disabled:opacity-50"
                 >
                   Delete
-                </button>
+                </Button>
               </>
             )}
           </li>
         ))}
       </ul>
 
-      {error && (
-        <p role="alert" className="text-[11px] text-danger">
-          {error}
-        </p>
-      )}
+      {error && <Alert inline>{error}</Alert>}
 
       {list.length > 0 && (
         <div className="flex items-center justify-end gap-2 text-[11px]">
@@ -162,33 +148,29 @@ export function SaveVersionList({
                 Delete all {list.length === 1 ? "1 save" : `${list.length} saves`} for this game?
                 They cannot be recovered.
               </span>
-              <button
-                type="button"
+              <Button
+                size="sm"
+                variant="danger"
                 disabled={disabled}
                 onClick={() =>
                   void change(() => backend.deleteSaveVersions(gameId, confirming?.ids ?? []))
                 }
-                className="rounded bg-danger px-2 py-0.5 text-white hover:bg-danger/90 disabled:opacity-50"
               >
                 Delete all
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirming(null)}
-                className="rounded px-2 py-0.5 text-foreground/60 hover:bg-default-100"
-              >
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                 Cancel
-              </button>
+              </Button>
             </>
           ) : (
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="destructive"
               disabled={disabled}
               onClick={() => setConfirming({ ids: list.map((version) => version.id), all: true })}
-              className="rounded px-2 py-0.5 text-danger/80 hover:bg-danger/10 disabled:opacity-50"
             >
               Delete all saves for this game
-            </button>
+            </Button>
           )}
         </div>
       )}

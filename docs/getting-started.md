@@ -26,8 +26,8 @@ flatpak install --user gameyfin-app org.gameyfin.gameyfin-app
 ### Flatpak: 32-bit support
 
 Installers and older games are 32-bit, and the Flatpak needs Flathub's 32-bit libraries to
-run them with Proton. If they are missing, Gameyfin offers **Install 32-bit support** in the
-setup step and in **Settings, Compatibility**. Restart Gameyfin afterwards.
+run them with Proton. Without them those run on Gameyfin's own Wine instead. **Settings,
+Compatibility** offers **Install 32-bit support**; restart Gameyfin afterwards.
 
 ## First start
 
@@ -37,9 +37,8 @@ setup step and in **Settings, Compatibility**. Restart Gameyfin afterwards.
 3. **Choose where games go and name this PC.** The name appears beside every save this PC
    uploads.
 
-On Linux, a setup step then offers to download what Windows games need: Proton, Wine,
-DXVK and vkd3d-proton, and on the Flatpak the 32-bit libraries. You can skip it; anything
-missing is downloaded on a game's first launch. See [Playing games](playing.md).
+On Linux, what Windows games need downloads on a game's first launch. See
+[Playing games](playing.md).
 
 ## Your games folder
 

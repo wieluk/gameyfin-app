@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { Alert } from "@/components/Alert";
 import { Modal } from "@/components/Modal";
+import { Button, Checkbox, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatBytes } from "@/lib/format";
@@ -116,9 +117,8 @@ export function ScanThisPcDialog({
                 key={find.ludusaviTitle}
                 className="flex items-center gap-3 rounded-lg border border-default-200/60 px-2.5 py-2"
               >
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5 shrink-0 accent-primary"
+                <Checkbox
+                  aria-label={`Back up ${find.ludusaviTitle}`}
                   checked={chosen.has(find.ludusaviTitle)}
                   disabled={find.gameId === null || busy}
                   onChange={() => toggle(find.ludusaviTitle)}
@@ -142,14 +142,9 @@ export function ScanThisPcDialog({
                   )}
                 </div>
                 {find.gameId === null && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => setMatching(find)}
-                    className="shrink-0 rounded-lg bg-default-100 px-2.5 py-1 text-[11px] hover:bg-default-200 disabled:opacity-50"
-                  >
+                  <Button size="sm" disabled={busy} onClick={() => setMatching(find)}>
                     Match to a game
-                  </button>
+                  </Button>
                 )}
               </li>
             ))}
@@ -161,30 +156,20 @@ export function ScanThisPcDialog({
             {progress}
           </p>
         )}
-        {error && (
-          <div className="mt-3">
-            <Alert>{error}</Alert>
-          </div>
-        )}
+        {error && <Alert className="mt-3">{error}</Alert>}
       </div>
 
       <div className="flex justify-end gap-2 border-t border-default-200/60 px-5 py-3">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={busy}
-          className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100 disabled:opacity-50"
-        >
+        <Button variant="ghost" onClick={onClose} disabled={busy}>
           Close
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="primary"
           onClick={() => void backUpChosen()}
           disabled={busy || actionable === 0}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary/90 disabled:opacity-50"
         >
           {busy ? "Backing up…" : `Back up ${actionable || ""}`.trim()}
-        </button>
+        </Button>
       </div>
 
       {matching && (
@@ -236,12 +221,13 @@ function MatchToGame({
           A save is stored against a game in your library, so pick the one these files
           belong to.
         </p>
-        <input
+        <TextInput
           value={needle}
           autoFocus
+          icon="search"
+          className="mb-2"
           onChange={(e) => setNeedle(e.target.value)}
           placeholder="Search your library"
-          className="mb-2 w-full rounded-lg border border-default-200 bg-content2 px-3 py-1.5 text-xs outline-none focus:border-primary"
         />
         <ul className="flex max-h-[40vh] flex-col gap-1 overflow-y-auto">
           {shown.map((game) => (
@@ -263,13 +249,9 @@ function MatchToGame({
         </ul>
       </div>
       <div className="flex justify-end border-t border-default-200/60 px-5 py-3">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-lg px-3 py-1.5 text-xs text-foreground/70 hover:bg-default-100"
-        >
+        <Button variant="ghost" onClick={onClose}>
           Cancel
-        </button>
+        </Button>
       </div>
     </Modal>
   );

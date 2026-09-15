@@ -4,19 +4,10 @@ import type { ProtonRelease } from "./ProtonRelease";
 
 export type ProtonStatus = { 
 /**
- * Gameyfin's builds, then Steam's.
+ * At most one build per family, newest first.
  */
-installed: Array<InstalledProton>, defaultBuild: string | null, 
+installed: Array<InstalledProton>, latestUmu: ProtonRelease | null, latestGe: ProtonRelease | null, launcherProblem: string | null, supports32bit: boolean, 
 /**
- * What a game without its own pin runs with.
- */
-inUse: string | null, latestUmu: ProtonRelease | null, latestGe: ProtonRelease | null, umuTags: Array<string>, geTags: Array<string>, launcherVersion: string | null, launcherProblem: string | null, 
-/**
- * Whether 32-bit programs can run in the container at all.
- */
-supports32bit: boolean, 
-/**
- * Whether the missing 32-bit support is the Flatpak extension, which the app can
- * install for the user. False everywhere else, where it is the distribution's job.
+ * Whether the missing 32-bit support is the Flatpak extension, which the app can install.
  */
 missingI386Extension: boolean, };

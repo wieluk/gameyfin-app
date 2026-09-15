@@ -3,7 +3,6 @@ import type { InstallerMemoryLimit } from "./InstallerMemoryLimit";
 import type { LogLevel } from "./LogLevel";
 import type { SaveBackend } from "./SaveBackend";
 import type { Theme } from "./Theme";
-import type { WineVariant } from "./WineVariant";
 
 export type Settings = { 
 /**
@@ -21,23 +20,19 @@ downloadLimitKib: number,
 /**
  * Repack installers size buffers from all the RAM they find, so they are capped.
  */
-installerMemoryLimit: InstallerMemoryLimit, wineVariant: WineVariant, 
-/**
- * `None` is the newest UMU-Proton Gameyfin has downloaded.
- */
-defaultProton: string | null, 
+installerMemoryLimit: InstallerMemoryLimit, 
 /**
  * `None` is the server's highest-priority provider.
  */
-downloadProvider: string | null, setupDismissed: boolean, notifyTransfers: boolean, 
+downloadProvider: string | null, notifyTransfers: boolean, 
 /**
  * Separate so failures stay audible with the routine chatter off.
  */
-notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, autoInstall: boolean, deleteArchiveAfterExtract: boolean, deleteDownloadAfterInstall: boolean, umuFixes: boolean, umuAutoUpdate: boolean, 
+notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, autoInstall: boolean, 
 /**
- * DXVK and vkd3d-proton; off falls back to WineD3D, where Direct3D 12 does not start.
+ * Unpacks archives, while downloading where the format allows. Auto install implies it.
  */
-graphicsComponents: boolean, gamepadEnabled: boolean, 
+autoExtract: boolean, deleteArchiveAfterExtract: boolean, deleteDownloadAfterInstall: boolean, innoSetupArguments: string, nsisArguments: string, umuFixes: boolean, umuAutoUpdate: boolean, gamepadEnabled: boolean, 
 /**
  * 0.0 to 1.0; a worn stick rests off-centre.
  */

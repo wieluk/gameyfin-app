@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gameyfin_core::wine::WineVariant;
+use gameyfin_core::InstallerKind;
 use serde::{Deserialize, Serialize};
 
 /// A partial update: a field that was not sent keeps its value. For text fields an empty
@@ -21,23 +21,22 @@ pub struct SettingsPatch {
     pub start_minimized: Option<bool>,
     pub autostart: Option<bool>,
     pub auto_install: Option<bool>,
+    pub auto_extract: Option<bool>,
     pub gamepad_enabled: Option<bool>,
     pub gamepad_deadzone: Option<f64>,
     pub couch_mode_auto: Option<bool>,
     pub umu_fixes: Option<bool>,
     pub umu_auto_update: Option<bool>,
-    pub graphics_components: Option<bool>,
     pub check_for_updates: Option<bool>,
-    pub setup_dismissed: Option<bool>,
     pub installer_memory_limit: Option<InstallerMemoryLimit>,
     pub download_limit_kib: Option<u32>,
     pub delete_archive_after_extract: Option<bool>,
     pub delete_download_after_install: Option<bool>,
+    pub inno_setup_arguments: Option<String>,
+    pub nsis_arguments: Option<String>,
     pub theme: Option<Theme>,
     pub log_level: Option<LogLevel>,
-    pub wine_variant: Option<WineVariant>,
     pub library_root: Option<String>,
-    pub default_proton: Option<String>,
     pub extraction_password: Option<String>,
     pub ignored_executables: Option<Vec<String>>,
     pub save_manifest_auto_update: Option<bool>,
@@ -78,21 +77,19 @@ impl SettingsPatch {
             start_minimized,
             autostart,
             auto_install,
+            auto_extract,
             gamepad_enabled,
             gamepad_deadzone,
             couch_mode_auto,
             umu_fixes,
             umu_auto_update,
-            graphics_components,
             check_for_updates,
-            setup_dismissed,
             installer_memory_limit,
             download_limit_kib,
             delete_archive_after_extract,
             delete_download_after_install,
             theme,
             log_level,
-            wine_variant,
             save_manifest_auto_update,
             save_sync_enabled,
             sync_saves_on_launch,
@@ -101,7 +98,6 @@ impl SettingsPatch {
         );
         set_text!(
             library_root,
-            default_proton,
             device_name,
             save_folder,
             webdav_url,
@@ -114,6 +110,16 @@ impl SettingsPatch {
         if let Some(password) = &self.webdav_password {
             s.webdav_password = Some(password.clone()).filter(|p| !p.is_empty());
         }
+        // Blank restores the default.
+        let switches = |value: &String, kind: InstallerKind| {
+            non_blank(value).unwrap_or_else(|| kind.default_unattended_args().to_string())
+        };
+        if let Some(value) = &self.inno_setup_arguments {
+            s.inno_setup_arguments = switches(value, InstallerKind::InnoSetup);
+        }
+        if let Some(value) = &self.nsis_arguments {
+            s.nsis_arguments = switches(value, InstallerKind::Nsis);
+        }
         if let Some(versions) = self.save_max_versions {
             s.save_max_versions = versions.max(1);
         }
@@ -121,6 +127,17 @@ impl SettingsPatch {
             // A blank entry would match every executable.
             s.ignored_executables = entries.iter().filter_map(|e| non_blank(e)).collect();
         }
+    }
+}
+
+impl Settings {
+    pub fn unattended_args(&self, kind: InstallerKind) -> Vec<String> {
+        let typed = match kind {
+            InstallerKind::InnoSetup => &self.inno_setup_arguments,
+            InstallerKind::Nsis => &self.nsis_arguments,
+            InstallerKind::InstallShield | InstallerKind::Unknown => return Vec::new(),
+        };
+        gameyfin_core::arguments::split(typed)
     }
 }
 
@@ -145,12 +162,8 @@ pub struct Settings {
     pub download_limit_kib: u32,
     /// Repack installers size buffers from all the RAM they find, so they are capped.
     pub installer_memory_limit: InstallerMemoryLimit,
-    pub wine_variant: WineVariant,
-    /// `None` is the newest UMU-Proton Gameyfin has downloaded.
-    pub default_proton: Option<String>,
     /// `None` is the server's highest-priority provider.
     pub download_provider: Option<String>,
-    pub setup_dismissed: bool,
     pub notify_transfers: bool,
     /// Separate so failures stay audible with the routine chatter off.
     pub notify_failures: bool,
@@ -158,12 +171,14 @@ pub struct Settings {
     pub close_to_tray: bool,
     pub start_minimized: bool,
     pub auto_install: bool,
+    /// Unpacks archives, while downloading where the format allows. Auto install implies it.
+    pub auto_extract: bool,
     pub delete_archive_after_extract: bool,
     pub delete_download_after_install: bool,
+    pub inno_setup_arguments: String,
+    pub nsis_arguments: String,
     pub umu_fixes: bool,
     pub umu_auto_update: bool,
-    /// DXVK and vkd3d-proton; off falls back to WineD3D, where Direct3D 12 does not start.
-    pub graphics_components: bool,
     pub gamepad_enabled: bool,
     /// 0.0 to 1.0; a worn stick rests off-centre.
     pub gamepad_deadzone: f64,
@@ -204,21 +219,20 @@ impl Default for Settings {
             log_level: LogLevel::default(),
             download_limit_kib: 0,
             installer_memory_limit: InstallerMemoryLimit::default(),
-            wine_variant: WineVariant::default(),
-            default_proton: None,
             download_provider: None,
-            setup_dismissed: false,
             notify_transfers: true,
             notify_failures: true,
             notify_updates: true,
             close_to_tray: false,
             start_minimized: false,
             auto_install: false,
+            auto_extract: true,
             delete_archive_after_extract: true,
             delete_download_after_install: false,
+            inno_setup_arguments: InstallerKind::InnoSetup.default_unattended_args().into(),
+            nsis_arguments: InstallerKind::Nsis.default_unattended_args().into(),
             umu_fixes: true,
             umu_auto_update: true,
-            graphics_components: true,
             gamepad_enabled: true,
             gamepad_deadzone: 0.25,
             couch_mode_auto: true,
@@ -407,6 +421,26 @@ impl Settings {
         self.username = None;
     }
 
+    /// Every preference back to its default. The server, session, games folders and save
+    /// location stay: losing those strands installed games and stored saves.
+    pub fn reset_preferences(&mut self) {
+        let kept = std::mem::take(self);
+        *self = Settings {
+            server_url: kept.server_url,
+            library_root: kept.library_root,
+            extra_library_roots: kept.extra_library_roots,
+            cookies: kept.cookies,
+            username: kept.username,
+            installation_id: kept.installation_id,
+            save_backend: kept.save_backend,
+            save_folder: kept.save_folder,
+            webdav_url: kept.webdav_url,
+            webdav_username: kept.webdav_username,
+            webdav_password: kept.webdav_password,
+            ..Settings::default()
+        };
+    }
+
     /// Which store saves go to. Version ids from one store mean nothing to another.
     pub fn save_store_identity(&self) -> (SaveBackend, Option<String>) {
         let location = match self.save_backend {
@@ -515,6 +549,33 @@ mod tests {
     }
 
     #[test]
+    fn a_reset_restores_preferences_and_keeps_setup() {
+        let mut settings = Settings {
+            server_url: Some("https://games.example".into()),
+            library_root: Some("/games".into()),
+            username: Some("alice".into()),
+            save_backend: SaveBackend::WebDav,
+            webdav_password: Some("pw".into()),
+            theme: Theme::Light,
+            auto_install: true,
+            download_limit_kib: 512,
+            device_name: Some("Desk".into()),
+            ..Default::default()
+        };
+        settings.cookies.insert("JSESSIONID".into(), "abc".into());
+        settings.reset_preferences();
+
+        assert!(settings.has_session());
+        assert_eq!(settings.library_root.as_deref(), Some("/games"));
+        assert_eq!(settings.save_backend, SaveBackend::WebDav);
+        assert_eq!(settings.webdav_password.as_deref(), Some("pw"));
+        assert_eq!(settings.theme, Theme::Dark);
+        assert!(!settings.auto_install);
+        assert_eq!(settings.download_limit_kib, 0);
+        assert_eq!(settings.device_name, None);
+    }
+
+    #[test]
     fn the_filter_keeps_third_party_crates_quiet() {
         let filter = LogLevel::Debug.filter();
         assert!(filter.starts_with("warn,"), "got {filter}");
@@ -530,23 +591,22 @@ mod tests {
         ("startMinimized", "true"),
         ("autostart", "true"),
         ("autoInstall", "true"),
+        ("autoExtract", "false"),
         ("gamepadEnabled", "false"),
         ("gamepadDeadzone", "0.4"),
         ("couchModeAuto", "false"),
         ("umuFixes", "false"),
         ("umuAutoUpdate", "false"),
-        ("graphicsComponents", "false"),
         ("checkForUpdates", "false"),
-        ("setupDismissed", "true"),
         ("installerMemoryLimit", "2048"),
         ("downloadLimitKib", "512"),
         ("deleteArchiveAfterExtract", "false"),
         ("deleteDownloadAfterInstall", "true"),
+        ("innoSetupArguments", "\"/SILENT\""),
+        ("nsisArguments", "\"/S /NCRC\""),
         ("theme", "\"light\""),
         ("logLevel", "\"debug\""),
-        ("wineVariant", "\"staging\""),
         ("libraryRoot", "\"/games\""),
-        ("defaultProton", "\"GE-Proton10-1\""),
         ("extractionPassword", "\"hunter2\""),
         ("ignoredExecutables", "[\"x.exe\"]"),
         ("saveManifestAutoUpdate", "false"),
@@ -585,9 +645,11 @@ mod tests {
         let mut settings = Settings {
             close_to_tray: true,
             device_name: Some("Desk".into()),
+            inno_setup_arguments: "/SILENT".into(),
             ..Default::default()
         };
         let patch = SettingsPatch {
+            inno_setup_arguments: Some("  ".into()),
             notify_failures: Some(false),
             device_name: Some("   ".into()),
             extraction_password: Some("  ".into()),
@@ -602,6 +664,12 @@ mod tests {
         assert_eq!(settings.extraction_password.as_deref(), Some("  "));
         assert_eq!(settings.ignored_executables, vec!["vcredist.exe"]);
         assert_eq!(settings.save_max_versions, 1);
+        assert_eq!(
+            settings.unattended_args(InstallerKind::InnoSetup),
+            vec!["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+            "a blank field falls back to the default"
+        );
+        assert!(settings.unattended_args(InstallerKind::Unknown).is_empty());
     }
 
     #[test]
@@ -620,7 +688,11 @@ mod tests {
     #[test]
     fn defaults_are_what_we_intend_and_match_deserialization() {
         let settings = Settings::default();
-        assert!(!settings.auto_install && settings.delete_archive_after_extract);
+        assert!(
+            !settings.auto_install
+                && settings.auto_extract
+                && settings.delete_archive_after_extract
+        );
         assert_eq!(settings.theme, Theme::Dark);
         assert_eq!(settings.installer_memory_limit, InstallerMemoryLimit::Auto);
         assert_eq!(serde_json::from_str::<Settings>("{}").unwrap(), settings);

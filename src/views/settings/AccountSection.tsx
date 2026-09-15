@@ -1,4 +1,5 @@
 import { Alert } from "@/components/Alert";
+import { Button } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { useStatus } from "@/lib/queries";
 import { useAction } from "@/lib/useAction";
@@ -26,8 +27,8 @@ export function AccountSection({ onSignedOut }: { onSignedOut: () => void }) {
         <DeviceNameField />
       </div>
       <div className="pt-1">
-        <button
-          type="button"
+        <Button
+          variant="destructive"
           disabled={signOut.busy}
           onClick={() =>
             void signOut.run(async () => {
@@ -35,10 +36,9 @@ export function AccountSection({ onSignedOut }: { onSignedOut: () => void }) {
               onSignedOut();
             })
           }
-          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs text-foreground/70 transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger disabled:opacity-50"
         >
           Sign out
-        </button>
+        </Button>
       </div>
       {signOut.error && <Alert>{signOut.error}</Alert>}
     </Section>

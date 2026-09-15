@@ -10,6 +10,8 @@ export function testGame(overrides: Partial<Game> = {}): Game {
     summary: null,
     comment: null,
     release: null,
+    createdAt: null,
+    updatedAt: null,
     userRating: null,
     criticRating: null,
     platforms: [],

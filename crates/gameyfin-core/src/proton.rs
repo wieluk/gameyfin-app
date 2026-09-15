@@ -102,16 +102,6 @@ pub struct ProtonRelease {
     pub size_bytes: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
-#[serde(rename_all = "kebab-case")]
-#[ts(export)]
-pub enum ProtonSource {
-    /// Downloaded by Gameyfin into its own config directory.
-    Managed,
-    /// Already installed by Steam, usable through umu like any other build.
-    Steam,
-}
-
 /// A build on disk, ready to hand to umu as `PROTONPATH`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -120,7 +110,6 @@ pub struct InstalledProton {
     /// The directory name, which is also how a game pins a build.
     pub name: String,
     pub family: Option<ProtonFamily>,
-    pub source: ProtonSource,
     /// The build directory, holding the `proton` script.
     pub path: PathBuf,
 }
@@ -143,7 +132,6 @@ pub fn installed(config_dir: &Path) -> Vec<InstalledProton> {
             (!name.starts_with('.') && path.join("proton").is_file()).then(|| InstalledProton {
                 family: ProtonFamily::of_name(&name),
                 name,
-                source: ProtonSource::Managed,
                 path,
             })
         })
@@ -152,43 +140,17 @@ pub fn installed(config_dir: &Path) -> Vec<InstalledProton> {
     builds
 }
 
-/// Builds Steam already has, newest first.
-pub fn steam_builds() -> Vec<InstalledProton> {
-    let mut builds: Vec<InstalledProton> = crate::runtime::steam_proton_builds()
-        .into_iter()
-        .filter_map(|(name, script)| {
-            Some(InstalledProton {
-                family: ProtonFamily::of_name(&name),
-                path: script.parent()?.to_path_buf(),
-                name,
-                source: ProtonSource::Steam,
-            })
-        })
-        .collect();
-    sort_newest_first(&mut builds);
-    builds
-}
-
-/// Everything a game can be pinned to: Gameyfin's builds first, then Steam's.
-pub fn available(config_dir: &Path) -> Vec<InstalledProton> {
-    let mut all = installed(config_dir);
-    all.extend(steam_builds());
-    all
-}
-
-pub fn resolve(config_dir: &Path, wanted: Option<&str>) -> Option<InstalledProton> {
-    pick(&available(config_dir), wanted)
-}
-
-/// The named build when it is still there, otherwise the default: the newest managed
-/// UMU-Proton, then any managed build, then whatever Steam has as a last resort.
+/// The build a game runs. A pin to a replaced build follows the newest of its family, and no
+/// pin means the newest UMU-Proton.
 pub fn pick(all: &[InstalledProton], wanted: Option<&str>) -> Option<InstalledProton> {
-    if let Some(found) = wanted.and_then(|name| all.iter().find(|b| b.name == name)) {
-        return Some(found.clone());
-    }
-    all.iter()
-        .find(|b| b.source == ProtonSource::Managed && b.family == Some(ProtonFamily::UmuProton))
-        .or_else(|| all.iter().find(|b| b.source == ProtonSource::Managed))
+    let newest_of = |family| all.iter().find(|b| b.family == Some(family));
+    wanted
+        .and_then(|name| {
+            all.iter()
+                .find(|b| b.name == name)
+                .or_else(|| ProtonFamily::of_name(name).and_then(newest_of))
+        })
+        .or_else(|| newest_of(ProtonFamily::UmuProton))
         .or_else(|| all.first())
         .cloned()
 }
@@ -282,7 +244,7 @@ fn release_from(family: ProtonFamily, entry: &serde_json::Value) -> Option<Proto
     })
 }
 
-/// Download, verify and unpack a build, replacing one of the same name.
+/// Download, verify and unpack a build, replacing the older build of its family.
 pub async fn install<F>(
     config_dir: &Path,
     http: &reqwest::Client,
@@ -351,10 +313,17 @@ where
     let _ = std::fs::remove_dir_all(&staging);
     let _ = std::fs::remove_file(&archive);
 
+    // One build per family: games pinned to the old one follow it to the new one.
+    for old in installed(config_dir)
+        .into_iter()
+        .filter(|b| b.family == Some(release.family) && b.name != name)
+    {
+        let _ = std::fs::remove_dir_all(&old.path);
+    }
+
     Ok(InstalledProton {
         family: Some(release.family),
         name,
-        source: ProtonSource::Managed,
         path: destination,
     })
 }
@@ -425,11 +394,10 @@ mod tests {
         })
     }
 
-    fn build(name: &str, source: ProtonSource) -> InstalledProton {
+    fn build(name: &str) -> InstalledProton {
         InstalledProton {
             name: name.to_string(),
             family: ProtonFamily::of_name(name),
-            source,
             path: PathBuf::from("/builds").join(name),
         }
     }
@@ -505,10 +473,10 @@ mod tests {
     #[test]
     fn builds_sort_newest_first_across_numbering_and_suffix_changes() {
         let mut builds = vec![
-            build("GE-Proton9-27", ProtonSource::Managed),
-            build("GE-Proton11-6-x86_64", ProtonSource::Managed),
-            build("GE-Proton10-34", ProtonSource::Managed),
-            build("GE-Proton11-3", ProtonSource::Managed),
+            build("GE-Proton9-27"),
+            build("GE-Proton11-6-x86_64"),
+            build("GE-Proton10-34"),
+            build("GE-Proton11-3"),
         ];
         sort_newest_first(&mut builds);
         let names: Vec<&str> = builds.iter().map(|b| b.name.as_str()).collect();
@@ -544,41 +512,31 @@ mod tests {
     }
 
     #[test]
-    fn the_default_is_the_newest_managed_umu_proton_even_beside_a_newer_ge() {
+    fn the_default_is_the_newest_umu_proton_even_beside_a_newer_ge() {
         let all = vec![
-            build("GE-Proton11-6-x86_64", ProtonSource::Managed),
-            build("UMU-Proton-10.0-4", ProtonSource::Managed),
-            build("UMU-Proton-9.0-3", ProtonSource::Managed),
+            build("GE-Proton11-6-x86_64"),
+            build("UMU-Proton-10.0-4"),
+            build("UMU-Proton-9.0-3"),
         ];
         assert_eq!(pick(&all, None).unwrap().name, "UMU-Proton-10.0-4");
     }
 
     #[test]
-    fn a_pinned_build_is_used_while_it_exists_and_the_default_once_it_is_gone() {
-        let all = vec![
-            build("UMU-Proton-10.0-4", ProtonSource::Managed),
-            build("GE-Proton11-6-x86_64", ProtonSource::Managed),
-        ];
+    fn a_pin_to_a_replaced_build_follows_its_family() {
+        let all = vec![build("UMU-Proton-10.0-4"), build("GE-Proton11-6-x86_64")];
         assert_eq!(
             pick(&all, Some("GE-Proton11-6-x86_64")).unwrap().name,
             "GE-Proton11-6-x86_64"
         );
         assert_eq!(
             pick(&all, Some("GE-Proton10-1")).unwrap().name,
+            "GE-Proton11-6-x86_64"
+        );
+        let umu_only = vec![build("UMU-Proton-10.0-4")];
+        assert_eq!(
+            pick(&umu_only, Some("GE-Proton10-1")).unwrap().name,
             "UMU-Proton-10.0-4"
         );
-    }
-
-    #[test]
-    fn a_steam_build_is_only_the_default_when_gameyfin_has_none() {
-        let steam_only = vec![build("UMU-Proton-9.0-4e", ProtonSource::Steam)];
-        assert_eq!(pick(&steam_only, None).unwrap().source, ProtonSource::Steam);
-
-        let both = vec![
-            build("UMU-Proton-10.0-4", ProtonSource::Steam),
-            build("GE-Proton11-6-x86_64", ProtonSource::Managed),
-        ];
-        assert_eq!(pick(&both, None).unwrap().source, ProtonSource::Managed);
     }
 
     #[test]

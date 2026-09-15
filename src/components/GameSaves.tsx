@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { Alert } from "@/components/Alert";
 import { SaveVersionList } from "@/components/SaveVersionList";
+import { Button } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { keys } from "@/lib/queries";
@@ -89,17 +91,12 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
       <div className="rounded-xl border border-default-200/60 bg-content1 px-4 py-3">
         <div className="flex items-center gap-3">
           <p className={`min-w-0 flex-1 text-xs ${summary.tone}`}>{summary.text}</p>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => act(() => backend.backupSaves(gameId, false))}
-            className="shrink-0 rounded-lg bg-default-100 px-3 py-1.5 text-xs font-medium hover:bg-default-200 disabled:opacity-50"
-          >
-            {busy ? "Working..." : "Back up now"}
-          </button>
+          <Button disabled={busy} onClick={() => act(() => backend.backupSaves(gameId, false))}>
+            {busy ? "Working…" : "Back up now"}
+          </Button>
         </div>
 
-        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+        {error && <Alert className="mt-2">{error}</Alert>}
         {outcome && !error && (
           <p
             role="status"

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Alert } from "@/components/Alert";
 import { platformLabel } from "@/components/SaveVersionList";
+import { Button, Radio } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { keys, useInvalidate } from "@/lib/queries";
@@ -80,10 +81,8 @@ export function SavePullPrompt() {
                 chosen === version.id ? "border-primary bg-primary/5" : "border-default-200/60"
               } ${restorable ? "cursor-pointer" : "opacity-50"}`}
             >
-              <input
-                type="radio"
+              <Radio
                 name="offered-save"
-                className="h-3.5 w-3.5 shrink-0 accent-primary"
                 checked={chosen === version.id}
                 disabled={!restorable || action.busy}
                 onChange={() => setPicked(version.id)}
@@ -110,30 +109,19 @@ export function SavePullPrompt() {
       )}
 
       <ModalFooter>
-        <button
-          type="button"
-          disabled={action.busy}
-          onClick={dismiss}
-          className="rounded-lg px-3 py-1.5 text-xs text-foreground/60 hover:bg-default-100 disabled:opacity-50"
-        >
+        <Button variant="ghost" disabled={action.busy} onClick={dismiss}>
           Not now
-        </button>
-        <button
-          type="button"
-          disabled={action.busy}
-          onClick={() => void answer(null)}
-          className="rounded-lg border border-default-200 px-3 py-1.5 text-xs font-medium hover:bg-default-100 disabled:opacity-50"
-        >
+        </Button>
+        <Button disabled={action.busy} onClick={() => void answer(null)}>
           {offer.localSaves ? "Keep mine and play" : "Play without a save"}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="primary"
           disabled={action.busy || chosen === null}
           onClick={() => void answer(chosen)}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50"
         >
           {action.busy ? "Working…" : "Restore and play"}
-        </button>
+        </Button>
       </ModalFooter>
     </Modal>
   );

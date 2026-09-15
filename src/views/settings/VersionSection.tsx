@@ -1,9 +1,10 @@
 import { Row, Section } from "./controls";
+import { Alert } from "@/components/Alert";
+import { Button, FormField, Select } from "@/components/ui";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { TransferProgress } from "@/bindings/TransferProgress";
 import { messageOf } from "@/lib/errors";
 import { formatBytes, formatSpeed } from "@/lib/format";
-import { HINT, INPUT } from "@/lib/ui";
 import { useState } from "react";
 
 /** What a downloadable helper looks like to the section below. */
@@ -125,12 +126,7 @@ export function VersionSection({ tool, children }: { tool: VersionTool; children
       )}
 
       <div className="flex flex-wrap gap-2 pt-1">
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void run("install")}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-        >
+        <Button variant="primary" disabled={busy !== null} onClick={() => void run("install")}>
           {busy === "install"
             ? "Downloading…"
             : pinned
@@ -140,41 +136,38 @@ export function VersionSection({ tool, children }: { tool: VersionTool; children
                 : info.updatable
                   ? `Update to ${info.latest}`
                   : "Redownload"}
-        </button>
+        </Button>
         {info?.alternative && !pinned && (
-          <button
-            type="button"
+          <Button
             disabled={busy !== null}
             onClick={() => void run("install", info.alternative?.version)}
-            className="rounded-lg border border-default-200 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
           >
             {info.alternative.label}
-          </button>
+          </Button>
         )}
         {info?.version && !info.builtIn && (
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => void run("remove")}
-            className="rounded-lg border border-default-200 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-          >
+          <Button variant="destructive" disabled={busy !== null} onClick={() => void run("remove")}>
             {busy === "remove" ? "Removing…" : "Remove"}
-          </button>
+          </Button>
         )}
       </div>
 
-      {error && <p className="text-[11px] leading-relaxed text-danger">{error}</p>}
+      {error && <Alert inline>{error}</Alert>}
 
       {hasChoices && (
-        <>
-          <label className="pt-2 text-xs text-foreground/55" htmlFor={`${tool.id}-version`}>
-            Version
-          </label>
-          <select
+        <FormField
+          className="pt-2"
+          label="Version"
+          htmlFor={`${tool.id}-version`}
+          hint={
+            tool.versionHint ??
+            "Pick an older version only to work around a problem with the newest one. The choice applies to the next download, not to what is installed now."
+          }
+        >
+          <Select
             id={`${tool.id}-version`}
             value={chosen}
             onChange={(e) => setChosen(e.target.value)}
-            className={INPUT}
           >
             <option value="">Latest{latestName ? ` (${latestName})` : ""}</option>
             {groups
@@ -192,12 +185,8 @@ export function VersionSection({ tool, children }: { tool: VersionTool; children
                     {version}
                   </option>
                 ))}
-          </select>
-          <p className={HINT}>
-            {tool.versionHint ??
-              "Pick an older version only to work around a problem with the newest one. The choice applies to the next download, not to what is installed now."}
-          </p>
-        </>
+          </Select>
+        </FormField>
       )}
 
       {children}
