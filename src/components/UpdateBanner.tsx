@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import type { UpdateOutcome } from "@/bindings/UpdateOutcome";
 import { Icon } from "@/components/Icon";
 import { Button } from "@/components/ui";
 import { backend, isMockBackend, type UpdateStatus } from "@/lib/backend";
@@ -17,6 +18,33 @@ export function useUpdate() {
   });
 }
 
+/** Installing and the restart that follows it, shared by the banner and Settings. */
+export function useInstallUpdate() {
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<UpdateOutcome | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return {
+    busy,
+    outcome,
+    error,
+    install: () => run(async () => setOutcome(await backend.installUpdate())),
+    restart: () => run(() => backend.restartApp()),
+  };
+}
+
 /**
  * A strip saying a new version exists. Formats that own their files install it; ones a package
  * manager owns link to the release page instead of a button that would do nothing.
@@ -24,24 +52,10 @@ export function useUpdate() {
 export function UpdateBanner() {
   const update = useUpdate();
   const [dismissed, setDismissed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, outcome, error, install, restart } = useInstallUpdate();
 
   const status = update.data;
   if (!status?.available || dismissed) return null;
-
-  async function install() {
-    setBusy(true);
-    setError(null);
-    try {
-      setMessage(await backend.installUpdate());
-    } catch (e) {
-      setError(messageOf(e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-primary/15 px-4 py-1.5 text-[11px] text-primary">
@@ -50,8 +64,12 @@ export function UpdateBanner() {
         Gameyfin {status.latestVersion} is available. You have {status.currentVersion}.
       </span>
 
-      {message ? (
-        <span className="text-foreground/70">{message}</span>
+      {outcome?.restartNeeded ? (
+        <Button size="sm" variant="primary" disabled={busy} onClick={() => void restart()}>
+          {busy ? "Restarting…" : outcome.message}
+        </Button>
+      ) : outcome ? (
+        <span className="text-foreground/70">{outcome.message}</span>
       ) : status.canInstall ? (
         <Button size="sm" variant="primary" disabled={busy} onClick={() => void install()}>
           {busy ? "Updating…" : "Update now"}

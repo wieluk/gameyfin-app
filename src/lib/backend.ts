@@ -39,6 +39,7 @@ import type { ServerProbe } from "@/bindings/ServerProbe";
 import type { SettingsPatch } from "@/bindings/SettingsPatch";
 import type { ShortcutStatus } from "@/bindings/ShortcutStatus";
 import type { UmuStatus } from "@/bindings/UmuStatus";
+import type { UpdateOutcome } from "@/bindings/UpdateOutcome";
 import type { UpdateStatus } from "@/bindings/UpdateStatus";
 
 export type {
@@ -235,7 +236,9 @@ export const backend = {
 
   updateStatus: () => invoke<UpdateStatus>("update_status"),
   /** Returns what to tell the user; what happens next differs by package format. */
-  installUpdate: () => invoke<string>("install_update"),
+  installUpdate: () => invoke<UpdateOutcome>("install_update"),
+  /** Quits and starts the freshly installed version. */
+  restartApp: () => invoke<void>("restart_app"),
 
   async copyToClipboard(text: string): Promise<void> {
     if (isMockBackend) return;

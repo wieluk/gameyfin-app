@@ -345,6 +345,7 @@ pub fn run() {
             saves::answer_save_pull_offer,
             updater::update_status,
             updater::install_update,
+            updater::restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gameyfin");
