@@ -79,7 +79,7 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
       </div>
 
       <div className={PANEL_BODY}>
-        <div className="mx-auto flex max-w-2xl flex-col gap-5">
+        <div className="mx-auto flex max-w-3xl flex-col gap-5">
           {tab === "account" && <AccountSection onSignedOut={onSignedOut} />}
           {tab === "library" && (
             <>

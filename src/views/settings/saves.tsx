@@ -42,14 +42,14 @@ export function SavesSection() {
 
   return (
     <>
+    <Section title="Save sync">
       <SwitchField
         label="Sync my saves"
         hint="Backs up your saves after you play so another PC can pick them up."
         checked={enabled}
         onChange={(next) => update({ saveSyncEnabled: next })}
-      />
-      {/* Indented and greyed out together, because neither does anything on its own. */}
-      <div className="ml-3 flex flex-col gap-2 border-l border-default-200/60 pl-3">
+      >
+        {/* Greyed out with the switch above, because neither does anything on its own. */}
         <SwitchField
           label="Restore before a game starts"
           hint="Fetches a newer save from another PC before launching, so you carry on where you left off."
@@ -64,10 +64,11 @@ export function SavesSection() {
           disabled={!enabled}
           onChange={(next) => update({ syncSavesOnExit: next })}
         />
-      </div>
+      </SwitchField>
+    </Section>
 
-      <div role="radiogroup" aria-label="Where saves are kept" className="mt-4 flex flex-col gap-2">
-        <p className="text-xs text-foreground/55">Where saves are kept</p>
+    <Section title="Where saves are kept">
+      <div role="radiogroup" aria-label="Where saves are kept" className="flex flex-col gap-2">
         {(
           [
             ["server", "Needs a server with save sync turned on."],
@@ -118,6 +119,7 @@ export function SavesSection() {
           />
         </div>
       )}
+    </Section>
     </>
   );
 }
