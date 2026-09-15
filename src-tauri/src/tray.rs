@@ -2,6 +2,7 @@
 //! instead of quitting; the setting decides.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -113,16 +114,90 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
 
 /// Show the window, raise it, and optionally send it to a route.
 pub fn reveal(app: &AppHandle, route: Option<&str>) {
+    reveal_activated(app, route, None);
+}
+
+/// [`reveal`] with the launcher's activation token, which Wayland needs to raise the window.
+pub fn reveal_activated(app: &AppHandle, route: Option<&str>, token: Option<String>) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
     let _ = window.show();
     let _ = window.unminimize();
-    let _ = window.set_focus();
     if let Some(route) = route {
         // The frontend navigates: reloading the webview would drop every in-flight query.
         let _ = tauri::Emitter::emit(app, "navigate", route);
     }
+    tauri::async_runtime::spawn(raise(window, token));
+}
+
+/// Focus is dropped for a window still hidden or minimised, and show and unminimise only land
+/// once the event loop gets to them, so it is asked for a moment later.
+async fn raise(window: tauri::WebviewWindow, token: Option<String>) {
+    const SETTLE: Duration = Duration::from_millis(80);
+    const CHECK: Duration = Duration::from_millis(250);
+
+    tokio::time::sleep(SETTLE).await;
+    match token {
+        Some(token) => activate(&window, token),
+        None => {
+            let _ = window.set_focus();
+        }
+    }
+    tokio::time::sleep(CHECK).await;
+    if window.is_focused().unwrap_or(true) {
+        return;
+    }
+    // Wayland refuses focus without an activation token, which a tray menu does not carry,
+    // but hands it to a window mapped afresh.
+    tracing::debug!("focus refused; mapping the window again");
+    let _ = window.hide();
+    let _ = window.show();
+    tokio::time::sleep(SETTLE).await;
+    let _ = window.set_focus();
+    tokio::time::sleep(CHECK).await;
+    if !window.is_focused().unwrap_or(true) {
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+    }
+}
+
+/// GTK spends the token on the next present.
+#[cfg(target_os = "linux")]
+fn activate(window: &tauri::WebviewWindow, token: String) {
+    let target = window.clone();
+    let queued = window.run_on_main_thread(move || {
+        use gtk::glib::translate::ToGlibPtr;
+        use gtk::prelude::*;
+
+        let Ok(gtk_window) = target.gtk_window() else {
+            return;
+        };
+        let display = gtk_window.display();
+        if display.type_().name() == "GdkWaylandDisplay" {
+            let Ok(id) = std::ffi::CString::new(token) else {
+                return;
+            };
+            let raw: *mut gtk::gdk::ffi::GdkDisplay = display.to_glib_none().0;
+            // SAFETY: the display was just checked to be a GdkWaylandDisplay, and GTK copies the id.
+            unsafe {
+                gdk_wayland_sys::gdk_wayland_display_set_startup_notification_id(
+                    raw.cast(),
+                    id.as_ptr(),
+                );
+            }
+        } else {
+            gtk_window.set_startup_id(&token);
+        }
+        gtk_window.present_with_time(gtk::gdk::ffi::GDK_CURRENT_TIME as u32);
+    });
+    if queued.is_err() {
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn activate(window: &tauri::WebviewWindow, _token: String) {
+    let _ = window.set_focus();
 }
 
 fn toggle(app: &AppHandle) {

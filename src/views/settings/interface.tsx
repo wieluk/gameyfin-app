@@ -84,6 +84,12 @@ export function WindowSection() {
         checked={settings.data?.autostart ?? false}
         onChange={(next) => save({ autostart: next })}
       />
+      <SwitchField
+        label="Bring Gameyfin back when a game closes"
+        hint="Raises the window once a game quits, where its save upload and any error are shown. Turn it off if you start games from Steam."
+        checked={settings.data?.focusAfterGame ?? true}
+        onChange={(next) => save({ focusAfterGame: next })}
+      />
       <SaveError error={error} />
       <div className="pt-1">
         <Button variant="destructive" onClick={() => void backend.quitApp()}>

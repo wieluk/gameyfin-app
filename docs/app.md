@@ -6,8 +6,10 @@
 
 - **Closing the window keeps Gameyfin running**: the close button hides the window to the
   tray. Downloads run inside the app, so without this, closing the window stops them.
-- **Start hidden in the tray**
+- **Start hidden in the tray**. Opening Gameyfin again brings the window to the front.
 - **Start Gameyfin when I log in**: starts hidden, so background downloads keep going.
+- **Bring Gameyfin back when a game closes** (on by default): raises the window once a game
+  quits, where its save upload and any error are shown.
 - **Appearance**: dark, light or match your system.
 
 ## Notifications

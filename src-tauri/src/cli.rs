@@ -17,6 +17,44 @@ pub fn launch_target(args: &[String]) -> Option<i64> {
     None
 }
 
+/// Carries the launcher's activation token, since a running copy only receives arguments.
+const ACTIVATION_FLAG: &str = "--activation-token=";
+
+/// The token a Wayland compositor wants before it lets a window come to the front.
+pub fn activation_token(args: &[String]) -> Option<String> {
+    args.iter()
+        .skip(1)
+        .find_map(|arg| arg.strip_prefix(ACTIVATION_FLAG))
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+}
+
+/// Restarts with the launcher's token as an argument. GTK 3 never reads `XDG_ACTIVATION_TOKEN`,
+/// and the single-instance hand-over drops the environment.
+#[cfg(target_os = "linux")]
+pub fn forward_activation_token(args: &[String]) {
+    use std::os::unix::process::CommandExt;
+
+    if activation_token(args).is_some() {
+        return;
+    }
+    let Some(token) = ["XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .filter(|token| !token.is_empty())
+    else {
+        return;
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let error = std::process::Command::new(exe)
+        .args(args.iter().skip(1))
+        .arg(format!("{ACTIVATION_FLAG}{token}"))
+        .exec();
+    eprintln!("could not restart with the activation token: {error}");
+}
+
 /// Whether this process was started only to report what Vulkan the machine supports.
 pub fn is_vulkan_probe(args: &[String]) -> bool {
     args.iter()
@@ -33,9 +71,9 @@ pub fn run_vulkan_probe() -> ! {
 }
 
 /// Reveals the window either way, so a failure has somewhere to be explained.
-pub async fn handle_launch(app: &AppHandle, game_id: i64) {
+pub async fn handle_launch(app: &AppHandle, game_id: i64, token: Option<String>) {
     tracing::info!(game_id, "launching from a shortcut");
-    crate::tray::reveal(app, Some("/installed"));
+    crate::tray::reveal_activated(app, Some("/installed"), token);
 
     if let Err(e) =
         crate::ipc::launch::launch_game(app.clone(), app.state::<crate::state::AppState>(), game_id)
@@ -80,6 +118,20 @@ mod tests {
         ] {
             assert_eq!(launch_target(&args(&argv)), expected, "{argv:?}");
         }
+    }
+
+    #[test]
+    fn the_activation_token_is_read_only_from_its_own_flag() {
+        assert_eq!(
+            activation_token(&args(&["--launch", "7", "--activation-token=kwin-42"])),
+            Some("kwin-42".to_string())
+        );
+        assert_eq!(activation_token(&args(&["--activation-token="])), None);
+        assert_eq!(activation_token(&args(&["--hidden"])), None);
+        assert_eq!(
+            activation_token(&["--activation-token=x".to_string()]),
+            None
+        );
     }
 
     #[test]

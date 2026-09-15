@@ -20,6 +20,7 @@ pub struct SettingsPatch {
     pub close_to_tray: Option<bool>,
     pub start_minimized: Option<bool>,
     pub autostart: Option<bool>,
+    pub focus_after_game: Option<bool>,
     pub auto_install: Option<bool>,
     pub auto_extract: Option<bool>,
     pub gamepad_enabled: Option<bool>,
@@ -76,6 +77,7 @@ impl SettingsPatch {
             close_to_tray,
             start_minimized,
             autostart,
+            focus_after_game,
             auto_install,
             auto_extract,
             gamepad_enabled,
@@ -170,6 +172,8 @@ pub struct Settings {
     pub notify_updates: bool,
     pub close_to_tray: bool,
     pub start_minimized: bool,
+    /// Raises the window when a game quits.
+    pub focus_after_game: bool,
     pub auto_install: bool,
     /// Unpacks archives, while downloading where the format allows. Auto install implies it.
     pub auto_extract: bool,
@@ -225,6 +229,7 @@ impl Default for Settings {
             notify_updates: true,
             close_to_tray: false,
             start_minimized: false,
+            focus_after_game: true,
             auto_install: false,
             auto_extract: true,
             delete_archive_after_extract: true,

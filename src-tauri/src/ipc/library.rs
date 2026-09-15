@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use gameyfin_api::Game;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_opener::OpenerExt;
 
 use super::{notify, notify_state, LibraryFolder};
 use crate::error::{blocking, CommandError, CommandResult, Context};
@@ -584,9 +583,7 @@ pub async fn open_folder(app: AppHandle, path: String) -> CommandResult<()> {
     if !Path::new(&path).is_dir() {
         return Err(CommandError::msg(format!("{path} is not a folder.")));
     }
-    app.opener()
-        .open_path(&path, None::<&str>)
-        .context(format!("could not open {path}"))
+    crate::open::folder(&app, Path::new(&path))
 }
 
 /// Opens a web page. Only http and https, since links can come from the server.
@@ -596,9 +593,7 @@ pub async fn open_url(app: AppHandle, url: String) -> CommandResult<()> {
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(CommandError::msg("Only web addresses can be opened."));
     }
-    app.opener()
-        .open_url(parsed.as_str(), None::<&str>)
-        .context("could not open the link")
+    crate::open::link(&app, &parsed)
 }
 
 /// `folder` picks which of the game's folders, since Downloads must open the download.
@@ -639,9 +634,7 @@ pub async fn open_game_folder(
         }
     };
     tracing::info!(game_id, ?dir, "opening a game folder");
-    app.opener()
-        .open_path(dir.to_string_lossy(), None::<&str>)
-        .context("could not open the folder")
+    crate::open::folder(&app, &dir)
 }
 
 /// A named games folder must be a configured one.
@@ -660,9 +653,7 @@ pub async fn open_library_folder(
     tokio::fs::create_dir_all(&dir)
         .await
         .context(format!("could not create {}", dir.display()))?;
-    app.opener()
-        .open_path(dir.to_string_lossy(), None::<&str>)
-        .context("could not open the folder")
+    crate::open::folder(&app, &dir)
 }
 
 /// A partial update of a game's own options; a field not sent is left alone.

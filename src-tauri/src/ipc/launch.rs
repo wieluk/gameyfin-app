@@ -156,6 +156,10 @@ async fn launch(
 
         let ended = supervisor.wait_or_stop(&stopper, teardown).await;
         state.processes.finish(game_id);
+        // Back to Gameyfin, where the save upload and any failure to start are shown.
+        if state.settings().focus_after_game {
+            crate::tray::reveal(&app, None);
+        }
         match ended {
             Ok(session) if session.is_meaningful() => {
                 tracing::info!(game_id, duration = ?session.duration, end = ?session.end, "game ended");

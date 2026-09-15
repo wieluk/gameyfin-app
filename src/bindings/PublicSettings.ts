@@ -31,7 +31,11 @@ downloadProvider: string | null, notifyTransfers: boolean,
 /**
  * Separate so failures stay audible with the routine chatter off.
  */
-notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, autoInstall: boolean, 
+notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, 
+/**
+ * Raises the window when a game quits.
+ */
+focusAfterGame: boolean, autoInstall: boolean, 
 /**
  * Unpacks archives, while downloading where the format allows. Auto install implies it.
  */

@@ -50,6 +50,12 @@ tracing-appender = "0.2"
 reqwest.workspace = true
 url.workspace = true
 
+# GTK opens folders and links with an activation token, so the file manager comes to the front,
+# and raises our window with the launcher's. Already in the tree through Tauri.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+gdkwayland-sys = "0.18"
+
 # The settings file holds session cookies, so on Windows its DACL is narrowed to the
 # owner. Unix does the same with a 0600 chmod, which needs no dependency.
 [target.'cfg(windows)'.dependencies]

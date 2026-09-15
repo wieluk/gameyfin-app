@@ -221,7 +221,9 @@ modules:
       # Desktop file, icons and metainfo must be named after the app id.
       - install -Dm644 usr/share/applications/gameyfin-app.desktop
         /app/share/applications/org.gameyfin.gameyfin-app.desktop
+      # GNOME only hands a launch an activation token with StartupNotify set.
       - desktop-file-edit --set-icon=org.gameyfin.gameyfin-app
+        --set-key=StartupNotify --set-value=true
         /app/share/applications/org.gameyfin.gameyfin-app.desktop
       - |
         set -e
