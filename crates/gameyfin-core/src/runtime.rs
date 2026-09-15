@@ -270,6 +270,16 @@ pub fn has_32bit_support() -> bool {
     }
 }
 
+/// Whether a Flatpak has 32-bit OpenGL drivers, which the GL32 extension mounts here. Outside
+/// one they come from the system, which is not looked into.
+pub fn has_32bit_graphics() -> bool {
+    if !in_flatpak() {
+        return true;
+    }
+    std::fs::read_dir("/app/lib/i386-linux-gnu/GL")
+        .is_ok_and(|mut entries| entries.next().is_some())
+}
+
 /// The host's `os-release`. Inside a Flatpak `/etc/os-release` describes the runtime, not
 /// the machine, so the host copy at `/run/host/os-release` is preferred.
 fn host_os_release() -> String {

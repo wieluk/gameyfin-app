@@ -1,6 +1,20 @@
 //! Turning the way a game dies into something a user can act on. A game that exits in four
 //! seconds says why in its output, and an exit code alone never does.
 
+/// What to do when a 32-bit program that draws with OpenGL found no 32-bit driver.
+pub const MISSING_32BIT_GL: &str = "This program is 32-bit and draws with OpenGL, and there is no \
+     32-bit graphics driver here, so it closed before its window opened. In the Flatpak, install \
+     32-bit support in Settings, Compatibility. Turning on WOW64 in the game's options also works: \
+     it draws with the 64-bit driver.";
+
+/// Whether a 32-bit program died opening its window for want of a 32-bit Mesa driver. Read from
+/// the whole output, since the driver lines come well before the X error that ends it.
+pub fn lacks_32bit_gl(output: &str) -> bool {
+    let lower = output.to_lowercase();
+    lower.contains("i386-linux-gnu/dri")
+        && (lower.contains("failed to load driver") || lower.contains("glxbadcontext"))
+}
+
 /// Advice for a known failure. Most specific first: container and Vulkan failures also
 /// mention Direct3D, and those are the things to fix.
 pub fn explain(output: &str) -> Option<&'static str> {
@@ -31,6 +45,10 @@ pub fn explain(output: &str) -> Option<&'static str> {
              on a system install, install your distribution's 32-bit glibc. Setting this \
              game to run with Wine in its options also works: its WoW64 build needs none.",
         );
+    }
+
+    if lacks_32bit_gl(output) {
+        return Some(MISSING_32BIT_GL);
     }
 
     // Said of the program itself, so the cause is whatever it needed, not the file.
@@ -144,6 +162,20 @@ fn missing_library(line: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_32bit_program_without_a_32bit_graphics_driver_is_named() {
+        let output = "libGL error: MESA-LOADER: failed to open iris: /usr/lib/pressure-vessel/overrides/lib/i386-linux-gnu/dri/iris_dri.so: cannot open shared object file\n\
+             libGL error: failed to load driver: iris\n\
+             X Error of failed request:  GLXBadContext";
+        assert!(lacks_32bit_gl(output));
+        assert_eq!(explain(output), Some(MISSING_32BIT_GL));
+        // The 64-bit driver failing is a different problem.
+        assert!(!lacks_32bit_gl(
+            "libGL error: MESA-LOADER: failed to open iris: /usr/lib/x86_64-linux-gnu/dri/iris_dri.so\n\
+             libGL error: failed to load driver: iris"
+        ));
+    }
 
     #[test]
     fn a_missing_visual_cpp_runtime_suggests_its_verb() {

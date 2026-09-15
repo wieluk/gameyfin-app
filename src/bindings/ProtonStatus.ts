@@ -8,6 +8,10 @@ export type ProtonStatus = {
  */
 installed: Array<InstalledProton>, latestUmu: ProtonRelease | null, latestGe: ProtonRelease | null, launcherProblem: string | null, supports32bit: boolean, 
 /**
- * Whether the missing 32-bit support is the Flatpak extension, which the app can install.
+ * 32-bit OpenGL drivers, without which a 32-bit program that draws with OpenGL cannot open a window.
+ */
+supports32bitGraphics: boolean, 
+/**
+ * Whether what is missing are Flatpak extensions, which the app can install.
  */
 missingI386Extension: boolean, };
