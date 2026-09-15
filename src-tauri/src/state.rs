@@ -129,6 +129,9 @@ pub struct AppState {
     /// Games started without the newer save they were waiting for. Their exit upload waits
     /// for the user, or it would bury that save under whatever this session wrote.
     unsynced_sessions: Arc<Mutex<HashSet<i64>>>,
+    /// When a game's first-start save prompt was answered, so the launch it starts does not
+    /// check again what the answer just settled.
+    answered_offers: Arc<Mutex<std::collections::HashMap<i64, Instant>>>,
     /// Stops two launches downloading the same runtime into the same directory.
     runtime_lock: tokio::sync::Mutex<()>,
     /// Freshness cache: `list_entries` runs several times a second during a transfer.
@@ -432,6 +435,10 @@ impl AppState {
 
     pub fn unsynced_sessions(&self) -> Arc<Mutex<HashSet<i64>>> {
         self.unsynced_sessions.clone()
+    }
+
+    pub fn answered_offers(&self) -> Arc<Mutex<std::collections::HashMap<i64, Instant>>> {
+        self.answered_offers.clone()
     }
 
     pub async fn runtime_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {

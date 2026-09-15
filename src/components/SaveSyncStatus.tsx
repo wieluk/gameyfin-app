@@ -9,6 +9,7 @@ import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { keys } from "@/lib/queries";
 import { describe, restoredText } from "@/lib/saveState";
+import { SHOW_AFTER_MS, decide, isFinal } from "@/lib/syncWindow";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { SaveSyncProgress } from "@/bindings/SaveSyncProgress";
 
@@ -17,32 +18,69 @@ const LINGER_MS = 1600;
 /** Longer after a restore, which names a folder worth having time to read. */
 const RESTORED_LINGER_MS = 6000;
 
+type Timer = ReturnType<typeof setTimeout>;
+
 /**
- * What the automatic sync is doing while a game starts and after it closes. A restore that
- * failed holds the launch here until the user says what to do.
+ * What the automatic sync is doing while a game starts and after it closes. Quick, quiet syncs
+ * never open it. A restore that failed holds the launch here until the user says what to do.
  */
 export function SaveSyncStatus() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [progress, setProgress] = useState<SaveSyncProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const closing = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors `progress` for the event handler, which must decide against what is on screen now.
+  const shown = useRef<SaveSyncProgress | null>(null);
+  const closing = useRef<Timer | null>(null);
+  const opening = useRef<Timer | null>(null);
+
+  function display(next: SaveSyncProgress | null) {
+    if (closing.current) clearTimeout(closing.current);
+    closing.current = null;
+    shown.current = next;
+    setProgress(next);
+    if (!next || !isFinal(next) || next.phase.kind === "failed") return;
+    // A failure stays until it is read; everything else has said what it needed to.
+    const linger = next.phase.kind === "restored" ? RESTORED_LINGER_MS : LINGER_MS;
+    closing.current = setTimeout(() => display(null), linger);
+  }
 
   useTauriEvent<SaveSyncProgress>("save-sync-progress", (next) => {
-    if (closing.current) clearTimeout(closing.current);
-    setError(null);
-    setProgress(next);
+    if (opening.current) clearTimeout(opening.current);
+    opening.current = null;
 
-    if (!isFinal(next)) return;
-    void queryClient.invalidateQueries({ queryKey: keys.saveOverviewAll });
-    void queryClient.invalidateQueries({ queryKey: keys.saveVersions(next.gameId) });
-    // A failure stays until it is read; everything else has said what it needed to.
-    if (next.phase.kind === "failed") return;
-    const linger = next.phase.kind === "restored" ? RESTORED_LINGER_MS : LINGER_MS;
-    closing.current = setTimeout(() => setProgress(null), linger);
+    if (isFinal(next)) {
+      void queryClient.invalidateQueries({ queryKey: keys.saveOverviewAll });
+      void queryClient.invalidateQueries({ queryKey: keys.saveVersions(next.gameId) });
+    }
+
+    const decision = decide(shown.current, next);
+    switch (decision.kind) {
+      case "keep":
+        return;
+      case "close":
+        display(null);
+        return;
+      case "later":
+        opening.current = setTimeout(() => {
+          opening.current = null;
+          setError(null);
+          display(decision.progress);
+        }, SHOW_AFTER_MS);
+        return;
+      case "show":
+        setError(null);
+        display(decision.progress);
+    }
   });
 
-  useEffect(() => () => void (closing.current && clearTimeout(closing.current)), []);
+  useEffect(
+    () => () => {
+      if (closing.current) clearTimeout(closing.current);
+      if (opening.current) clearTimeout(opening.current);
+    },
+    [],
+  );
 
   if (!progress) return null;
 
@@ -54,7 +92,7 @@ export function SaveSyncStatus() {
     setError(null);
     try {
       await backend.skipSaveSync(gameId);
-      setProgress(null);
+      display(null);
       await backend.launch(gameId);
     } catch (e) {
       setError(messageOf(e));
@@ -67,7 +105,7 @@ export function SaveSyncStatus() {
       role="alertdialog"
       size="sm"
       dismissOnBackdrop={false}
-      onDismiss={() => setProgress(null)}
+      onDismiss={() => display(null)}
     >
       <div className="px-5 py-4">
         <p className="text-xs text-foreground/45">
@@ -98,12 +136,12 @@ export function SaveSyncStatus() {
       <div className="flex justify-end gap-2 border-t border-default-200/60 px-5 py-3">
         {held ? (
           <>
-            <Button variant="ghost" onClick={() => setProgress(null)}>
+            <Button variant="ghost" onClick={() => display(null)}>
               Cancel
             </Button>
             <Button
               onClick={() => {
-                setProgress(null);
+                display(null);
                 navigate("/saves");
               }}
             >
@@ -114,7 +152,7 @@ export function SaveSyncStatus() {
             </Button>
           </>
         ) : isFinal(progress) ? (
-          <Button variant="ghost" onClick={() => setProgress(null)}>
+          <Button variant="ghost" onClick={() => display(null)}>
             Close
           </Button>
         ) : (
@@ -132,10 +170,6 @@ export function SaveSyncStatus() {
       </div>
     </Modal>
   );
-}
-
-function isFinal(progress: SaveSyncProgress): boolean {
-  return ["done", "skipped", "kept-local", "restored", "failed"].includes(progress.phase.kind);
 }
 
 /** One line saying what is happening, in the words of what it means for the save. */
@@ -166,6 +200,8 @@ function phaseText(progress: SaveSyncProgress): string {
       return restoredText(phase);
     case "kept-local":
       return "Keeping this PC's save, as you chose for the newest one on the server.";
+    case "asking":
+      return "Asking which save to use…";
     case "failed":
       return phase.message;
   }

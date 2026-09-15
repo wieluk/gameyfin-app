@@ -1,9 +1,10 @@
 import { act, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SaveSyncStatus } from "./SaveSyncStatus";
+import { SHOW_AFTER_MS } from "@/lib/syncWindow";
 import type { SaveSyncProgress } from "@/bindings/SaveSyncProgress";
 
 /** The event the backend emits, which outside Tauri has to be delivered by hand. */
@@ -30,7 +31,15 @@ function emit(phase: SaveSyncProgress["phase"], skippable: boolean, blocking = f
   });
 }
 
+/** Lets a step run long enough to be worth a window. */
+function wait() {
+  act(() => {
+    vi.advanceTimersByTime(SHOW_AFTER_MS);
+  });
+}
+
 function show() {
+  listeners.length = 0;
   const client = new QueryClient();
   return render(
     <MemoryRouter>
@@ -41,20 +50,45 @@ function show() {
   );
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("SaveSyncStatus", () => {
   it("says nothing until a sync starts", () => {
     show();
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("offers Skip while it is safe and refuses once it is not", () => {
+  it("stays shut for a check that is over at once", () => {
+    vi.useFakeTimers();
     show();
     emit({ kind: "checking" }, true);
+    emit({ kind: "done", state: { kind: "in-sync", lastSyncedAt: null } }, false);
+    wait();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("offers Skip while it is safe and refuses once it is not", () => {
+    vi.useFakeTimers();
+    show();
+    emit({ kind: "checking" }, true);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    wait();
     expect(screen.getByRole("button", { name: "Skip" }).hasAttribute("disabled")).toBe(false);
 
     // Files are being written now, so stopping would leave half a save.
     emit({ kind: "restoring" }, false);
     expect(screen.getByRole("button", { name: "Skip" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("gives way to the save prompt without a message in between", () => {
+    vi.useFakeTimers();
+    show();
+    emit({ kind: "checking" }, true);
+    wait();
+    emit({ kind: "asking" }, false);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("keeps a failure on screen with its message", () => {
@@ -73,7 +107,7 @@ describe("SaveSyncStatus", () => {
     expect(screen.getByText(/The game has not started/)).toBeTruthy();
   });
 
-  it("says a save was restored and where, not that it was already up to date", () => {
+  it("says a save was restored and where, and keeps saying it over a quiet check", () => {
     show();
     emit(
       {
@@ -85,12 +119,19 @@ describe("SaveSyncStatus", () => {
       },
       false,
     );
-    expect(screen.getByText(/Restored the save made .* on Desk: 2 files to .*Duckov\/Saves\./)).toBeTruthy();
+    const restored = /Restored the save made .* on Desk: 2 files to .*Duckov\/Saves\./;
+    expect(screen.getByText(restored)).toBeTruthy();
+
+    emit({ kind: "done", state: { kind: "in-sync", lastSyncedAt: null } }, false);
+    expect(screen.getByText(restored)).toBeTruthy();
     expect(screen.queryByText("Your save is already up to date.")).toBeNull();
   });
 
-  it("says why nothing was restored instead of a catch-all", () => {
+  it("says why nothing was restored once the window is open", () => {
+    vi.useFakeTimers();
     show();
+    emit({ kind: "checking" }, true);
+    wait();
     emit({ kind: "done", state: { kind: "in-sync", lastSyncedAt: null } }, false);
     expect(screen.getByText("Your save is already up to date.")).toBeTruthy();
 
