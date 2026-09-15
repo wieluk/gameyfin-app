@@ -209,7 +209,7 @@ pub async fn start_download(
                 } else if current.auto_extract && is_archive(&outcome.path).await {
                     extract_download(&app, game_id, None).await
                 } else {
-                    crate::notify::download_finished(&app, &game.title).await;
+                    crate::notify::download_finished(&app, game_id, &game.title).await;
                     Ok(())
                 };
                 if let Err(e) = next {
@@ -243,7 +243,7 @@ pub async fn fail(app: &AppHandle, game_id: i64, stage: Stage, title: &str, mess
     app.state::<AppState>()
         .library()
         .fail(game_id, stage, message.clone());
-    crate::notify::failed(app, stage.label(), title, &message).await;
+    crate::notify::failed(app, game_id, stage.label(), title, &message).await;
 }
 
 /// A saved file keeps its checkpoint for a resume; a download being unpacked starts over.
@@ -381,6 +381,8 @@ async fn record_extracted(
             AutoSetup::Choose => {
                 crate::notify::setup_needed(
                     app,
+                    game_id,
+                    "/downloads",
                     &format!(
                         "{title} has {} setup programs. Choose which to run in Downloads.",
                         setups.len()
@@ -390,7 +392,7 @@ async fn record_extracted(
             }
         }
     } else {
-        crate::notify::download_finished(app, title).await;
+        crate::notify::download_finished(app, game_id, title).await;
     }
     notify_state(app, game_id);
 }

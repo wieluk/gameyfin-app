@@ -24,7 +24,8 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
-tauri-plugin-notification = "2"
+# Used directly rather than through the plugin, for the desktop-entry hint and click handling.
+notify-rust = "4"
 # In-place updates for AppImage, MSI and NSIS; see `updater.rs` for deb, rpm and Flatpak.
 tauri-plugin-updater = "2"
 # A shortcut launched while the app is already running must reach the running copy, not

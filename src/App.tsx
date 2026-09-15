@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Route, Routes, useNavigate } from "react-router-dom";
 import { GamepadOverlay } from "@/components/GamepadOverlay";
 import { Icon } from "@/components/Icon";
+import { NotificationBell } from "@/components/NotificationCenter";
 import { ResizeHandles } from "@/components/ResizeHandles";
 import { Sidebar } from "@/components/Sidebar";
 import { TitleBar } from "@/components/TitleBar";
@@ -68,7 +69,8 @@ export function App() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <ResizeHandles />
-      <TitleBar />
+      {/* Only once signed in: notifications lead to pages the wizard does not have. */}
+      <TitleBar extra={ready && !setup.open ? <NotificationBell /> : null} />
       {isMockBackend && <MockBanner />}
       {offline && <OfflineBanner serverUrl={status.data?.serverUrl ?? null} />}
       <UpdateBanner />

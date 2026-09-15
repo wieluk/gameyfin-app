@@ -3,6 +3,7 @@
  * answer from fixtures, so the UI works without a server or GUI toolchain.
  */
 
+import type { AppNotification } from "@/bindings/AppNotification";
 import type { ConflictChoice } from "@/bindings/ConflictChoice";
 import type { ConnectionStatus } from "@/bindings/ConnectionStatus";
 import type { GameOptions } from "@/bindings/GameOptions";
@@ -91,6 +92,10 @@ export const backend = {
   deleteStaging: (gameId: number) => invoke<void>("delete_staging", { gameId }),
   deleteDownload: (gameId: number) => invoke<void>("delete_download", { gameId }),
   runSetup: (gameId: number, relative: string) => invoke<void>("run_setup", { gameId, relative }),
+  listNotifications: () => invoke<AppNotification[]>("list_notifications"),
+  /** One notification, or every one with `null`. */
+  dismissNotification: (id: number | null) => invoke<void>("dismiss_notification", { id }),
+  markNotificationsRead: () => invoke<void>("mark_notifications_read"),
   runSetupPath: (gameId: number, path: string, deleteDownload?: boolean) =>
     invoke<void>("run_setup_path", { gameId, path, deleteDownload: deleteDownload ?? null }),
   /** Retry the setup program Windows refused to start, as administrator. */

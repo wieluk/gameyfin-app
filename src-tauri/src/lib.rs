@@ -245,7 +245,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         // `--hidden` matches what the autostart entry passes, so a login launch is quiet.
         .plugin(tauri_plugin_autostart::init(
@@ -254,6 +253,7 @@ pub fn run() {
         ))
         .register_asynchronous_uri_scheme_protocol(images::SCHEME, images::handle)
         .manage(AppState::default())
+        .manage(notify::Inbox::default())
         .setup(move |app| {
             tray::install(app.handle())?;
             tray::guard_window(app.handle());
@@ -359,6 +359,9 @@ pub fn run() {
             updater::update_status,
             updater::install_update,
             updater::restart_app,
+            notify::list_notifications,
+            notify::dismiss_notification,
+            notify::mark_notifications_read,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gameyfin");

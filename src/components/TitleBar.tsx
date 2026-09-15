@@ -7,7 +7,7 @@ import { Icon } from "./Icon";
  * Custom window chrome. Tauri moves the window via `data-tauri-drag-region`; the CSS
  * `-webkit-app-region` property used by Electron has no effect here.
  */
-export function TitleBar() {
+export function TitleBar({ extra }: { extra?: React.ReactNode }) {
   return (
     <header
       data-tauri-drag-region
@@ -23,6 +23,7 @@ export function TitleBar() {
       </div>
 
       <div className="flex items-center gap-1">
+        {extra}
         <GamepadIndicator />
         <WindowButton label="Minimise" onClick={() => void windowAction("minimize")}>
           <span className="block h-px w-2.5 bg-current" />

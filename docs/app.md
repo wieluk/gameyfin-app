@@ -17,6 +17,11 @@
 Three switches: downloads and installs, failures, and new versions of Gameyfin. Failures
 are always shown; the others stay quiet while you are looking at the window.
 
+Clicking a notification opens Gameyfin on the page it is about. Every notification is also
+listed behind the bell in the title bar, even when its popup was switched off or held back.
+Click one to go to its page, dismiss it, or **Dismiss all**. The list clears when Gameyfin
+closes.
+
 ## Offline
 
 If the server cannot be reached, a banner says so and the library shows what is on this

@@ -80,7 +80,7 @@ pub async fn handle_launch(app: &AppHandle, game_id: i64, token: Option<String>)
             .await
     {
         let title = app.state::<crate::state::AppState>().title(game_id).await;
-        crate::notify::failed(app, "Launch", &title, &e.to_string()).await;
+        crate::notify::failed(app, game_id, "Launch", &title, &e.to_string()).await;
     }
 }
 

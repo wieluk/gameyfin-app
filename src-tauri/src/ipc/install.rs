@@ -732,8 +732,10 @@ async fn run_installer(
                 }
                 let title = state.title(game_id).await;
                 match outcome {
-                    Ok(()) => crate::notify::install_finished(&app, &title).await,
-                    Err(message) => crate::notify::failed(&app, "Install", &title, &message).await,
+                    Ok(()) => crate::notify::install_finished(&app, game_id, &title).await,
+                    Err(message) => {
+                        crate::notify::failed(&app, game_id, "Install", &title, &message).await
+                    }
                 }
             }
         };
@@ -879,16 +881,17 @@ pub async fn auto_install_download(
         }
         Some(_) => auto_run_setup(app, game_id, title, &archive).await,
         None => {
-            crate::notify::send(
-                app,
-                crate::notify::Category::Action,
-                "Downloaded",
-                &format!(
+            let note = crate::notify::Note {
+                category: crate::notify::Category::Action,
+                title: "Downloaded".into(),
+                body: format!(
                     "{title} is a {}. Choose how to install it in Downloads.",
                     payload.label()
                 ),
-            )
-            .await;
+                route: Some("/downloads"),
+                game_id: Some(game_id),
+            };
+            crate::notify::send(app, note).await;
             Ok(())
         }
     }
@@ -927,7 +930,7 @@ pub async fn auto_run_setup(
         "automatic setup"
     );
     if let Some(body) = waiting {
-        crate::notify::setup_needed(app, &body).await;
+        crate::notify::setup_needed(app, game_id, "/downloads", &body).await;
         return Ok(());
     }
     let install_dir = super::install_dir_for(&state, game_id).await?;
@@ -949,10 +952,10 @@ pub async fn finish_auto_install(app: &AppHandle, game_id: i64) {
     }
     .await;
     match result {
-        Ok(()) => crate::notify::install_finished(app, &title).await,
+        Ok(()) => crate::notify::install_finished(app, game_id, &title).await,
         Err(e) => {
             tracing::error!(game_id, "automatic install failed: {e}");
-            crate::notify::failed(app, "Install", &title, &e.to_string()).await;
+            crate::notify::failed(app, game_id, "Install", &title, &e.to_string()).await;
         }
     }
 }

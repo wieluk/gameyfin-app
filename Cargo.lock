@@ -1442,6 +1442,7 @@ dependencies = [
  "gdkwayland-sys",
  "gilrs",
  "gtk",
+ "notify-rust",
  "reqwest 0.12.28",
  "semver",
  "serde",
@@ -1451,7 +1452,6 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-dialog",
- "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
@@ -4914,25 +4914,6 @@ dependencies = [
  "tauri-utils",
  "thiserror 2.0.20",
  "toml 1.1.5+spec-1.1.0",
- "url",
-]
-
-[[package]]
-name = "tauri-plugin-notification"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad2fd40946aef810c4be9fd33a2d1b9b397cb79042b2d21c81a0a8f204354fd1"
-dependencies = [
- "log",
- "notify-rust",
- "rand 0.9.5",
- "serde",
- "serde_json",
- "serde_repr",
- "tauri",
- "tauri-plugin",
- "thiserror 2.0.20",
- "time",
  "url",
 ]
 

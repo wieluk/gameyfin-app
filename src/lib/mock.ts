@@ -111,6 +111,17 @@ const answers: Record<string, unknown> = {
   list_library_roots: [{ path: "/games", isDefault: true, freeBytes: 512 * 1024 ** 3, exists: true }],
   download_providers: [],
   list_executables: [],
+  list_notifications: [
+    {
+      id: 1,
+      category: "transfer",
+      title: "Ready to play",
+      body: "Hollow Knight is installed.",
+      createdAt: new Date().toISOString(),
+      route: "/installed",
+      read: false,
+    },
+  ],
   list_save_versions: [],
   save_overview: [],
   scan_this_pc: [],

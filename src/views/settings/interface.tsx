@@ -53,7 +53,10 @@ export function NotificationSection() {
         checked={settings.data?.notifyUpdates ?? true}
         onChange={(next) => save({ notifyUpdates: next })}
       />
-      <p className={HINT}>Held back while you are looking at the window, apart from failures.</p>
+      <p className={HINT}>
+        Held back while you are looking at the window, apart from failures. Every notification is
+        also listed behind the bell in the title bar.
+      </p>
       <SaveError error={error} />
     </Section>
   );
