@@ -4,15 +4,17 @@ import { Alert } from "@/components/Alert";
 import { FolderActions } from "@/components/FolderActions";
 import { LaunchOptions, SetupOptions } from "@/components/GameOptions";
 import { PrefixOptions } from "@/components/PrefixOptions";
+import { SetupPicker } from "@/components/SetupList";
 import { ShortcutOptions } from "@/components/ShortcutOptions";
 import { TransferProgress } from "@/components/TransferProgress";
 import { UninstallDialog } from "@/components/UninstallDialog";
-import { Button, FormField, IconButton, Select, ViewHeader } from "@/components/ui";
 import { UntrackedFolders } from "@/components/UntrackedFolders";
+import { Button, FormField, IconButton, Select, Switch, ViewHeader } from "@/components/ui";
 import { installedFiles, isInstalled } from "@/lib/actions";
 import { backend } from "@/lib/backend";
 import { formatInstallProgress, formatPlaytime } from "@/lib/format";
 import { messageOf } from "@/lib/errors";
+import { arranged, defaultSelection, remaining, runOrder, toggled } from "@/lib/setups";
 import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
 import { keys, useEntries } from "@/lib/queries";
@@ -99,7 +101,7 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
   }
 
   const play = () => run(() => backend.launch(entry.game.id));
-  const runSetup = (setup: string) => run(() => backend.runSetup(entry.game.id, setup));
+  const runSetup = (setup: string) => run(() => backend.installSetups(entry.game.id, [setup]));
 
   function uninstall(options: { runUninstaller: boolean; uninstaller: string | null }) {
     uninstallPrompt.close();
@@ -244,7 +246,13 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
               : "border-primary/30 bg-primary/10 text-foreground/70"
           }`}
         >
-          <p>{busy.kind === "installing" ? "Running a setup program…" : busy.message}</p>
+          <p>
+            {busy.kind === "installing"
+              ? busy.step
+                ? `Installing ${busy.step}…`
+                : "Running a setup program…"
+              : busy.message}
+          </p>
           {busy.kind === "preparing" && busy.progress && (
             <div className="mt-2">
               <TransferProgress {...busy.progress} />
@@ -273,7 +281,6 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
           installDir={path}
           current={executable ?? null}
           setups={setups}
-          onRunSetup={runSetup}
           stagingSetups={stagingSetups}
           onUninstall={() => void run(() => uninstallPrompt.open(entry.game.id))}
         />
@@ -297,7 +304,6 @@ function Options({
   installDir,
   current,
   setups,
-  onRunSetup,
   stagingSetups,
   onUninstall,
 }: {
@@ -305,14 +311,14 @@ function Options({
   installDir: string | null;
   current: string | null;
   setups: string[];
-  onRunSetup: (setup: string) => void;
   stagingSetups: string[];
   onUninstall: () => void;
 }) {
   const gameId = entry.game.id;
-  // Installers from the game's folder and from the leftover download, which `runSetup`
-  // looks through in that order. The same name can appear in both.
+  // Installers from the leftover download and the game's folder. The same name can be in both.
   const extraSetups = [...new Set([...setups, ...stagingSetups])];
+  // A leftover download can hold programs no name gave away, listed under the setups.
+  const downloadLeft = installedFiles(entry.state).stagingPresent;
   const queryClient = useQueryClient();
   // Its own error line: the page-level error is far from this expanded row.
   const [folderError, setFolderError] = useState<string | null>(null);
@@ -414,35 +420,7 @@ function Options({
 
       <ShortcutOptions gameId={gameId} />
 
-      {/* Folded away: by the time a game is installed, running a setup again is the DLC
-          and repair case, not the usual one. */}
-      {extraSetups.length > 0 && (
-        <details className="rounded-lg border border-default-200/60 px-2.5 py-1.5">
-          <summary className="cursor-pointer text-[11px] text-foreground/45">
-            Setup programs ({extraSetups.length})
-          </summary>
-          <p className="mt-2 text-[11px] leading-relaxed text-foreground/45">
-            Installers that came with this game, usually DLC or an expansion. Run one to add
-            it to the same folder.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {extraSetups.map((setup) => (
-              <Button
-                key={setup}
-                size="sm"
-                className="font-mono"
-                onClick={() => onRunSetup(setup)}
-                title={setup}
-              >
-                Run {setup.length > 40 ? `${setup.slice(0, 37)}…` : setup}
-              </Button>
-            ))}
-          </div>
-          <div className="mt-2">
-            <SetupOptions gameId={gameId} hint="Flags for the setup programs above." />
-          </div>
-        </details>
-      )}
+      {(extraSetups.length > 0 || downloadLeft) && <InstalledSetups gameId={gameId} />}
 
       {folderError && <Alert inline>{folderError}</Alert>}
 
@@ -466,5 +444,84 @@ function Options({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Folded away: once a game is installed, running a setup again is the DLC and patch case.
+ * Loaded when the row opens, so the list is ready by the time it is unfolded.
+ */
+function InstalledSetups({ gameId }: { gameId: number }) {
+  const queryClient = useQueryClient();
+  const setups = useQuery({
+    queryKey: keys.setups(gameId),
+    queryFn: () => backend.listSetups(gameId),
+  });
+  const [picked, setPicked] = useState<string[] | null>(null);
+  // Off until asked for: a wizard shows what it installs and where.
+  const [silent, setSilent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Null until rearranged, so the plan's order stands.
+  const [order, setOrder] = useState<string[] | null>(null);
+  const list = arranged(setups.data ?? [], order);
+  const selected = picked ?? defaultSelection(list);
+  const left = remaining(list).length;
+  const recognised = list.filter((s) => s.matched);
+  const toggle = (path: string, on: boolean) => setPicked(toggled(list, selected, path, on));
+
+  async function install() {
+    setError(null);
+    try {
+      await backend.installSetups(gameId, runOrder(list, selected), silent);
+      setPicked(null);
+      await queryClient.invalidateQueries({ queryKey: keys.entries });
+      await queryClient.invalidateQueries({ queryKey: keys.setups(gameId) });
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
+  if (setups.isLoading || list.length === 0) return null;
+
+  return (
+    <details className="rounded-lg border border-default-200/60 px-2.5 py-1.5">
+      <summary className="cursor-pointer text-[11px] text-foreground/45">
+        Setup programs{recognised.length > 0 ? ` (${recognised.length})` : ""}
+        {left > 0 ? `, ${left} not installed` : ""}
+      </summary>
+      <p className="mt-2 text-[11px] leading-relaxed text-foreground/45">
+        Installers that came with this game, usually DLC or patches. They install into the same
+        folder, in the order shown.
+      </p>
+      <div className="mt-2">
+        <SetupPicker setups={list} selected={selected} onToggle={toggle} onOrder={setOrder} />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <Switch
+          label="Install silently"
+          checked={silent}
+          onChange={setSilent}
+          disabled={!list.some((s) => s.silent)}
+        />
+        <Button
+          size="sm"
+          variant="primary"
+          className="ml-auto"
+          disabled={selected.length === 0}
+          onClick={() => void install()}
+        >
+          {selected.length > 1 ? `Install ${selected.length} setups` : "Install"}
+        </Button>
+      </div>
+      {error && (
+        <Alert inline className="mt-2">
+          {error}
+        </Alert>
+      )}
+      <div className="mt-2">
+        <SetupOptions gameId={gameId} hint="Flags for the setup programs above." />
+      </div>
+    </details>
   );
 }

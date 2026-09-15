@@ -12,6 +12,7 @@ export const keys = {
   settings: ["app-settings"] as const,
   libraryRoots: ["library-roots"] as const,
   installPlan: (gameId: number) => ["install-plan", gameId] as const,
+  setups: (gameId: number) => ["setups", gameId] as const,
   untracked: ["untracked-folders"] as const,
   notifications: ["notifications"] as const,
   /** Every game's plan or options, for a change that affects all of them. */

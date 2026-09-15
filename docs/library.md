@@ -33,9 +33,11 @@ see the free space on each.
   - **Delete the archive after extracting** (on by default).
   - **Archive password**: tried on encrypted archives.
 - **Install automatically when a download finishes**: Inno Setup and NSIS installers run
-  silently. Other installers, or more than one setup program, wait for you.
+  silently. A game with patches or DLC installs the game, then the patches, then the DLC.
+  It waits for you when no setup is clearly the game, or the game's setup has no silent mode.
+  Setups without a silent mode are left for you in **Installed**.
   - **Delete the download after installing**: the starting choice in the install dialog, off
-    when there is more than one setup program.
+    while a setup program is left out.
   - **Inno Setup options** (default `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) and
     **NSIS options** (default `/S`). Empty restores the default.
   - **Never offer these executables**.
@@ -53,9 +55,35 @@ Gameyfin looks at what was downloaded and handles it:
 **Setup options** are flags passed to the setup program and remembered for the game.
 A silent flag such as `/VERYSILENT` lets it install without asking questions.
 
+### Games with patches and DLC
+
+A download can hold several setup programs. Gameyfin sorts them by name into **Game**,
+**Patch** and **DLC**, and runs the ones you tick one after another in that order.
+
+- Update programs count too, such as `PATCH.exe` or `Game.Update.v1.2.exe`, in any subfolder
+  of the download.
+- Patches run oldest first, by the version in their file or folder name. One the game
+  installer already includes is marked and unticked.
+- A disc menu such as `autorun.exe` shows as **Other** and is not ticked.
+- **Other programs in the download** lists every other `.exe` and `.msi`, folded away and
+  unticked. A ticked one joins the list above, where it can be moved into place.
+- Drag a row by its handle, or use its arrows, to change the order they run in.
+- **Install silently** passes the silent flags, so no wizard asks where to install.
+- A failed patch or DLC does not stop the rest. A failed game setup does.
+- A patch or DLC that finishes without changing anything in the game's folder is reported as
+  not applied, with whatever it printed.
+- A 32-bit setup program that closes before its window opens, for want of a 32-bit graphics
+  driver, is run again with WOW64. The game's own options, such as WOW64, apply to its setup
+  programs too.
+
+Setups you skipped stay in the game's options in **Installed**, under **Setup programs**,
+marked installed or not.
+
 ### Choosing the executable
 
-Gameyfin picks the file to launch and asks when it is not sure. You can change it any time
+Gameyfin picks the file to launch and asks when it is not sure. It looks through the game's
+folder and up to eight levels of subfolders, preferring files near the top and named after the
+game. You can change it any time
 in **Installed** with **Choose an executable**, and pick any file in the game's folder.
 
 Crash handlers, redistributables and uninstallers are never offered. Edit that list in

@@ -447,6 +447,44 @@ pub fn games_drive_path(folder: &str) -> String {
     format!("{GAMES_DRIVE}:\\{folder}")
 }
 
+/// Where a game sits inside its own prefix: `C:\Games\<title>`, the folder repacks install to
+/// and their patches look in. A link to the game's real folder, so the two are one.
+pub fn game_link(prefix: &Path, title: &str) -> PathBuf {
+    wine_root(prefix)
+        .join("drive_c")
+        .join("Games")
+        .join(windows_safe_name(title))
+}
+
+/// The same folder as a Windows program sees it.
+pub fn game_windows_path(title: &str) -> String {
+    format!("C:\\Games\\{}", windows_safe_name(title))
+}
+
+/// Makes `link` point at `target`, replacing an old link or an empty folder. A folder with files
+/// in it is refused, so nothing an installer wrote there is lost.
+#[cfg(unix)]
+pub fn link_folder(link: &Path, target: &Path) -> CoreResult<()> {
+    if let Some(parent) = link.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::symlink_metadata(link) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir(link)?,
+        Ok(_) => std::fs::remove_file(link)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    std::os::unix::fs::symlink(target, link)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn link_folder(_link: &Path, _target: &Path) -> CoreResult<()> {
+    Err(crate::error::CoreError::Other(
+        "folders are only linked inside a Wine prefix".into(),
+    ))
+}
+
 pub fn map_drive(prefix: &Path, target: &Path) -> CoreResult<PathBuf> {
     map_drive_letter(prefix, GAMES_DRIVE, target, true)
 }
@@ -606,6 +644,37 @@ mod tests {
         for drive in [GAMES_DRIVE, SOURCE_DRIVE] {
             assert!(!"CZST".contains(drive), "{drive}: is Proton's to manage");
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_game_is_linked_into_its_prefix_without_losing_an_installers_files() {
+        let dir = scratch("game-link");
+        let prefix = dir.join("prefix");
+        std::fs::create_dir_all(prefix.join("pfx")).unwrap();
+        let game = dir.join("Installations/(3803) Escape from Duckov");
+        std::fs::create_dir_all(&game).unwrap();
+
+        let link = game_link(&prefix, "Escape from Duckov");
+        assert_eq!(link, prefix.join("pfx/drive_c/Games/Escape from Duckov"));
+        assert_eq!(
+            game_windows_path("Escape from Duckov"),
+            "C:\\Games\\Escape from Duckov"
+        );
+
+        link_folder(&link, &game).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), game);
+        // Again, over its own link.
+        link_folder(&link, &game).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), game);
+
+        std::fs::remove_file(&link).unwrap();
+        std::fs::create_dir_all(link.join("data")).unwrap();
+        assert!(
+            link_folder(&link, &game).is_err(),
+            "a folder with files in it is kept"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

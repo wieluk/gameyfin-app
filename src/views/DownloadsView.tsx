@@ -17,12 +17,14 @@ import type { LibraryEntry } from "@/types";
 import { Empty } from "@/components/Empty";
 import { keys, useEntries } from "@/lib/queries";
 import { useRescanOnOpen } from "@/lib/rescan";
+import { usePreloaded } from "@/lib/usePreloaded";
 import { PANEL_BODY } from "@/lib/ui";
 
 /** Transfers in progress, and finished downloads awaiting the separate decision to install. */
 export function DownloadsView() {
   const entries = useEntries();
-  const [installing, setInstalling] = useState<LibraryEntry | null>(null);
+  // Inspecting the download first, so the dialog opens complete.
+  const install = usePreloaded((entry: LibraryEntry) => backend.installOptions(entry.game.id));
   const [deleting, setDeleting] = useState<LibraryEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -115,7 +117,8 @@ export function DownloadsView() {
           <DownloadRow
             key={entry.game.id}
             entry={entry}
-            onInstall={setInstalling}
+            onInstall={(target) => void run(() => install.open(target))}
+            opening={install.loading?.game.id === entry.game.id}
             onDelete={setDeleting}
             onCancel={cancelDownload}
             onStopInstall={stopInstall}
@@ -127,8 +130,12 @@ export function DownloadsView() {
       </div>
       <UntrackedFolders folder="downloads" />
 
-      {installing && (
-        <InstallDialog entry={installing} onClose={() => setInstalling(null)} />
+      {install.opened && (
+        <InstallDialog
+          entry={install.opened.target}
+          plan={install.opened.data}
+          onClose={install.close}
+        />
       )}
 
       {deleting && (
@@ -159,8 +166,11 @@ function DownloadRow({
   onOpenFolder,
   onElevate,
   onRun,
+  opening,
 }: {
   entry: LibraryEntry;
+  /** The install dialog is loading for this row. */
+  opening: boolean;
   onInstall: (entry: LibraryEntry) => void;
   onDelete: (entry: LibraryEntry) => void;
   onCancel: (entry: LibraryEntry) => void;
@@ -195,12 +205,12 @@ function DownloadRow({
             />
           </div>
           <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-foreground/45">
-            <span>
+            <span className="min-w-0 truncate">
               {state.kind === "downloading"
                 ? formatSpeed(state.bytesPerSecond)
                 : state.kind === "extracting"
                   ? `${Math.round(state.percent)}%`
-                  : formatInstallProgress(state.progress)}
+                  : [state.step, formatInstallProgress(state.progress)].filter(Boolean).join(", ")}
             </span>
             <div className="flex items-center gap-3">
               <span>
@@ -262,6 +272,7 @@ function DownloadRow({
             <Button
               variant="primary"
               icon={action.icon}
+              disabled={opening}
               onClick={() => {
                 // Extracting and installing both involve a choice; retrying a download
                 // does not.
@@ -269,7 +280,7 @@ function DownloadRow({
                 else onRun(() => action.run(game.id));
               }}
             >
-              {action.label}
+              {opening ? "Inspecting…" : action.label}
             </Button>
           )}
           <Button icon="folder" onClick={() => onOpenFolder(game.id)}>
@@ -308,7 +319,7 @@ function statusText(entry: LibraryEntry): string {
       return "Extracting";
     case "extracted":
       return state.setupCandidates.length > 1
-        ? "Unpacked, choose a setup"
+        ? `Unpacked, ${state.setupCandidates.length} setups found`
         : state.setupCandidates.length > 0
           ? "Unpacked, setup found"
           : "Unpacked";

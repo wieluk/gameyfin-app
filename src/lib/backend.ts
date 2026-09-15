@@ -37,6 +37,7 @@ import type { SaveSyncState } from "@/bindings/SaveSyncState";
 import type { SaveToolStatus } from "@/bindings/SaveToolStatus";
 import type { SaveVersion } from "@/bindings/SaveVersion";
 import type { ServerProbe } from "@/bindings/ServerProbe";
+import type { SetupProgram } from "@/bindings/SetupProgram";
 import type { SettingsPatch } from "@/bindings/SettingsPatch";
 import type { ShortcutStatus } from "@/bindings/ShortcutStatus";
 import type { UmuStatus } from "@/bindings/UmuStatus";
@@ -92,7 +93,7 @@ export const backend = {
   findUninstaller: (gameId: number) => invoke<string | null>("find_game_uninstaller", { gameId }),
   deleteStaging: (gameId: number) => invoke<void>("delete_staging", { gameId }),
   deleteDownload: (gameId: number) => invoke<void>("delete_download", { gameId }),
-  runSetup: (gameId: number, relative: string) => invoke<void>("run_setup", { gameId, relative }),
+  listSetups: (gameId: number) => invoke<SetupProgram[]>("list_setups", { gameId }),
   listUntrackedFolders: () => invoke<UntrackedFolder[]>("list_untracked_folders"),
   /** Renames the folder after the game and adopts it. */
   assignUntrackedFolder: (path: string, gameId: number) =>
@@ -102,6 +103,14 @@ export const backend = {
   /** One notification, or every one with `null`. */
   dismissNotification: (id: number | null) => invoke<void>("dismiss_notification", { id }),
   markNotificationsRead: () => invoke<void>("mark_notifications_read"),
+  /** Runs in the order given. */
+  installSetups: (gameId: number, paths: string[], silent?: boolean, deleteDownload?: boolean) =>
+    invoke<void>("install_setups", {
+      gameId,
+      paths,
+      silent: silent ?? false,
+      deleteDownload: deleteDownload ?? null,
+    }),
   runSetupPath: (gameId: number, path: string, deleteDownload?: boolean) =>
     invoke<void>("run_setup_path", { gameId, path, deleteDownload: deleteDownload ?? null }),
   /** Retry the setup program Windows refused to start, as administrator. */

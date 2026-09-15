@@ -106,26 +106,7 @@ async fn launch(
     config
         .arguments
         .extend(gameyfin_core::arguments::split(&record.launch_arguments));
-    // Before the typed block, so a variable set by hand still wins.
-    let proton = matches!(config.runtime, gameyfin_core::Runtime::Proton { .. });
-    config
-        .environment
-        .extend(gameyfin_core::environment::for_toggles(
-            &record.launch_toggles,
-            proton,
-        ));
-    // DLL overrides merge, so `dxgi=builtin` does not also bring back the Mono and Gecko prompts.
-    for (key, value) in gameyfin_core::environment::parse(&record.launch_environment) {
-        let value = if key == "WINEDLLOVERRIDES" {
-            let current = config.environment.get(&key).cloned().unwrap_or_default();
-            gameyfin_core::DllOverrides::parse(&current)
-                .merged_with(gameyfin_core::DllOverrides::parse(&value))
-                .to_env()
-        } else {
-            value
-        };
-        config.environment.insert(key, value);
-    }
+    apply_game_options(&record, &mut config);
 
     let command =
         gameyfin_core::resolve_command(&config).context("could not build the launch command")?;
@@ -250,6 +231,33 @@ fn failed_to_start(session: &gameyfin_core::Session, verbs: &[&str]) -> Option<S
 }
 
 /// Settings that follow the game into its Windows runtime: library mounts and the umu id.
+/// The game's own switches and variables, for its setup programs as well as the game itself.
+pub fn apply_game_options(
+    record: &crate::library_state::GameRecord,
+    config: &mut gameyfin_core::LaunchConfig,
+) {
+    // Before the typed block, so a variable set by hand still wins.
+    let proton = matches!(config.runtime, gameyfin_core::Runtime::Proton { .. });
+    config
+        .environment
+        .extend(gameyfin_core::environment::for_toggles(
+            &record.launch_toggles,
+            proton,
+        ));
+    // DLL overrides merge, so `dxgi=builtin` does not also bring back the Mono and Gecko prompts.
+    for (key, value) in gameyfin_core::environment::parse(&record.launch_environment) {
+        let value = if key == "WINEDLLOVERRIDES" {
+            let current = config.environment.get(&key).cloned().unwrap_or_default();
+            gameyfin_core::DllOverrides::parse(&current)
+                .merged_with(gameyfin_core::DllOverrides::parse(&value))
+                .to_env()
+        } else {
+            value
+        };
+        config.environment.insert(key, value);
+    }
+}
+
 pub async fn apply_game_runtime(
     state: &AppState,
     game_id: i64,

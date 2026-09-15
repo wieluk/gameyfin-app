@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager, State};
 
 use super::{notify, notify_state, LibraryFolder};
 use crate::error::{blocking, CommandError, CommandResult, Context};
-use crate::library_state::{scan_setups, Activity, GameState, Stage, EXTRACT_DIR};
+use crate::library_state::{scan_download_setups, Activity, GameState, Stage, EXTRACT_DIR};
 use crate::progress::Throttle;
 use crate::state::AppState;
 
@@ -220,7 +220,7 @@ pub async fn start_download(
                 tracing::info!(game_id, ?dir, bytes, "download unpacked as it arrived");
                 let setups = {
                     let dir = dir.clone();
-                    tokio::task::spawn_blocking(move || scan_setups(&dir))
+                    tokio::task::spawn_blocking(move || scan_download_setups(&dir))
                         .await
                         .unwrap_or_default()
                 };
@@ -313,7 +313,7 @@ pub async fn extract_download(
                         }
                     },
                 )?;
-                Ok::<_, gameyfin_core::CoreError>((bytes, scan_setups(&staging)))
+                Ok::<_, gameyfin_core::CoreError>((bytes, scan_download_setups(&staging)))
             })
             .await
         };
@@ -365,13 +365,12 @@ async fn record_extracted(
     library.clear_activity(game_id);
 
     if app.state::<AppState>().settings().auto_install {
-        match auto_setup(&setups) {
+        let plan = gameyfin_core::setups::plan(&setups, title);
+        match auto_setup(&plan) {
             AutoSetup::Move => super::install::finish_auto_install(app, game_id).await,
-            AutoSetup::Run(setup) => {
-                let started = match super::contained(&staging, setup) {
-                    Ok(program) => {
-                        super::install::auto_run_setup(app, game_id, title, &program).await
-                    }
+            AutoSetup::Run => {
+                let started = match super::install::planned_steps(&staging, &plan) {
+                    Ok(steps) => super::install::auto_run_setups(app, game_id, title, steps).await,
                     Err(e) => Err(e),
                 };
                 if let Err(e) = started {
@@ -384,7 +383,7 @@ async fn record_extracted(
                     game_id,
                     "/downloads",
                     &format!(
-                        "{title} has {} setup programs. Choose which to run in Downloads.",
+                        "{title} has {} setup programs and it is unclear which is the game. Choose in Downloads.",
                         setups.len()
                     ),
                 )
@@ -397,24 +396,27 @@ async fn record_extracted(
     notify_state(app, game_id);
 }
 
-/// Several setups, such as a game and its DLC, keep the download for the next one.
-fn deletes_download(choice: Option<bool>, setting: bool, staging_setups: usize) -> bool {
-    choice.unwrap_or(setting && staging_setups <= 1)
+/// Setups not yet run, such as DLC, keep the download for later.
+fn deletes_download(choice: Option<bool>, setting: bool, pending_setups: usize) -> bool {
+    choice.unwrap_or(setting && pending_setups == 0)
 }
 
 #[derive(Debug, PartialEq)]
-enum AutoSetup<'a> {
+enum AutoSetup {
     Move,
-    Run(&'a str),
-    /// Several setups, such as a game and its DLC, need someone to choose.
+    /// The game, then its patches and DLC.
+    Run,
+    /// No setup is clearly the game, so someone has to choose.
     Choose,
 }
 
-fn auto_setup(setups: &[String]) -> AutoSetup<'_> {
-    match setups {
-        [] => AutoSetup::Move,
-        [setup] => AutoSetup::Run(setup),
-        _ => AutoSetup::Choose,
+fn auto_setup(plan: &gameyfin_core::setups::SetupPlan) -> AutoSetup {
+    if plan.setups.is_empty() {
+        AutoSetup::Move
+    } else if plan.confident {
+        AutoSetup::Run
+    } else {
+        AutoSetup::Choose
     }
 }
 
@@ -563,11 +565,12 @@ pub async fn discard_download_if_asked(
     choice: Option<bool>,
 ) {
     let state = app.state::<AppState>();
-    let setups = state.library().record(game_id).staging_setups.len();
+    let title = state.title(game_id).await;
+    let pending = super::install::pending_setups(&state.library().record(game_id), &title);
     if !deletes_download(
         choice,
         state.settings().delete_download_after_install,
-        setups,
+        pending,
     ) {
         return;
     }
@@ -791,10 +794,11 @@ pub async fn list_executables(
         return Ok(Vec::new());
     };
     let scan_dir = dir.clone();
+    let title = state.title(game_id).await;
     // Every candidate, not just the one detection would launch unattended: a picker that
     // offers a single file is a picker that cannot change anything.
     let paths = blocking("could not scan for executables", move || {
-        gameyfin_core::executable::candidates(&scan_dir, "")
+        gameyfin_core::executable::candidates(&scan_dir, &title)
     })
     .await?
     .into_iter()
@@ -819,25 +823,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn several_setups_keep_the_download_unless_the_user_says_otherwise() {
-        assert!(deletes_download(None, true, 1));
-        assert!(!deletes_download(None, true, 2));
+    fn setups_still_to_run_keep_the_download_unless_the_user_says_otherwise() {
+        assert!(deletes_download(None, true, 0));
+        assert!(!deletes_download(None, true, 1));
         assert!(!deletes_download(None, false, 0));
         assert!(deletes_download(Some(true), false, 2));
         assert!(!deletes_download(Some(false), true, 0));
     }
 
     #[test]
-    fn automatic_install_asks_when_there_is_more_than_one_setup() {
-        let setups = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
-        assert_eq!(auto_setup(&[]), AutoSetup::Move);
-        let one = setups(&["setup.exe"]);
-        assert_eq!(auto_setup(&one), AutoSetup::Run("setup.exe"));
-        let game_and_dlc = setups(&[
+    fn automatic_install_runs_a_clear_plan_and_asks_otherwise() {
+        let plan = |names: &[&str]| {
+            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+            gameyfin_core::setups::plan(&names, "Wall World")
+        };
+        assert_eq!(auto_setup(&plan(&[])), AutoSetup::Move);
+        assert_eq!(auto_setup(&plan(&["setup.exe"])), AutoSetup::Run);
+        let game_and_dlc = plan(&[
             "setup_wall_world_1.2.4.513_(64bit)_(67993).exe",
             "setup_wall_world_deep_threat_1.2.4.513_(64bit)_(67993).exe",
         ]);
-        assert_eq!(auto_setup(&game_and_dlc), AutoSetup::Choose);
+        assert_eq!(auto_setup(&game_and_dlc), AutoSetup::Run);
+        assert_eq!(
+            auto_setup(&plan(&["setup_alpha.exe", "setup_beta.exe"])),
+            AutoSetup::Choose
+        );
     }
 
     #[test]

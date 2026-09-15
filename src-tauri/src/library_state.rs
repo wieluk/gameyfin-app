@@ -31,6 +31,8 @@ pub struct GameRecord {
     pub setup_candidates: Vec<String>,
     /// Setup programs inside `extracted_dir`, cached because listing runs per game per refresh.
     pub staging_setups: Vec<String>,
+    /// File names of setup programs that finished, so DLC is not offered again.
+    pub installed_setups: Vec<String>,
     pub minutes_played: u32,
     pub last_played_at: Option<String>,
     /// Kept as typed, since that is what the options box shows back.
@@ -102,6 +104,15 @@ pub fn scan_setups(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Setup and update programs in a download, relative to it.
+pub fn scan_download_setups(dir: &Path) -> Vec<String> {
+    gameyfin_core::executable::find_download_setups(dir)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|p| relative_to(p, dir))
+        .collect()
+}
+
 pub fn relative_to(path: &Path, base: &Path) -> Option<String> {
     path.strip_prefix(base)
         .ok()
@@ -127,6 +138,8 @@ pub enum Activity {
     /// A setup program or a move into place.
     Installing {
         progress: Option<TransferProgress>,
+        /// Which of several setups is running.
+        step: Option<String>,
     },
     /// Anything else that takes a while, described for the row.
     Preparing {
@@ -165,17 +178,18 @@ impl Activity {
             Activity::Preparing {
                 progress: Some(p), ..
             }
-            | Activity::Installing { progress: Some(p) }
-                if p.total_bytes > 0 =>
-            {
-                Some(p.received_bytes as f64 / p.total_bytes as f64 * 100.0)
-            }
+            | Activity::Installing {
+                progress: Some(p), ..
+            } if p.total_bytes > 0 => Some(p.received_bytes as f64 / p.total_bytes as f64 * 100.0),
             _ => None,
         }
     }
 
     pub fn installing() -> Self {
-        Activity::Installing { progress: None }
+        Activity::Installing {
+            progress: None,
+            step: None,
+        }
     }
 
     pub fn preparing(message: impl Into<String>) -> Self {
@@ -226,6 +240,9 @@ pub enum InstalledBusy {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         progress: Option<TransferProgress>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        step: Option<String>,
     },
     Failed {
         message: String,
@@ -263,6 +280,9 @@ pub enum GameState {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         progress: Option<TransferProgress>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        step: Option<String>,
     },
     Preparing {
         message: String,
@@ -434,7 +454,9 @@ impl LibraryState {
                 Activity::Preparing {
                     progress: shown, ..
                 }
-                | Activity::Installing { progress: shown },
+                | Activity::Installing {
+                    progress: shown, ..
+                },
             ) => {
                 *shown = Some(progress);
                 true
@@ -486,7 +508,7 @@ impl LibraryState {
                 bytes_per_second,
             },
             Activity::Extracting { percent } => GameState::Extracting { percent },
-            Activity::Installing { progress } => GameState::Installing { progress },
+            Activity::Installing { progress, step } => GameState::Installing { progress, step },
             Activity::Preparing { message, progress } => GameState::Preparing { message, progress },
             Activity::Running {
                 since,
@@ -579,7 +601,7 @@ fn scan_root(root: &Path) -> Vec<(i64, Found)> {
                 .map_or(0, |m| m.len());
             let staged = path.join(EXTRACT_DIR);
             let staging = staged.is_dir().then(|| {
-                let setups = scan_setups(&staged);
+                let setups = scan_download_setups(&staged);
                 (staged, setups)
             });
             found.push((
@@ -622,8 +644,9 @@ fn busy_for(activity: &Activity) -> Option<InstalledBusy> {
             message: message.clone(),
             progress: progress.clone(),
         }),
-        Activity::Installing { progress } => Some(InstalledBusy::Installing {
+        Activity::Installing { progress, step } => Some(InstalledBusy::Installing {
             progress: progress.clone(),
+            step: step.clone(),
         }),
         Activity::Failed {
             message,
@@ -893,7 +916,10 @@ mod tests {
         );
         assert!(matches!(
             state.state_of(3),
-            GameState::Installing { progress: Some(_) }
+            GameState::Installing {
+                progress: Some(_),
+                ..
+            }
         ));
 
         assert!(state.show_progress(3, progress(30, 120)));

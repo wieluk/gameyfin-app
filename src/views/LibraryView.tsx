@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { GameCard } from "@/components/GameCard";
 import { GameDetail } from "@/components/GameDetail";
 import { InstallDialog } from "@/components/InstallDialog";
+import { usePreloaded } from "@/lib/usePreloaded";
 import { Icon } from "@/components/Icon";
 import { Button, IconButton, Select, Switch, TextInput, ViewHeader } from "@/components/ui";
 import { isInstalled, isLocal, needsChooser, primaryAction } from "@/lib/actions";
@@ -54,7 +55,8 @@ export function LibraryView() {
     resetFilters,
   } = useLibraryView();
   const [selected, setSelected] = useState<LibraryEntry | null>(null);
-  const [installing, setInstalling] = useState<LibraryEntry | null>(null);
+  // Inspecting the download first, so the dialog opens complete.
+  const install = usePreloaded((entry: LibraryEntry) => backend.installOptions(entry.game.id));
   const [actionError, setActionError] = useState<string | null>(null);
   // Set when a download needs a destination chosen; null the rest of the time.
   const [choosingRoot, setChoosingRoot] = useState<LibraryEntry | null>(null);
@@ -70,7 +72,12 @@ export function LibraryView() {
   async function handlePrimaryAction(entry: LibraryEntry) {
     // Extracting and installing involve a choice; downloading and playing do not.
     if (needsChooser(entry.state)) {
-      setInstalling(entry);
+      setActionError(null);
+      try {
+        await install.open(entry);
+      } catch (e) {
+        setActionError(messageOf(e));
+      }
       return;
     }
     const action = primaryAction(entry.state);
@@ -308,8 +315,12 @@ export function LibraryView() {
         </div>
       )}
 
-      {installing && (
-        <InstallDialog entry={installing} onClose={() => setInstalling(null)} />
+      {install.opened && (
+        <InstallDialog
+          entry={install.opened.target}
+          plan={install.opened.data}
+          onClose={install.close}
+        />
       )}
 
       {choosingRoot && (
