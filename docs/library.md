@@ -79,3 +79,7 @@ unplugged drive, is flagged and its games return once it is back.
 
 **Rescan folders** finds games already in a games folder, for example after reinstalling
 Gameyfin.
+
+Folders Gameyfin does not manage, such as a game copied in by hand or one the server no longer
+has, are listed at the bottom of **Installed** and **Downloads** under **Not linked to a game**.
+**Assign to a game** renames the folder after a game and adopts it. **Delete** removes it.

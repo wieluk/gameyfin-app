@@ -120,7 +120,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
       current?.map((entry) => (entry.game.id === gameId ? { ...entry, state } : entry)),
     );
   });
-  useTauriEvent("library-changed", () => void invalidate(keys.entries));
+  useTauriEvent("library-changed", () => void invalidate(keys.entries, keys.untracked));
   useTauriEvent("proton-changed", () => void invalidate(keys.proton));
   useTauriEvent("save-tool-changed", () => void invalidate(keys.saveTool, keys.saveOverviewAll));
 

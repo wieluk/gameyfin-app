@@ -40,6 +40,7 @@ import type { ServerProbe } from "@/bindings/ServerProbe";
 import type { SettingsPatch } from "@/bindings/SettingsPatch";
 import type { ShortcutStatus } from "@/bindings/ShortcutStatus";
 import type { UmuStatus } from "@/bindings/UmuStatus";
+import type { UntrackedFolder } from "@/bindings/UntrackedFolder";
 import type { UpdateOutcome } from "@/bindings/UpdateOutcome";
 import type { UpdateStatus } from "@/bindings/UpdateStatus";
 
@@ -92,6 +93,11 @@ export const backend = {
   deleteStaging: (gameId: number) => invoke<void>("delete_staging", { gameId }),
   deleteDownload: (gameId: number) => invoke<void>("delete_download", { gameId }),
   runSetup: (gameId: number, relative: string) => invoke<void>("run_setup", { gameId, relative }),
+  listUntrackedFolders: () => invoke<UntrackedFolder[]>("list_untracked_folders"),
+  /** Renames the folder after the game and adopts it. */
+  assignUntrackedFolder: (path: string, gameId: number) =>
+    invoke<void>("assign_untracked_folder", { path, gameId }),
+  deleteUntrackedFolder: (path: string) => invoke<void>("delete_untracked_folder", { path }),
   listNotifications: () => invoke<AppNotification[]>("list_notifications"),
   /** One notification, or every one with `null`. */
   dismissNotification: (id: number | null) => invoke<void>("dismiss_notification", { id }),

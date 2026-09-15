@@ -111,6 +111,7 @@ const answers: Record<string, unknown> = {
   list_library_roots: [{ path: "/games", isDefault: true, freeBytes: 512 * 1024 ** 3, exists: true }],
   download_providers: [],
   list_executables: [],
+  list_untracked_folders: [],
   list_notifications: [
     {
       id: 1,

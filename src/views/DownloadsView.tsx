@@ -7,6 +7,7 @@ import { FolderActions } from "@/components/FolderActions";
 import { InstallDialog } from "@/components/InstallDialog";
 import { SpeedLimit } from "@/components/SpeedLimit";
 import { TransferProgress } from "@/components/TransferProgress";
+import { UntrackedFolders } from "@/components/UntrackedFolders";
 import { Button, ViewHeader } from "@/components/ui";
 import { isInDownloads, needsChooser, primaryAction } from "@/lib/actions";
 import { backend } from "@/lib/backend";
@@ -75,6 +76,9 @@ export function DownloadsView() {
         <Empty icon="download" title="No downloads">
           Downloads appear here and stay until you install them.
         </Empty>
+        <div className="px-6 pb-5">
+          <UntrackedFolders folder="downloads" />
+        </div>
       </>
     );
   }
@@ -121,6 +125,7 @@ export function DownloadsView() {
           />
         ))}
       </div>
+      <UntrackedFolders folder="downloads" />
 
       {installing && (
         <InstallDialog entry={installing} onClose={() => setInstalling(null)} />

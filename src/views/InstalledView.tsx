@@ -8,6 +8,7 @@ import { ShortcutOptions } from "@/components/ShortcutOptions";
 import { TransferProgress } from "@/components/TransferProgress";
 import { UninstallDialog } from "@/components/UninstallDialog";
 import { Button, FormField, IconButton, Select, ViewHeader } from "@/components/ui";
+import { UntrackedFolders } from "@/components/UntrackedFolders";
 import { installedFiles, isInstalled } from "@/lib/actions";
 import { backend } from "@/lib/backend";
 import { formatInstallProgress, formatPlaytime } from "@/lib/format";
@@ -57,6 +58,9 @@ export function InstalledView() {
         <Empty icon="installed" title="Nothing installed yet">
           Download a game and install it from the Downloads tab.
         </Empty>
+        <div className="px-6 pb-5">
+          <UntrackedFolders folder="installations" />
+        </div>
       </>
     );
   }
@@ -70,6 +74,7 @@ export function InstalledView() {
           <InstalledRow key={entry.game.id} entry={entry} />
         ))}
       </div>
+      <UntrackedFolders folder="installations" />
     </div>
     </>
   );

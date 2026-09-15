@@ -349,6 +349,22 @@ impl LibraryState {
         self.persist().await;
     }
 
+    /// Every folder a record points into, to tell adopted folders from strays.
+    pub fn tracked_dirs(&self) -> Vec<PathBuf> {
+        let parent = |p: &PathBuf| p.parent().map(Path::to_path_buf);
+        read(&self.records)
+            .values()
+            .flat_map(|r| {
+                [
+                    r.install_dir.clone(),
+                    r.extracted_dir.as_ref().and_then(parent),
+                    r.archive_path.as_ref().and_then(parent),
+                ]
+            })
+            .flatten()
+            .collect()
+    }
+
     /// Forgets every game's last synced version, for a store that never held those ids.
     pub async fn forget_synced_save_ids(&self) {
         for record in write(&self.records).values_mut() {
