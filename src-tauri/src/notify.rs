@@ -151,7 +151,7 @@ pub async fn send(app: &AppHandle, note: Note) {
     #[cfg(all(unix, not(target_os = "macos")))]
     tauri::async_runtime::spawn(desktop::show(app, note, id, image));
     #[cfg(not(all(unix, not(target_os = "macos"))))]
-    std::thread::spawn(move || desktop::show(&app, &note, image));
+    std::thread::spawn(move || desktop::show(&app, &note, id, image));
 }
 
 fn is_focused(app: &AppHandle) -> bool {
@@ -230,7 +230,7 @@ mod desktop {
 
     /// Windows activates the app itself, which reaches the running copy through single-instance.
     #[cfg(not(all(unix, not(target_os = "macos"))))]
-    pub fn show(app: &AppHandle, note: &Note, image: Option<PathBuf>) {
+    pub fn show(app: &AppHandle, note: &Note, _id: u64, image: Option<PathBuf>) {
         let mut popup = notify_rust::Notification::new();
         popup.summary(&note.title).body(&note.body);
         dress(app, &mut popup, note, image);
