@@ -53,7 +53,10 @@ export function NotificationSection() {
         checked={settings.data?.notifyUpdates ?? true}
         onChange={(next) => save({ notifyUpdates: next })}
       />
-      <p className={HINT}>Held back while you are looking at the window, apart from failures.</p>
+      <p className={HINT}>
+        Held back while you are looking at the window, apart from failures. Every notification is
+        also listed behind the bell in the title bar.
+      </p>
       <SaveError error={error} />
     </Section>
   );
@@ -83,6 +86,12 @@ export function WindowSection() {
         hint="Starts Gameyfin hidden in the tray with your session, so background downloads keep working."
         checked={settings.data?.autostart ?? false}
         onChange={(next) => save({ autostart: next })}
+      />
+      <SwitchField
+        label="Bring Gameyfin back when a game closes"
+        hint="Raises the window once a game quits, where its save upload and any error are shown. Turn it off if you start games from Steam."
+        checked={settings.data?.focusAfterGame ?? true}
+        onChange={(next) => save({ focusAfterGame: next })}
       />
       <SaveError error={error} />
       <div className="pt-1">

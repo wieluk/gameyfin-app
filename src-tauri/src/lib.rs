@@ -13,6 +13,7 @@ mod integrations;
 mod ipc;
 mod library_state;
 mod notify;
+mod open;
 mod persist;
 mod progress;
 mod proton;
@@ -196,7 +197,7 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     // Last, once the library is readable. A shortcut that reached a running copy goes
     // through the single-instance hook instead.
     if let Some(game_id) = cli::launch_target(&std::env::args().collect::<Vec<_>>()) {
-        cli::handle_launch(&app, game_id).await;
+        cli::handle_launch(&app, game_id, None).await;
     }
 }
 
@@ -207,20 +208,28 @@ pub fn run() {
     if cli::is_vulkan_probe(&args) {
         cli::run_vulkan_probe();
     }
+    #[cfg(target_os = "linux")]
+    {
+        cli::forward_activation_token(&args);
+        // Spent by this launch; a game started later must not inherit it.
+        std::env::remove_var("XDG_ACTIVATION_TOKEN");
+    }
     // A packaged app's stdout goes nowhere, so a failure in the field needs a log file.
     let _log_guard = init_logging();
     let launched_hidden = args.iter().any(|arg| arg == "--hidden");
+    let activation_token = cli::activation_token(&args);
 
     let mut single_instance =
         tauri_plugin_single_instance::Builder::new().callback(|app, argv, _cwd| {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
+                let token = cli::activation_token(&argv);
                 match cli::launch_target(&argv) {
-                    Some(game_id) => cli::handle_launch(&app, game_id).await,
+                    Some(game_id) => cli::handle_launch(&app, game_id, token).await,
                     // An autostart launch must not reveal a window the user hid.
                     None if argv.iter().any(|arg| arg == "--hidden") => {}
                     // Starting it again is how people ask for the window back.
-                    None => tray::reveal(&app, None),
+                    None => tray::reveal_activated(&app, None, token),
                 }
             });
         });
@@ -236,7 +245,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         // `--hidden` matches what the autostart entry passes, so a login launch is quiet.
         .plugin(tauri_plugin_autostart::init(
@@ -245,9 +253,14 @@ pub fn run() {
         ))
         .register_asynchronous_uri_scheme_protocol(images::SCHEME, images::handle)
         .manage(AppState::default())
+        .manage(notify::Inbox::default())
         .setup(move |app| {
             tray::install(app.handle())?;
             tray::guard_window(app.handle());
+            // Early, while the launcher's token is still fresh.
+            if !launched_hidden && activation_token.is_some() {
+                tray::reveal_activated(app.handle(), None, activation_token.clone());
+            }
             // Found once: the bundled umu-run cannot move while the app runs.
             proton::remember_launcher(app.handle());
             // Reconnecting before the window asks lands a returning user on their library.
@@ -298,7 +311,11 @@ pub fn run() {
             ipc::install::install_options,
             ipc::install::install_game,
             ipc::install::locate_install,
-            ipc::install::run_setup,
+            ipc::untracked::list_untracked_folders,
+            ipc::untracked::assign_untracked_folder,
+            ipc::untracked::delete_untracked_folder,
+            ipc::install::list_setups,
+            ipc::install::install_setups,
             ipc::install::run_setup_path,
             ipc::install::run_setup_elevated,
             ipc::install::find_game_uninstaller,
@@ -346,6 +363,9 @@ pub fn run() {
             updater::update_status,
             updater::install_update,
             updater::restart_app,
+            notify::list_notifications,
+            notify::dismiss_notification,
+            notify::mark_notifications_read,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gameyfin");

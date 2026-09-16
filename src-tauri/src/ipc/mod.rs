@@ -4,6 +4,7 @@ pub mod install;
 pub mod launch;
 pub mod library;
 pub mod session;
+pub mod untracked;
 
 use std::path::{Path, PathBuf};
 
@@ -145,7 +146,7 @@ pub fn ensure_windows_program(program: &Path, what: &str) -> CommandResult<()> {
 }
 
 /// Which of a games folder's two subfolders.
-#[derive(Debug, Clone, Copy, serde::Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Copy, serde::Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
 pub enum LibraryFolder {

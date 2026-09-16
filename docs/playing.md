@@ -27,8 +27,9 @@ A newer Proton build replaces the old one.
 ### Prefixes
 
 Every Windows game gets its own prefix, a small Windows environment in
-`Gameyfin/Prefixes`. Its games folder is mapped to a drive letter so installers put files
-where Gameyfin expects.
+`Gameyfin/Prefixes`. Inside it, the game's folder appears as `C:\Games\<title>`: installers
+are sent there, and repacks and their patches look for the game there. `Z:` is your whole
+file system.
 
 Once a Windows game has run, its options in **Installed** have **Compatibility prefix**,
 with **Wine settings**, **Registry**, **Browse C:**, **Winetricks** and **Delete prefix**.

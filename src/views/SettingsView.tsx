@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { isWindows } from "@/lib/platform";
 import { readStored, writeStored } from "@/lib/storage";
 import { PANEL_BODY } from "@/lib/ui";
@@ -42,7 +43,11 @@ const TABS: Array<{ id: TabId; label: string; hideOnWindows?: boolean }> = [
 export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
   const tabs = TABS.filter((tab) => !(isWindows && tab.hideOnWindows));
 
+  // A link such as a notification's can name the pane, so it opens on it rather than switching after.
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("tab");
   const [tab, setTab] = useState<TabId>(() => {
+    if (tabs.some((t) => t.id === asked)) return asked as TabId;
     const stored = readStored<TabId>(TAB_KEY, "account");
     // A stale or platform-hidden pane must not leave the view blank.
     return tabs.some((t) => t.id === stored) ? stored : "account";
@@ -52,6 +57,14 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
     setTab(next);
     writeStored(TAB_KEY, next);
   }
+
+  // Also while already on Settings; the parameter is cleared so it does not pin the pane.
+  useEffect(() => {
+    if (!asked) return;
+    if (tabs.some((t) => t.id === asked)) select(asked as TabId);
+    setParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

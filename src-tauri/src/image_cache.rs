@@ -36,6 +36,11 @@ impl ImageCache {
         self.dir.join(entry_name(path))
     }
 
+    /// The cached file itself, for a reader outside the app such as a notification daemon.
+    pub fn file_for(&self, path: &str) -> Option<PathBuf> {
+        Some(self.entry_path(path)).filter(|file| file.is_file())
+    }
+
     /// A cached image, if present. Reading refreshes its modification time, which is what
     /// the pruner reads to decide what is still wanted.
     pub async fn get(&self, path: &str) -> Option<(Vec<u8>, String)> {

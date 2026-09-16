@@ -6,7 +6,8 @@ import { Icon } from "@/components/Icon";
 import { Modal, ModalFooter, ModalHeader } from "@/components/Modal";
 import { SaveConflictDialog } from "@/components/SaveConflictDialog";
 import { SaveMatchDialog } from "@/components/SaveMatchDialog";
-import { SavePathDialog } from "@/components/SavePathDialog";
+import { SavePathDialog, loadSavePaths } from "@/components/SavePathDialog";
+import { usePreloaded } from "@/lib/usePreloaded";
 import { SaveVersionList, platformLabel } from "@/components/SaveVersionList";
 import { ScanThisPcDialog } from "@/components/ScanThisPcDialog";
 import { Button, IconButton, Switch, ViewHeader } from "@/components/ui";
@@ -65,7 +66,8 @@ export function SavesView() {
   const [busy, setBusy] = useState<ReadonlySet<number>>(new Set());
   const [conflictGameId, setConflictGameId] = useState<number | null>(null);
   const [identifyGameId, setIdentifyGameId] = useState<number | null>(null);
-  const [pathsGameId, setPathsGameId] = useState<number | null>(null);
+  // What is set is read first, so the dialog opens on it rather than filling in after.
+  const paths = usePreloaded(loadSavePaths);
   // One at a time: two open version lists is two listings for no reason.
   const [expanded, setExpanded] = useState<number | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
@@ -160,7 +162,7 @@ export function SavesView() {
 
   const conflictRow = rows.find((row) => row.gameId === conflictGameId);
   const identifyRow = rows.find((row) => row.gameId === identifyGameId);
-  const pathsRow = rows.find((row) => row.gameId === pathsGameId);
+  const pathsRow = rows.find((row) => row.gameId === paths.opened?.target);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -242,7 +244,7 @@ export function SavesView() {
                   run(row.gameId, () => backend.setSaveCrossOs(row.gameId, true))
                 }
                 onIdentify={() => setIdentifyGameId(row.gameId)}
-                onEditPaths={() => setPathsGameId(row.gameId)}
+                onEditPaths={() => void paths.open(row.gameId)}
                 expanded={expanded === row.gameId}
                 onToggle={() =>
                   setExpanded((current) => (current === row.gameId ? null : row.gameId))
@@ -330,11 +332,12 @@ export function SavesView() {
         </Modal>
       )}
 
-      {pathsRow && (
+      {pathsRow && paths.opened && (
         <SavePathDialog
           gameId={pathsRow.gameId}
           gameTitle={pathsRow.title}
-          onClose={() => setPathsGameId(null)}
+          initial={paths.opened.data}
+          onClose={paths.close}
           onSaved={refresh}
         />
       )}

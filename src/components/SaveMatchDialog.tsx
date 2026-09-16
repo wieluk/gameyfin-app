@@ -71,7 +71,7 @@ export function SaveMatchDialog({
   const shown = results ?? candidates;
 
   return (
-    <Modal label={`Choose the save data for ${gameTitle}`} onDismiss={onClose}>
+    <Modal label={`Choose the save data for ${gameTitle}`} fitted onDismiss={onClose}>
       <div className="px-5 py-4">
         <h2 className="mb-1 text-sm font-semibold">Which game is this?</h2>
         <p className="text-xs leading-relaxed text-foreground/60">

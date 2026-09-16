@@ -94,7 +94,7 @@ export function IconButton({
       } text-foreground/50 hover:bg-default-100 hover:text-foreground ${className}`}
       {...rest}
     >
-      <Icon name={icon} className="h-4 w-4" />
+      <Icon name={icon} className={iconClassName} />
     </button>
   );
 }

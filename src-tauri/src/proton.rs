@@ -163,7 +163,9 @@ pub struct ProtonStatus {
     pub latest_ge: Option<ProtonRelease>,
     pub launcher_problem: Option<String>,
     pub supports_32bit: bool,
-    /// Whether the missing 32-bit support is the Flatpak extension, which the app can install.
+    /// 32-bit OpenGL drivers, without which a 32-bit program that draws with OpenGL cannot open a window.
+    pub supports_32bit_graphics: bool,
+    /// Whether what is missing are Flatpak extensions, which the app can install.
     pub missing_i386_extension: bool,
 }
 
@@ -195,6 +197,7 @@ pub async fn proton_status(state: State<'_, AppState>) -> CommandResult<ProtonSt
         latest_ge,
         launcher_problem: umu_launcher().await.err(),
         supports_32bit: gameyfin_core::runtime::has_32bit_support(),
+        supports_32bit_graphics: gameyfin_core::runtime::has_32bit_graphics(),
         missing_i386_extension: missing_i386_extension(),
     })
 }
@@ -202,11 +205,15 @@ pub async fn proton_status(state: State<'_, AppState>) -> CommandResult<ProtonSt
 /// The Flatpak ref with the runtime's 32-bit libraries. Its version must match the manifest's
 /// freedesktop base, which a test checks.
 const I386_EXTENSION: &str = "org.freedesktop.Platform.Compat.i386//25.08";
+/// The runtime's 32-bit Mesa drivers, for 32-bit programs that draw with OpenGL.
+const GL32_EXTENSION: &str = "org.freedesktop.Platform.GL32.default//25.08";
 
-/// Flatpak never installs the extension with the app: neither the bundle nor our repository
-/// carries freedesktop extensions.
+/// Flatpak never installs these with the app: neither the bundle nor our repository carries
+/// freedesktop extensions.
 fn missing_i386_extension() -> bool {
-    gameyfin_core::runtime::in_flatpak() && !gameyfin_core::runtime::has_32bit_support()
+    gameyfin_core::runtime::in_flatpak()
+        && (!gameyfin_core::runtime::has_32bit_support()
+            || !gameyfin_core::runtime::has_32bit_graphics())
 }
 
 /// Where a flatpak installation lives. An extension has to be installed into one that has
@@ -291,6 +298,18 @@ pub async fn install_32bit_support() -> CommandResult<String> {
             "32-bit support comes from your distribution here, not from Gameyfin.",
         ));
     }
+    // Only what is missing, so an extension already there is not asked for again.
+    let wanted: Vec<&str> = [
+        (!gameyfin_core::runtime::has_32bit_support()).then_some(I386_EXTENSION),
+        (!gameyfin_core::runtime::has_32bit_graphics()).then_some(GL32_EXTENSION),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if wanted.is_empty() {
+        return Ok("32-bit support is already installed.".to_string());
+    }
+    let refs = wanted.join(" ");
 
     // Where the runtime is, since this extends the runtime; then where Gameyfin is; then
     // wherever flathub happens to be.
@@ -316,24 +335,20 @@ pub async fn install_32bit_support() -> CommandResult<String> {
         return Err(CommandError::Message(format!(
             "Flathub is not set up on this system, and that is where the 32-bit libraries \
              come from. Run `flatpak remote-add --if-not-exists --user {FLATHUB} {FLATHUB_URL}` \
-             and then `flatpak install --user {FLATHUB} {I386_EXTENSION}`."
+             and then `flatpak install --user {FLATHUB} {refs}`."
         )));
     };
 
     let manually = format!(
-        "Run `flatpak install {} {FLATHUB} {I386_EXTENSION}` yourself.",
+        "Run `flatpak install {} {FLATHUB} {refs}` yourself.",
         scope.flag()
     );
     tracing::info!(scope = ?scope, "installing the 32-bit compatibility extension");
-    let output = host_flatpak(&[
-        "install",
-        scope.flag(),
-        "--noninteractive",
-        FLATHUB,
-        I386_EXTENSION,
-    ])
-    .await
-    .map_err(|e| CommandError::Message(format!("{e}. {manually}")))?;
+    let mut args = vec!["install", scope.flag(), "--noninteractive", FLATHUB];
+    args.extend(wanted.iter().copied());
+    let output = host_flatpak(&args)
+        .await
+        .map_err(|e| CommandError::Message(format!("{e}. {manually}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -420,6 +435,28 @@ mod tests {
             runtime_of(info)
         );
         assert_eq!(None, runtime_of("[Application]\nname=x\n"));
+    }
+
+    #[test]
+    fn the_gl32_extension_matches_the_flatpak_manifest() {
+        let manifest = include_str!("../../flatpak/org.gameyfin.gameyfin-app.yml");
+        let (name, version) = GL32_EXTENSION
+            .split_once("//")
+            .expect("the ref carries its version");
+        // The manifest declares the extension point; `.default` is the Mesa build that fills it.
+        let point = name.strip_suffix(".default").expect("the Mesa build");
+        let declared = manifest
+            .split_once(&format!("{point}:"))
+            .map(|(_, rest)| rest)
+            .expect("the manifest mounts the extension");
+        let versions = declared
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("versions: "))
+            .expect("the mount names its versions");
+        assert!(
+            versions.split(';').any(|v| v.trim() == version),
+            "{versions}"
+        );
     }
 
     #[test]

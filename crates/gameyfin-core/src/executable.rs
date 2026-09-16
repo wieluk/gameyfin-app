@@ -46,6 +46,16 @@ const EXCLUDED_STEMS: &[&str] = &[
     "notification_helper",
 ];
 
+/// Subfolder levels searched below the game's folder. Release names and engine layouts
+/// (`Binaries/Win64`) nest deep; past these it is assets, not programs.
+const LAUNCH_DEPTH: usize = 8;
+const SETUP_DEPTH: usize = 6;
+/// Uninstallers sit at the top, or in a folder of their own just below it.
+const UNINSTALLER_DEPTH: usize = 1;
+
+/// Words that name an update program, as releases ship beside the game's setup.
+const PATCH_WORDS: &[&str] = &["patch", "update", "hotfix"];
+
 /// Filename stems that identify a setup program rather than the game.
 const INSTALLER_STEMS: &[&str] = &["setup", "install", "installer", "autorun"];
 
@@ -79,8 +89,8 @@ pub fn looks_like_installer(path: &Path) -> bool {
     };
 
     // EXCLUDED_STEMS is deliberately not consulted here: it contains "setup", which is
-    // exactly what this function looks for.
-    if is_redistributable(&stem) {
+    // exactly what this function looks for. "uninstall" ends in "install".
+    if is_redistributable(&stem) || stem.starts_with("unins") {
         return false;
     }
     let extension = path
@@ -100,6 +110,24 @@ pub fn looks_like_installer(path: &Path) -> bool {
     })
 }
 
+/// Whether a program looks like an update for the game, such as `PATCH.exe` or
+/// `Game.Update.v1.2.exe`. `Updater.exe` is a launcher's own tool, so whole words only.
+pub fn looks_like_patch(path: &Path) -> bool {
+    let Some(stem) = path.file_stem().map(|s| s.to_string_lossy()) else {
+        return false;
+    };
+    let lower = stem.to_ascii_lowercase();
+    let runnable = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("msi"));
+    runnable
+        && !is_redistributable(&lower)
+        && !lower.starts_with("unins")
+        && crate::setups::words(&stem)
+            .iter()
+            .any(|w| PATCH_WORDS.contains(&w.as_str()))
+}
+
 pub fn looks_like_uninstaller(path: &Path) -> bool {
     let Some(stem) = path
         .file_stem()
@@ -117,60 +145,105 @@ pub fn looks_like_uninstaller(path: &Path) -> bool {
 /// Find an uninstaller in a game's install directory, so registry entries and shortcuts
 /// that deleting the folder would leave behind get cleaned up.
 pub fn find_uninstaller(root: &Path) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(root).ok()?;
-    let mut found: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && looks_like_uninstaller(p))
-        .collect();
-    found.sort();
+    let mut found = Vec::new();
+    walk(root, 0, UNINSTALLER_DEPTH, &mut |path| {
+        if looks_like_uninstaller(&path) {
+            found.push(path);
+        }
+    })
+    .ok()?;
+    found.sort_by_key(|p| (depth_below(root, p), p.clone()));
     found.into_iter().next()
+}
+
+fn depth_below(root: &Path, path: &Path) -> usize {
+    path.strip_prefix(root)
+        .map(|r| r.components().count())
+        .unwrap_or(0)
 }
 
 /// Find setup programs under a directory, for archives that contain an installer rather
 /// than a ready-to-run game.
 pub fn find_installers(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    find_programs(root, looks_like_installer)
+}
+
+/// Setup and update programs in a download. Not for an installed game, whose own
+/// `update.exe` is part of it.
+pub fn find_download_setups(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    find_programs(root, |path| {
+        looks_like_installer(path) || looks_like_patch(path)
+    })
+}
+
+/// Every program in a download, redistributables included, for picking one the names did not
+/// give away.
+pub fn find_download_programs(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut found = Vec::new();
-    walk(root, 0, 3, &mut |path| {
-        if looks_like_installer(&path) {
+    walk_folders(root, 0, SETUP_DEPTH, false, &mut |path| {
+        let runnable = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("msi"));
+        if runnable && !looks_like_uninstaller(&path) {
+            found.push(path);
+        }
+    })?;
+    found.sort_by_key(|p| (depth_below(root, p), p.clone()));
+    Ok(found)
+}
+
+fn find_programs(root: &Path, wanted: impl Fn(&Path) -> bool) -> std::io::Result<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    walk(root, 0, SETUP_DEPTH, &mut |path| {
+        if wanted(&path) {
             found.push(path);
         }
     })?;
     // Shallower first: the top-level setup.exe is the one to run.
-    found.sort_by_key(|p| {
-        (
-            p.strip_prefix(root)
-                .map(|r| r.components().count())
-                .unwrap_or(0),
-            p.clone(),
-        )
-    });
+    found.sort_by_key(|p| (depth_below(root, p), p.clone()));
     Ok(found)
 }
 
-/// Walk a game directory, skipping folders that never hold anything runnable.
+/// Walk a game directory, skipping folders that never hold anything runnable. Only the top
+/// folder must be readable: one locked subfolder would otherwise hide every program in the game.
 fn walk(
     dir: &Path,
     depth: usize,
     max_depth: usize,
     visit: &mut impl FnMut(PathBuf),
 ) -> std::io::Result<()> {
+    walk_folders(dir, depth, max_depth, true, visit)
+}
+
+/// `skip_excluded` leaves out redistributable and prerequisite folders.
+fn walk_folders(
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    skip_excluded: bool,
+    visit: &mut impl FnMut(PathBuf),
+) -> std::io::Result<()> {
     if depth > max_depth {
         return Ok(());
     }
 
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(dir)?.flatten() {
         let path = entry.path();
-        let file_type = entry.file_type()?;
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
 
         if file_type.is_dir() {
             let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-            if EXCLUDED_DIRS.contains(&name.as_str()) {
+            if skip_excluded && EXCLUDED_DIRS.contains(&name.as_str()) {
                 continue;
             }
-            walk(&path, depth + 1, max_depth, visit)?;
-        } else if file_type.is_file() {
+            if let Err(e) = walk_folders(&path, depth + 1, max_depth, skip_excluded, visit) {
+                tracing::debug!(?path, error = %e, "skipping a folder that cannot be read");
+            }
+        } else if file_type.is_file() || (file_type.is_symlink() && path.is_file()) {
+            // A linked file, such as `game -> game.x86_64`, is followed; a linked folder is
+            // not, since it can loop.
             visit(path);
         }
     }
@@ -207,8 +280,7 @@ const DECISIVE_MARGIN: i32 = 15;
 /// Every launch candidate under `root`, best first, so a picker can offer the runner-up.
 pub fn candidates(root: &Path, title: &str) -> std::io::Result<Vec<Candidate>> {
     let mut candidates = Vec::new();
-    // Games nest a few levels at most; deeper is tooling or engine content.
-    walk(root, 0, 5, &mut |path| {
+    walk(root, 0, LAUNCH_DEPTH, &mut |path| {
         if let Some(score) = score_file(root, &path, title) {
             candidates.push(Candidate { path, score });
         }
@@ -471,6 +543,8 @@ mod tests {
             ("/g/setup_game_1.2.exe", true),
             ("/g/GameSetup.exe", true),
             ("/g/thing.msi", true),
+            ("/g/Uninstall.exe", false),
+            ("/g/unins000.exe", false),
             ("/g/_Redist/dxwebsetup.exe", false),
             ("/g/_Redist/vcredist_x86.exe", false),
             ("/g/_Redist/oalinst.exe", false),
@@ -481,6 +555,58 @@ mod tests {
         ] {
             assert_eq!(looks_like_installer(Path::new(path)), expected, "{path}");
         }
+    }
+
+    #[test]
+    fn update_programs_are_named_by_whole_words() {
+        for (path, expected) in [
+            ("/g/PATCH.exe", true),
+            ("/g/Escape.From.Duckov.Update.v2.3.30-TENOKE.exe", true),
+            ("/g/GamePatch.exe", true),
+            ("/g/hotfix_2.msi", true),
+            ("/g/Updater.exe", false),
+            ("/g/Patch.bin", false),
+            ("/g/dxwebupdate.exe", false),
+            ("/g/Celeste.exe", false),
+        ] {
+            assert_eq!(looks_like_patch(Path::new(path)), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn a_download_offers_its_patches_but_an_install_does_not() {
+        let t = Tree::new("duckov");
+        t.file("setup.exe")
+            .file("fg-01.bin")
+            .file("MD5/QuickSFV.exe")
+            .file("patches/Escape.From.Duckov.Update.v1.0.33-TENOKE/Update/PATCH.exe")
+            .file("patches/Escape.From.Duckov.Update.v1.0.33-TENOKE/Update/Patch.bin")
+            .file("patches/Escape.From.Duckov.Update.v2.3.30-TENOKE/Update/PATCH.exe");
+
+        let download = find_download_setups(t.path()).unwrap();
+        assert_eq!(download.len(), 3);
+        assert_eq!(download[0], t.path().join("setup.exe"));
+        assert_eq!(find_installers(t.path()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn every_program_in_a_download_can_be_offered() {
+        let t = Tree::new("all-programs");
+        t.file("setup.exe")
+            .file("fg-01.bin")
+            .file("MD5/QuickSFV.exe")
+            .file("_CommonRedist/vcredist_x64.exe")
+            .file("tools/thing.msi")
+            .file("unins000.exe");
+        let names: Vec<String> = find_download_programs(t.path())
+            .unwrap()
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            ["setup.exe", "QuickSFV.exe", "vcredist_x64.exe", "thing.msi"]
+        );
     }
 
     #[test]
@@ -512,6 +638,47 @@ mod tests {
 
         let found = find_uninstaller(t.path()).unwrap();
         assert_eq!(found.file_name().unwrap(), "unins000.exe");
+    }
+
+    #[test]
+    fn an_uninstaller_one_folder_down_is_found() {
+        let t = Tree::new("uninstaller-nested");
+        t.file("Game.exe").file("Uninstall/uninstall.exe");
+        let found = find_uninstaller(t.path()).unwrap();
+        assert_eq!(found, t.path().join("Uninstall").join("uninstall.exe"));
+    }
+
+    #[test]
+    fn a_deeply_nested_game_is_still_found() {
+        let t = Tree::new("deep");
+        t.file("Release/Game v1.0/Game/Binaries/Win64/Shipping/Game.exe");
+        let d = detect(t.path(), "Game").unwrap();
+        assert_eq!(d.confident().unwrap().file_name().unwrap(), "Game.exe");
+    }
+
+    #[test]
+    fn setups_inside_release_folders_are_found() {
+        let t = Tree::new("deep-setups");
+        t.file("Release/GOG/Game/Installer/setup.exe");
+        assert_eq!(find_installers(t.path()).unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_locked_folder_does_not_hide_the_rest() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let t = Tree::new("locked");
+        t.file("Celeste.exe").file("locked/secret.exe");
+        let locked = t.path().join("locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let found = candidates(t.path(), "Celeste");
+        // Restored first, so the tree can be cleaned up whatever the assertion says.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(found
+            .unwrap()
+            .iter()
+            .any(|c| c.path.ends_with("Celeste.exe")));
     }
 
     #[test]

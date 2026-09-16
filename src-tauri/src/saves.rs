@@ -707,6 +707,8 @@ pub enum SaveSyncPhase {
     Skipped,
     /// The user chose this PC's save over the newest stored version, so nothing was restored.
     KeptLocal,
+    /// The first-start prompt took over, so this window has nothing more to say.
+    Asking,
     /// The stored save was put back. Where it went is said, so the user can find it.
     Restored {
         files: u32,
@@ -727,6 +729,7 @@ impl SaveSyncPhase {
             SaveSyncPhase::Done { .. }
                 | SaveSyncPhase::Skipped
                 | SaveSyncPhase::KeptLocal
+                | SaveSyncPhase::Asking
                 | SaveSyncPhase::Restored { .. }
                 | SaveSyncPhase::Failed { .. }
         )
@@ -2129,7 +2132,18 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
     if !settings.save_sync_enabled || !settings.sync_saves_on_launch {
         return LaunchGate::Proceed;
     }
+    // Answered in the first-start prompt a moment ago, which settled the save already.
+    let answered = crate::state::lock(&state.answered_offers()).remove(&game_id);
+    if answered.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(120)) {
+        return LaunchGate::Proceed;
+    }
     let title = state.title(game_id).await;
+    // On the row, so a check too quick for the window still shows the launch is under way.
+    state.library().set_activity(
+        game_id,
+        crate::library_state::Activity::preparing("Checking saves"),
+    );
+    crate::ipc::notify_state(app, game_id);
     let watch = SyncWatch::new(app, state, game_id, title.clone(), SyncMoment::Launch);
     watch.step(SaveSyncPhase::Checking);
 
@@ -2163,7 +2177,7 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
                     );
                     // Closes this window before the prompt opens: two dialogs about one save at
                     // once is one too many.
-                    watch.finish(SaveSyncPhase::Skipped);
+                    watch.finish(SaveSyncPhase::Asking);
                     let _ = app.emit("save-pull-offer", offer);
                     return LaunchGate::AwaitingSaveDecision;
                 }
@@ -2260,6 +2274,7 @@ pub async fn answer_save_pull_offer(
             .library()
             .update_record(game_id, |r| r.saves.pull_offer_declined = None)
             .await;
+        crate::state::lock(&state.answered_offers()).insert(game_id, std::time::Instant::now());
         // In the window a launch restore uses, so where the save went is said the same way.
         SyncWatch::new(
             &app,
@@ -2288,6 +2303,7 @@ pub async fn answer_save_pull_offer(
         .library()
         .update_record(game_id, move |r| r.saves.pull_offer_declined = newest)
         .await;
+    crate::state::lock(&state.answered_offers()).insert(game_id, std::time::Instant::now());
     Ok(())
 }
 

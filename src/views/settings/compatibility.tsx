@@ -87,14 +87,25 @@ export function ProtonSection() {
 
       <Row
         label="32-bit programs"
-        value={status.isLoading ? "…" : proton?.supports32bit ? "Supported" : "Not supported"}
-        tone={proton ? (proton.supports32bit ? "good" : "bad") : undefined}
+        value={
+          status.isLoading
+            ? "…"
+            : !proton?.supports32bit
+              ? "Not supported"
+              : proton.supports32bitGraphics
+                ? "Supported"
+                : "No 32-bit graphics driver"
+        }
+        tone={
+          proton ? (proton.supports32bit && proton.supports32bitGraphics ? "good" : "bad") : undefined
+        }
       />
       {proton?.missingI386Extension && (
         <div className="flex flex-col gap-1.5">
           <p className={HINT}>
-            Flathub&rsquo;s 32-bit libraries let installers and older games run in Proton.
-            Without them they run on Gameyfin&rsquo;s own Wine.
+            Flathub&rsquo;s 32-bit libraries and graphics drivers let installers and older games
+            run in Proton. Without the libraries they run on Gameyfin&rsquo;s own Wine, and
+            without the drivers a 32-bit program that draws with OpenGL cannot open its window.
           </p>
           <div>
             <Button

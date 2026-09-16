@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Alert } from "@/components/Alert";
 import { Button } from "@/components/ui";
@@ -12,41 +12,22 @@ import { Modal } from "./Modal";
  */
 export function UninstallDialog({
   title,
-  gameId,
+  detected,
   installDir,
   onConfirm,
   onCancel,
 }: {
   title: string;
-  gameId: number;
+  /** Looked for before the dialog opens. */
+  detected: string | null;
   /** Where the game is installed. The picker opens here, and the choice must stay inside it. */
   installDir: string | null;
   onConfirm: (options: { runUninstaller: boolean; uninstaller: string | null }) => void;
   onCancel: () => void;
 }) {
 
-  const [detected, setDetected] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
-  const [looking, setLooking] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    backend
-      .findUninstaller(gameId)
-      .then((found) => {
-        if (live) setDetected(found);
-      })
-      .catch((e) => {
-        if (live) setError(messageOf(e));
-      })
-      .finally(() => {
-        if (live) setLooking(false);
-      });
-    return () => {
-      live = false;
-    };
-  }, [gameId]);
 
   // What will actually run: a manual choice wins over detection.
   const uninstaller = chosen ?? detected;
@@ -72,9 +53,7 @@ export function UninstallDialog({
         </p>
 
         <div className="mt-3 rounded-lg border border-default-200 bg-default-100/40 px-3 py-2">
-          {looking ? (
-            <p className="text-xs text-foreground/50">Looking for an uninstaller…</p>
-          ) : uninstaller ? (
+          {uninstaller ? (
             <>
               <p className="text-xs text-foreground/70">
                 {chosen ? "Will run the program you chose:" : "Found an uninstaller:"}

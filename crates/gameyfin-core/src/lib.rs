@@ -24,6 +24,7 @@ pub mod save_migration;
 pub mod save_store;
 pub mod save_sync;
 pub mod save_tool;
+pub mod setups;
 pub mod shortcuts;
 pub mod steam;
 pub mod umu;
