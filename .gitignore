@@ -24,3 +24,5 @@ build/
 
 # Development notes, not part of the published project.
 CLAUDE.md
+docs/.vitepress/cache
+docs/.vitepress/dist

@@ -50,8 +50,8 @@ See [Getting started](docs/getting-started.md) for first-time setup.
 
 ## Documentation
 
-The [docs](docs/README.md) explain every feature in more depth, especially
-[save sync](docs/saves.md).
+The [docs](https://wieluk.github.io/gameyfin-app/docs/) explain every feature in more depth,
+especially [save sync](https://wieluk.github.io/gameyfin-app/docs/saves).
 
 ## Development
 

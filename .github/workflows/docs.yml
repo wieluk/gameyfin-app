@@ -38,3 +38,50 @@ jobs:
       - run: npm ci
       - name: Markdown and spelling
         run: npm run lint:docs
+      # Also the link check: the build fails on a link to a page that does not exist.
+      - name: Build the site
+        run: npm run docs:build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: docs-site
+          path: docs/.vitepress/dist
+
+  # gh-pages also holds the Flatpak repository in repo/, published by release.yml. Each keeps to
+  # its own folder, and a cleaning deploy only ever removes files inside its own.
+  deploy:
+    needs: check
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    # gh-pages is shared with the Flatpak publish in release.yml; one writer at a time.
+    concurrency:
+      group: gh-pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: docs-site
+          path: site
+      - name: Publish the docs
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site
+          destination_dir: docs
+      # The site root has nothing of its own, so it points at the docs.
+      - name: Redirect the site root to the docs
+        run: |
+          mkdir root
+          cat > root/index.html <<'EOF'
+          <!doctype html>
+          <meta http-equiv="refresh" content="0; url=docs/">
+          <link rel="canonical" href="docs/">
+          <a href="docs/">gameyfin-app documentation</a>
+          EOF
+      - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: root
+          keep_files: true
