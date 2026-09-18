@@ -10,12 +10,13 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "set-version": "node scripts/set-version.mjs",
     "test": "vitest run",
+    "lint:docs": "markdownlint-cli2 && cspell --no-progress",
     "tauri": "tauri",
     "fetch-sidecars": "node scripts/fetch-sidecar.mjs",
     "package": "node scripts/package.mjs",
     "package:flatpak": "node scripts/build-flatpak.mjs",
     "icons": "node scripts/generate-icons.mjs",
-    "verify": "npm run typecheck && npm test && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
+    "verify": "npm run typecheck && npm test && npm run lint:docs && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
     "package:flatpak:install": "node scripts/build-flatpak.mjs --install"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@cspell/dict-en-gb": "^5.0.34",
     "@resvg/resvg-js": "^2.6.2",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/cli": "^2.8.4",
@@ -37,7 +39,9 @@
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
     "autoprefixer": "^10.4.21",
+    "cspell": "^10.3.3",
     "jsdom": "^27.0.0",
+    "markdownlint-cli2": "^0.23.2",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.9.2",

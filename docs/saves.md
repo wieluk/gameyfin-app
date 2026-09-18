@@ -165,8 +165,8 @@ Use this when you start using Gameyfin on a PC that already has progress.
 For a game the database does not know, or where it looks in the wrong place, press
 **Set folders** on its row.
 
-- **Save folders**: where this game keeps saves on this PC. Adding one makes an unknown game
-  backupable. For a known game, the folders are added to what the database already finds.
+- **Save folders**: where this game keeps saves on this PC. Adding one lets an unknown game be
+  backed up. For a known game, the folders are added to what the database already finds.
   The dialog shows where saves were already found, and offers folders named like the game
   in the usual save places: press **Add** on one. For a Windows game on Linux, **Browse**
   starts inside its prefix, and a folder picked there still lands in the right place on a

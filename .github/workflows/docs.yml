@@ -1,0 +1,40 @@
+name: Docs
+
+# Only when prose changes: the code checks live in ci.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+      - "docs/**"
+      - ".markdownlint-cli2.jsonc"
+      - "cspell.json"
+  pull_request:
+    paths:
+      - "**.md"
+      - "docs/**"
+      - ".markdownlint-cli2.jsonc"
+      - "cspell.json"
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Markdown and spelling
+        run: npm run lint:docs
