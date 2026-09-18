@@ -38,6 +38,9 @@ jobs:
       - run: npm ci
       - name: Markdown and spelling
         run: npm run lint:docs
+      # The app's help buttons point at headings here, and ci.yml skips docs-only changes.
+      - name: Help links still land on a heading
+        run: npx vitest run src/lib/help.test.ts
       # Also the link check: the build fails on a link to a page that does not exist.
       - name: Build the site
         run: npm run docs:build

@@ -32,6 +32,7 @@ export function InstalledView() {
   const header = (
     <ViewHeader
       title="Installed"
+      help="installed"
       error={error}
       actions={<FolderActions folder="installations" onError={setError} />}
     />

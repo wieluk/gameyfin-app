@@ -28,7 +28,7 @@ export function AccountSection({ onSignedOut }: { onSignedOut: () => void }) {
         : "None stored";
 
   return (
-    <Section title="Account">
+    <Section title="Account" help="account">
       <Row label="Server" value={status.data?.serverUrl ?? "Not configured"} />
       {/* Absent on servers that do not report it, where a row would only raise questions. */}
       {serverVersion.data && <Row label="Server version" value={serverVersion.data} />}

@@ -8,6 +8,7 @@ import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { LoginProgress } from "@/bindings/LoginProgress";
 import { Alert } from "@/components/Alert";
 import { messageOf } from "@/lib/errors";
+import { helpUrl } from "@/lib/help";
 import { keys, useAppSettings } from "@/lib/queries";
 
 /**
@@ -83,6 +84,17 @@ export function WelcomeView({
             <LibraryStep onDone={onComplete} onBack={() => setStep("signin")} />
           )}
         </div>
+
+        <p className="mt-6 text-center text-[11px] text-foreground/45">
+          Stuck?{" "}
+          <button
+            type="button"
+            className="underline hover:text-foreground"
+            onClick={() => void backend.openUrl(helpUrl("firstStart"))}
+          >
+            Read the setup guide
+          </button>
+        </p>
       </div>
     </div>
   );

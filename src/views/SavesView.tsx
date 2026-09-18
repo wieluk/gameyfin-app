@@ -168,6 +168,7 @@ export function SavesView() {
     <div className="flex min-h-0 flex-1 flex-col">
       <ViewHeader
         title="Saves"
+        help="saves"
         actions={
           <>
             <Switch

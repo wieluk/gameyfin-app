@@ -18,6 +18,7 @@ const PATHS = {
   cloud: "M7 18a4 4 0 010-8 6 6 0 0111.2-1.8A3.6 3.6 0 0118 18z",
   bell: "M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9 M13.73 21a2 2 0 01-3.46 0",
   grip: "M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01",
+  help: "M12 21a9 9 0 100-18 9 9 0 000 18z M9.1 9a3 3 0 015.8 1c0 2-2.9 3-2.9 3 M12 17h.01",
 } as const;
 
 export type IconName = keyof typeof PATHS;

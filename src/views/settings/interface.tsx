@@ -35,7 +35,7 @@ export function NotificationSection() {
   const { save, error } = useSettingSaver();
 
   return (
-    <Section title="Notifications">
+    <Section title="Notifications" help="notifications">
       <SwitchField
         label="Downloads and installs"
         hint="When a download is ready to install, and when a game is ready to play."
@@ -68,7 +68,7 @@ export function WindowSection() {
   const { save, error } = useSettingSaver();
 
   return (
-    <Section title="Window">
+    <Section title="Window" help="window">
       <SwitchField
         label="Closing the window keeps Gameyfin running"
         hint="Downloads run inside this program, so closing the window stops one. Turn this on and the close button hides the window instead, with the tray icon to bring it back."
@@ -116,7 +116,7 @@ export function GamepadSection() {
   const deadzone = dragged ?? stored;
 
   return (
-    <Section title="Controller">
+    <Section title="Controller" help="controllers">
       <Row
         label="Detected"
         value={connected ? (name ?? "A controller") : "None connected"}

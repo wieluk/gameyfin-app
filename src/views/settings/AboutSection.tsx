@@ -14,7 +14,7 @@ export function AboutSection() {
   const status = update.data;
 
   return (
-    <Section title="About">
+    <Section title="About" help="updates">
       <Row label="Version" value={status?.currentVersion ?? "…"} />
       <Row
         label="Latest release"

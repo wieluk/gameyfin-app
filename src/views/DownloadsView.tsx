@@ -51,6 +51,7 @@ export function DownloadsView() {
   const header = (
     <ViewHeader
       title="Downloads"
+      help="downloads"
       error={error}
       actions={
         <>
