@@ -34,6 +34,11 @@ pub enum ApiError {
     #[error("save is too large, or the storage quota is full")]
     QuotaExceeded,
 
+    /// A reverse proxy in front of Gameyfin answered with its own sign-in page, so its session
+    /// has expired even if Gameyfin's has not.
+    #[error("{host} answered instead of Gameyfin: sign in again to get past the proxy")]
+    ProxyAuthRequired { host: String },
+
     #[error("no Gameyfin server URL configured")]
     NoServerUrl,
 
@@ -50,7 +55,10 @@ pub enum ApiError {
 impl ApiError {
     /// True when re-authenticating could plausibly fix this error.
     pub fn is_auth(&self) -> bool {
-        matches!(self, ApiError::Unauthenticated(_))
+        matches!(
+            self,
+            ApiError::Unauthenticated(_) | ApiError::ProxyAuthRequired { .. }
+        )
     }
 
     /// True when nobody answered, so the user keeps their session and cached library. A proxy's

@@ -101,6 +101,9 @@ impl GameyfinClient {
             let req = self.auth.apply(req).await?;
             let resp = req.send().await?;
             let status = resp.status();
+            if let Some(host) = answered_by_a_portal(&resp, &self.base_url) {
+                return Err(ApiError::ProxyAuthRequired { host });
+            }
             // Not `unwrap_or_default`: a body cut off mid-read would decode as `null`, which reads
             // as signed out.
             let body = resp.text().await?;
@@ -159,6 +162,25 @@ impl GameyfinClient {
     pub async fn user_info(&self) -> ApiResult<Option<UserInfo>> {
         self.call("UserEndpoint", "getUserInfo", json!({})).await
     }
+}
+
+/// A reverse proxy that wants its own sign-in sends the request to its portal, or serves the
+/// portal's HTML where Hilla only ever answers JSON. Returns the host that answered.
+fn answered_by_a_portal(response: &reqwest::Response, base_url: &str) -> Option<String> {
+    let answered = response.url();
+    let expected = url::Url::parse(base_url).ok()?;
+    if answered.origin() != expected.origin() {
+        return Some(answered.host_str().unwrap_or("another host").to_string());
+    }
+
+    let html = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/html"));
+    // Only on success: an error page is the server's own, and its status says more than this.
+    (html && response.status().is_success())
+        .then(|| answered.host_str().unwrap_or("the server").to_string())
 }
 
 fn interpret<T: DeserializeOwned>(label: &str, status: u16, body: &str) -> ApiResult<T> {
