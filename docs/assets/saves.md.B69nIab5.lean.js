@@ -1,0 +1,1 @@
+import{_ as t,o as s,c as o,a2 as a}from"./chunks/framework.BI-oZTPy.js";const c=JSON.parse('{"title":"Save sync","description":"","frontmatter":{},"headers":[],"relativePath":"saves.md","filePath":"saves.md"}'),r={name:"saves.md"};function n(i,e,d,h,l,g){return s(),o("div",null,[...e[0]||(e[0]=[a("",53)])])}const p=t(r,[["render",n]]);export{c as __pageData,p as default};
