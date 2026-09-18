@@ -23,9 +23,14 @@ in sync between PCs.
 - **Desktop integration**: tray icon, start with login, notifications, taskbar progress and
   automatic updates.
 
-> **Save sync with a Gameyfin server** needs server support that is not merged into
-> [Gameyfin](https://github.com/gameyfin/gameyfin) yet. Until it is, run `ghcr.io/wieluk/gameyfin:save-sync` as your server.
-> Saving to a folder or WebDAV share works with any Gameyfin server.
+## Server support
+
+The app works with any Gameyfin 2.4 server. Three features need server changes that are not
+merged into [Gameyfin](https://github.com/gameyfin/gameyfin) yet: **save sync to the server**
+(a folder or WebDAV share works anywhere), **staying signed in** past the server's four-hour
+session, and **the server's version** in Settings. They are in
+`ghcr.io/wieluk/gameyfin:gameyfin-app`, built from the `integration/gameyfin-app` branch of
+[this fork](https://github.com/wieluk/gameyfin). On a stock server the app leaves them out.
 
 ## Screenshots
 
