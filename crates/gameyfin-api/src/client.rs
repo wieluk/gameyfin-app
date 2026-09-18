@@ -162,6 +162,19 @@ impl GameyfinClient {
     pub async fn user_info(&self) -> ApiResult<Option<UserInfo>> {
         self.call("UserEndpoint", "getUserInfo", json!({})).await
     }
+
+    /// A login for this device that outlives the web session. Needs a cookie session. Servers
+    /// without device tokens refuse the unknown endpoint with 403.
+    pub async fn create_device_token(&self, name: &str) -> ApiResult<String> {
+        self.call("DeviceTokenEndpoint", "create", json!({ "name": name }))
+            .await
+    }
+
+    /// Signs this device out on the server. Only a call made with the token itself can.
+    pub async fn revoke_device_token(&self) -> ApiResult<()> {
+        self.call("DeviceTokenEndpoint", "revokeCurrent", json!({}))
+            .await
+    }
 }
 
 /// A reverse proxy that wants its own sign-in sends the request to its portal, or serves the

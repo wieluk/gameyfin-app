@@ -1,5 +1,5 @@
-//! Persisted client settings. Session cookies and passwords live here too, in an owner-only
-//! file; moving them to the OS keyring is the intended next step.
+//! Persisted client settings. Session cookies, device tokens and passwords live here too, in an
+//! owner-only file; moving them to the OS keyring is the intended next step.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -158,6 +158,9 @@ pub struct Settings {
     pub extra_library_roots: Vec<String>,
     #[ts(skip)]
     pub cookies: HashMap<String, String>,
+    /// A login that outlives the web session, from servers that issue one. Wins over the cookies.
+    #[ts(skip)]
+    pub device_token: Option<String>,
     pub username: Option<String>,
     pub log_level: LogLevel,
     /// Zero is unlimited. Client-side, since Gameyfin has no server throttle.
@@ -219,6 +222,7 @@ impl Default for Settings {
             library_root: None,
             extra_library_roots: Vec::new(),
             cookies: HashMap::new(),
+            device_token: None,
             username: None,
             log_level: LogLevel::default(),
             download_limit_kib: 0,
@@ -294,12 +298,34 @@ pub struct PublicSettings {
 impl From<Settings> for PublicSettings {
     fn from(mut settings: Settings) -> Self {
         settings.cookies.clear();
+        settings.device_token = None;
         let has_extraction_password = settings.extraction_password.take().is_some();
         let has_webdav_password = settings.webdav_password.take().is_some();
         Self {
             settings,
             has_extraction_password,
             has_webdav_password,
+        }
+    }
+}
+
+/// How a request proves who sent it. Both can apply at once: the token is Gameyfin's, the
+/// cookies may be what a reverse proxy in front of it wants.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Credentials {
+    pub token: Option<String>,
+    pub cookies: Option<String>,
+}
+
+impl Credentials {
+    pub fn apply(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let request = match &self.token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        };
+        match &self.cookies {
+            Some(header) => request.header(reqwest::header::COOKIE, header),
+            None => request,
         }
     }
 }
@@ -418,11 +444,12 @@ impl Settings {
     }
 
     pub fn has_session(&self) -> bool {
-        self.is_configured() && !self.cookies.is_empty()
+        self.is_configured() && (self.device_token.is_some() || !self.cookies.is_empty())
     }
 
     pub fn clear_session(&mut self) {
         self.cookies.clear();
+        self.device_token = None;
         self.username = None;
     }
 
@@ -435,6 +462,7 @@ impl Settings {
             library_root: kept.library_root,
             extra_library_roots: kept.extra_library_roots,
             cookies: kept.cookies,
+            device_token: kept.device_token,
             username: kept.username,
             installation_id: kept.installation_id,
             save_backend: kept.save_backend,
@@ -444,6 +472,15 @@ impl Settings {
             webdav_password: kept.webdav_password,
             ..Settings::default()
         };
+    }
+
+    /// For requests sent outside the API client, such as downloads and images.
+    pub fn credentials(&self) -> Credentials {
+        Credentials {
+            token: self.device_token.clone(),
+            // Kept even with a token: a reverse proxy in front of Gameyfin has its own session.
+            cookies: Some(gameyfin_api::cookie_header(&self.cookies)).filter(|c| !c.is_empty()),
+        }
     }
 
     /// Which store saves go to. Version ids from one store mean nothing to another.
@@ -525,6 +562,36 @@ mod tests {
         assert!(s.is_configured() && !s.has_session());
         s.cookies.insert("JSESSIONID".into(), "abc".into());
         assert!(s.has_session());
+    }
+
+    #[test]
+    fn a_device_token_is_a_session_and_wins_over_cookies() {
+        let mut s = Settings {
+            server_url: Some("https://games.example".into()),
+            device_token: Some("gyf_abc".into()),
+            ..Default::default()
+        };
+        assert!(s.has_session());
+        s.cookies.insert("JSESSIONID".into(), "abc".into());
+        // Both: a reverse proxy in front of Gameyfin is authenticated by the cookies alone.
+        let credentials = s.credentials();
+        assert_eq!(credentials.token.as_deref(), Some("gyf_abc"));
+        assert_eq!(credentials.cookies.as_deref(), Some("JSESSIONID=abc"));
+
+        s.clear_session();
+        assert!(!s.has_session());
+        assert_eq!(s.credentials(), Credentials::default());
+    }
+
+    #[test]
+    fn the_webview_never_sees_the_device_token() {
+        let settings = Settings {
+            device_token: Some("gyf_abc".into()),
+            ..Default::default()
+        };
+        let public = PublicSettings::from(settings);
+        assert_eq!(public.settings.device_token, None);
+        assert!(!serde_json::to_string(&public).unwrap().contains("gyf_abc"));
     }
 
     #[test]

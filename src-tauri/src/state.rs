@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use gameyfin_api::{CookieSessionAuth, Game, GameyfinClient, Library};
+use gameyfin_api::{ApiError, CookieSessionAuth, DeviceTokenAuth, Game, GameyfinClient, Library};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CommandError, CommandResult};
@@ -149,22 +149,90 @@ pub struct AppState {
     pub processes: Registry<gameyfin_core::Stopper>,
 }
 
+/// For API calls. A connect timeout keeps an offline start from hanging on the splash.
+fn api_http() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(30))
+        .build()
+}
+
 impl AppState {
     pub async fn connect_with_cookies(
         &self,
         base_url: &str,
         cookies: HashMap<String, String>,
     ) -> gameyfin_api::ApiResult<()> {
-        // A connect timeout keeps an offline start from hanging on the splash.
-        let http = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let http = api_http()?;
         let auth = Arc::new(CookieSessionAuth::new(base_url, http.clone()));
         auth.set_cookies(cookies).await;
         *write(&self.client) = Some(GameyfinClient::with_http(base_url, auth, http)?);
         Ok(())
+    }
+
+    /// The cookies come along for a reverse proxy in front of Gameyfin, which has its own
+    /// session and knows nothing about device tokens.
+    pub fn connect_with_token(
+        &self,
+        base_url: &str,
+        token: String,
+        cookies: HashMap<String, String>,
+    ) -> gameyfin_api::ApiResult<()> {
+        let auth = Arc::new(DeviceTokenAuth::with_cookies(token, cookies));
+        *write(&self.client) = Some(GameyfinClient::with_http(base_url, auth, api_http()?)?);
+        Ok(())
+    }
+
+    /// Swaps a cookie session for a device token where the server offers one, so the login
+    /// survives the session's idle timeout. Servers without device tokens keep the cookies.
+    pub async fn adopt_device_token(&self, base_url: &str) {
+        let Some(client) = self.client() else {
+            return;
+        };
+        let name = self
+            .settings()
+            .device_name
+            .or_else(crate::saves::hostname)
+            .unwrap_or_else(|| "Gameyfin app".to_string());
+        let token = match client.create_device_token(&name).await {
+            Ok(token) => token,
+            // The session was just accepted, so a refusal means the endpoint does not exist.
+            Err(e) if e.is_auth() || matches!(e, ApiError::Status { status: 404, .. }) => {
+                tracing::debug!("the server does not issue device tokens");
+                return;
+            }
+            Err(e) => {
+                tracing::info!("could not get a device token, staying on the session: {e}");
+                return;
+            }
+        };
+        // Stored before use: a token only in memory would be lost on the next start. The
+        // cookies stay: a reverse proxy in front of Gameyfin still checks its own session.
+        let stored = self
+            .set_settings(|s| s.device_token = Some(token.clone()))
+            .await;
+        if let Err(e) = stored {
+            tracing::warn!("could not store the device token: {e}");
+            return;
+        }
+        if let Err(e) = self.connect_with_token(base_url, token, self.settings().cookies) {
+            tracing::warn!("could not switch to the device token: {e}");
+            return;
+        }
+        tracing::info!("signed in with a device token");
+    }
+
+    /// Best effort, and bounded so signing out offline is not held up by the server.
+    pub async fn revoke_device_token(&self) {
+        let (Some(client), true) = (self.client(), self.settings().device_token.is_some()) else {
+            return;
+        };
+        match tokio::time::timeout(Duration::from_secs(5), client.revoke_device_token()).await {
+            Ok(Ok(())) => tracing::info!("revoked the device token"),
+            Ok(Err(e)) => tracing::info!("could not revoke the device token: {e}"),
+            Err(_) => tracing::info!("the server did not answer the device token revocation"),
+        }
     }
 
     pub fn disconnect(&self) {
@@ -540,14 +608,24 @@ impl AppState {
             self.restored.set();
             return false;
         };
-        let connected = self
-            .connect_with_cookies(&url, settings.cookies.clone())
-            .await
-            .is_ok();
+        let connected = match settings.device_token.clone() {
+            Some(token) => self
+                .connect_with_token(&url, token, settings.cookies.clone())
+                .is_ok(),
+            None => self
+                .connect_with_cookies(&url, settings.cookies.clone())
+                .await
+                .is_ok(),
+        };
         // Before the session check, which talks to the server: callers wait for the stored
         // answer, not for a round trip that a slow or absent network can stretch out.
         self.restored.set();
-        connected && self.check_session(true).await.0
+        let authenticated = connected && self.check_session(true).await.0;
+        // Sessions from before the server issued device tokens are upgraded while they still work.
+        if authenticated && settings.device_token.is_none() {
+            self.adopt_device_token(&url).await;
+        }
+        authenticated
     }
 
     #[cfg(test)]
@@ -571,6 +649,121 @@ mod tests {
             std::env::temp_dir().join(format!("gameyfin-state-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    const USER: &str = r#"{"id":1,"username":"alice"}"#;
+
+    async fn stored_cookie_session(name: &str, url: &str) -> PathBuf {
+        let dir = scratch(name);
+        let stored = AppState::default();
+        stored.set_config_dir(dir.clone());
+        stored
+            .set_settings(|s| {
+                s.server_url = Some(url.to_string());
+                s.cookies = HashMap::from([("JSESSIONID".to_string(), "abc".to_string())]);
+            })
+            .await
+            .unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn a_working_cookie_session_is_swapped_for_a_device_token() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/connect/UserEndpoint/getUserInfo")
+            .match_header("cookie", "JSESSIONID=abc")
+            .with_body(USER)
+            .create_async()
+            .await;
+        server
+            .mock("POST", "/connect/DeviceTokenEndpoint/create")
+            .match_header("cookie", "JSESSIONID=abc")
+            .with_body(r#""gyf_new""#)
+            .create_async()
+            .await;
+        let with_token = server
+            .mock("POST", "/connect/UserEndpoint/getUserInfo")
+            .match_header("authorization", "Bearer gyf_new")
+            .with_body(USER)
+            .expect(1)
+            .create_async()
+            .await;
+        let dir = stored_cookie_session("device-token-adopt", &server.url()).await;
+
+        let state = AppState::default();
+        assert!(state.restore(dir.clone()).await);
+
+        let settings = state.settings();
+        assert_eq!(settings.device_token.as_deref(), Some("gyf_new"));
+        assert_eq!(
+            settings.cookies.get("JSESSIONID").map(String::as_str),
+            Some("abc"),
+            "a proxy in front of Gameyfin still checks its own cookies"
+        );
+        assert!(state.check_session(true).await.0);
+        with_token.assert_async().await;
+
+        let on_disk: Settings = crate::persist::read_json(&dir.join(SETTINGS_FILE))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(on_disk.device_token.as_deref(), Some("gyf_new"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_server_without_device_tokens_keeps_the_cookie_session() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/connect/UserEndpoint/getUserInfo")
+            .with_body(USER)
+            .create_async()
+            .await;
+        server
+            .mock("POST", "/connect/DeviceTokenEndpoint/create")
+            .with_status(403)
+            .create_async()
+            .await;
+        let dir = stored_cookie_session("device-token-unsupported", &server.url()).await;
+
+        let state = AppState::default();
+        assert!(state.restore(dir.clone()).await);
+
+        let settings = state.settings();
+        assert_eq!(settings.device_token, None);
+        assert_eq!(
+            settings.cookies.get("JSESSIONID").map(String::as_str),
+            Some("abc")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_revoked_device_token_reads_as_signed_out() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/connect/UserEndpoint/getUserInfo")
+            .match_header("authorization", "Bearer gyf_old")
+            .with_status(401)
+            .create_async()
+            .await;
+        let dir = scratch("device-token-revoked");
+        let stored = AppState::default();
+        stored.set_config_dir(dir.clone());
+        stored
+            .set_settings(|s| {
+                s.server_url = Some(server.url());
+                s.device_token = Some("gyf_old".into());
+            })
+            .await
+            .unwrap();
+
+        let state = AppState::default();
+        assert!(!state.restore(dir.clone()).await);
+        let (authenticated, offline) = state.check_session(true).await;
+        assert!(!authenticated && !offline);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn a_game(id: i64, title: &str) -> Game {

@@ -51,6 +51,9 @@ tracing-appender = "0.2"
 reqwest.workspace = true
 url.workspace = true
 
+[dev-dependencies]
+mockito = "1"
+
 # GTK opens folders and links with an activation token, so the file manager comes to the front,
 # and raises our window with the launcher's. Already in the tree through Tauri.
 [target.'cfg(target_os = "linux")'.dependencies]

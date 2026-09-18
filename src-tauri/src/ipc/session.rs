@@ -52,6 +52,7 @@ pub async fn set_server_url(state: State<'_, AppState>, url: String) -> CommandR
     let switching = state.settings().server_url.as_deref() != Some(normalized.as_str());
     if switching {
         // The old session and catalogue belong to the other server.
+        state.revoke_device_token().await;
         state.disconnect();
         state.forget_catalog().await;
     }
@@ -124,9 +125,12 @@ pub async fn poll_login(app: AppHandle, state: State<'_, AppState>) -> CommandRe
     state
         .set_settings(|s| {
             s.cookies = cookies;
+            // A token that stopped working is what sent the user here.
+            s.device_token = None;
             s.username = Some(user.username);
         })
         .await?;
+    state.adopt_device_token(&url).await;
     auth_flow::close_login_window(&app);
     Ok(LoginPoll {
         signed_in: true,
@@ -163,8 +167,10 @@ pub async fn sign_out(app: AppHandle, state: State<'_, AppState>) -> CommandResu
     Ok(())
 }
 
-/// Drops the session cookies and everything fetched with them, keeping the server address.
+/// Drops the session and everything fetched with it, keeping the server address.
 async fn forget_session(state: &AppState) -> CommandResult<()> {
+    // Otherwise the server keeps listing a device that has signed out.
+    state.revoke_device_token().await;
     state.disconnect();
     state.forget_catalog().await;
     state.set_settings(Settings::clear_session).await

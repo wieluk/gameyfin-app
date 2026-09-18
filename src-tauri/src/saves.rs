@@ -407,7 +407,7 @@ fn device_name(settings: &Settings) -> Option<String> {
 
 /// `HOSTNAME` is a shell variable, not something a desktop entry passes on, so Linux reads
 /// `/etc/hostname` instead.
-fn hostname() -> Option<String> {
+pub(crate) fn hostname() -> Option<String> {
     if let Some(name) = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()
