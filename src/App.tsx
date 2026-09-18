@@ -78,7 +78,11 @@ export function App() {
       {!ready ? (
         <Splash />
       ) : setup.open ? (
-        <WelcomeView onStarted={setup.engage} onComplete={onConnected} />
+        <WelcomeView
+          knownServer={status.data?.configured ? (status.data.serverUrl ?? null) : null}
+          onStarted={setup.engage}
+          onComplete={onConnected}
+        />
       ) : (
         <Shell onSignedOut={() => void queryClient.invalidateQueries({ queryKey: keys.status })} />
       )}

@@ -8,7 +8,7 @@ import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { LoginProgress } from "@/bindings/LoginProgress";
 import { Alert } from "@/components/Alert";
 import { messageOf } from "@/lib/errors";
-import { keys } from "@/lib/queries";
+import { keys, useAppSettings } from "@/lib/queries";
 
 /**
  * First-run setup: choose a server, sign in, choose where games live. Sign-in hands off
@@ -19,15 +19,27 @@ import { keys } from "@/lib/queries";
 type Step = "server" | "signin" | "library";
 
 export function WelcomeView({
+  knownServer,
   onStarted,
   onComplete,
 }: {
+  /** Set when only the session is gone: the wizard resumes at sign in. */
+  knownServer: string | null;
   /** The user has answered a step, so the wizard is theirs to finish. */
   onStarted: () => void;
   onComplete: () => void;
 }) {
-  const [step, setStep] = useState<Step>("server");
-  const [serverUrl, setServerUrl] = useState("");
+  const [resuming] = useState(Boolean(knownServer));
+  const [step, setStep] = useState<Step>(knownServer ? "signin" : "server");
+  const [serverUrl, setServerUrl] = useState(knownServer ?? "");
+  const settings = useAppSettings();
+
+  function signedIn() {
+    onStarted();
+    // A returning user already chose a folder; asking again would look like a reset.
+    if (resuming && settings.data?.libraryRoot) onComplete();
+    else setStep("library");
+  }
 
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto bg-background p-8">
@@ -36,10 +48,13 @@ export function WelcomeView({
           <div className="mb-4 flex justify-center">
             <Icon name="controller" className="h-12 w-12 text-primary" />
           </div>
-          <h1 className="text-2xl font-semibold text-foreground">Welcome to Gameyfin</h1>
+          <h1 className="text-2xl font-semibold text-foreground">
+            {resuming ? "Welcome back" : "Welcome to Gameyfin"}
+          </h1>
           <p className="mt-1 text-sm text-foreground/55">
             {step === "server" && "Connect to your Gameyfin server."}
-            {step === "signin" && "Sign in to your account."}
+            {step === "signin" &&
+              (resuming ? "Your session ended. Sign in again." : "Sign in to your account.")}
             {step === "library" && "Choose where games are stored, and name this PC."}
           </p>
         </header>
@@ -60,7 +75,7 @@ export function WelcomeView({
           {step === "signin" && (
             <SignInStep
               serverUrl={serverUrl}
-              onDone={() => setStep("library")}
+              onDone={signedIn}
               onBack={() => setStep("server")}
             />
           )}
@@ -369,15 +384,17 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
 
   useEffect(() => {
     // Only as a starting point: a suggestion that arrives late must not overwrite
-    // whatever the user has started typing.
+    // whatever the user has started typing. A folder chosen before comes first.
     backend
-      .suggestLibraryRoot()
-      .then((suggested) => setPath((current) => current || suggested))
+      .getSettings()
+      .then(async (settings) => settings.libraryRoot || (await backend.suggestLibraryRoot()))
+      .then((initial) => setPath((current) => current || initial))
       .catch((e) => setError(messageOf(e)));
     // Prefilled with what the system calls itself, so the name is there to be changed
     // rather than being a box whose purpose is not obvious.
     backend
-      .detectedDeviceName()
+      .getSettings()
+      .then(async (settings) => settings.deviceName || (await backend.detectedDeviceName()))
       .then((name) => setDevice((current) => current || (name ?? "")))
       .catch(() => undefined);
   }, []);
