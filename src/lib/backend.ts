@@ -135,6 +135,7 @@ export const backend = {
   openUrl: (url: string) => invoke<void>("open_url", { url }),
 
   connectionStatus: () => invoke<ConnectionStatus>("connection_status"),
+  serverVersion: () => invoke<string | null>("server_version"),
   probeServer: (url: string) => invoke<ServerProbe>("probe_server", { url }),
   setServerUrl: (url: string) => invoke<string>("set_server_url", { url }),
   /** `direct` forces the password form on a server that also has SSO. */

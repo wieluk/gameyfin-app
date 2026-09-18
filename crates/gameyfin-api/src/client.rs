@@ -163,6 +163,12 @@ impl GameyfinClient {
         self.call("UserEndpoint", "getUserInfo", json!({})).await
     }
 
+    /// What the server is running. Null on a server built without build info, and refused
+    /// (403) by servers that do not report it at all.
+    pub async fn server_version(&self) -> ApiResult<Option<String>> {
+        self.call("VersionEndpoint", "getVersion", json!({})).await
+    }
+
     /// A login for this device that outlives the web session. Needs a cookie session. Servers
     /// without device tokens refuse the unknown endpoint with 403.
     pub async fn create_device_token(&self, name: &str) -> ApiResult<String> {

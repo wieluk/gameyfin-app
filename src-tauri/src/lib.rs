@@ -269,6 +269,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ipc::session::connection_status,
+            ipc::session::server_version,
             ipc::session::probe_server,
             ipc::session::set_server_url,
             ipc::session::begin_login,

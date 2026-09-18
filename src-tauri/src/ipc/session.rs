@@ -10,6 +10,15 @@ use crate::error::{blocking, CommandError, CommandResult, Context};
 use crate::settings::{PublicSettings, Settings, SettingsPatch};
 use crate::state::AppState;
 
+/// What the stored login is, which decides whether it can outlive the server's session.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum LoginKind {
+    DeviceToken,
+    Session,
+}
+
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -20,6 +29,8 @@ pub struct ConnectionStatus {
     pub offline: bool,
     pub server_url: Option<String>,
     pub username: Option<String>,
+    /// None when nothing is stored to sign in with.
+    pub login: Option<LoginKind>,
 }
 
 #[tauri::command]
@@ -31,13 +42,33 @@ pub async fn connection_status(state: State<'_, AppState>) -> CommandResult<Conn
     }
     let settings = state.settings();
     let (authenticated, offline) = state.check_session(settings.has_session()).await;
+    let login = if settings.device_token.is_some() {
+        Some(LoginKind::DeviceToken)
+    } else if !settings.cookies.is_empty() {
+        Some(LoginKind::Session)
+    } else {
+        None
+    };
     Ok(ConnectionStatus {
         configured: settings.is_configured(),
         authenticated,
         offline,
         server_url: settings.server_url,
         username: settings.username,
+        login,
     })
+}
+
+/// None when the server does not report one, which older servers do not.
+#[tauri::command]
+pub async fn server_version(state: State<'_, AppState>) -> CommandResult<Option<String>> {
+    let Some(client) = state.client() else {
+        return Ok(None);
+    };
+    Ok(client.server_version().await.unwrap_or_else(|e| {
+        tracing::debug!("the server does not report its version: {e}");
+        None
+    }))
 }
 
 #[tauri::command]
