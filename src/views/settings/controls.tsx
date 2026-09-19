@@ -1,9 +1,11 @@
 import { Alert } from "@/components/Alert";
+import { HelpButton } from "@/components/HelpButton";
 import { Icon } from "@/components/Icon";
 import { Button } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { useSettingsUpdate } from "@/lib/queries";
 import { useAction } from "@/lib/useAction";
+import type { HelpTopic } from "@/lib/help";
 import type { SettingsPatch } from "@/types";
 
 /**
@@ -25,12 +27,26 @@ export function SaveError({ error }: { error: string | null }) {
   return error ? <Alert inline>{error}</Alert> : null;
 }
 
-export function Section({ title, children }: { title: string; children: React.ReactNode }) {
+export function Section({
+  title,
+  help,
+  children,
+}: {
+  title: string;
+  /** The docs section explaining these settings. */
+  help?: HelpTopic;
+  children: React.ReactNode;
+}) {
   return (
     <section className="rounded-xl border border-default-200 bg-content1 p-4">
       <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-foreground/45">
         <Icon name="settings" className="h-3.5 w-3.5" />
         {title}
+        {help && (
+          <span className="ml-auto normal-case">
+            <HelpButton topic={help} size="sm" />
+          </span>
+        )}
       </h2>
       <div className="flex flex-col gap-2">{children}</div>
     </section>

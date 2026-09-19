@@ -58,7 +58,7 @@ export function DiagnosticsSection() {
   }
 
   return (
-    <Section title="Diagnostics">
+    <Section title="Diagnostics" help="troubleshooting">
       <FormField
         label="Log detail"
         htmlFor="log-level"

@@ -10,6 +10,15 @@ use crate::error::{blocking, CommandError, CommandResult, Context};
 use crate::settings::{PublicSettings, Settings, SettingsPatch};
 use crate::state::AppState;
 
+/// What the stored login is, which decides whether it can outlive the server's session.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum LoginKind {
+    DeviceToken,
+    Session,
+}
+
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -20,6 +29,8 @@ pub struct ConnectionStatus {
     pub offline: bool,
     pub server_url: Option<String>,
     pub username: Option<String>,
+    /// None when nothing is stored to sign in with.
+    pub login: Option<LoginKind>,
 }
 
 #[tauri::command]
@@ -31,13 +42,33 @@ pub async fn connection_status(state: State<'_, AppState>) -> CommandResult<Conn
     }
     let settings = state.settings();
     let (authenticated, offline) = state.check_session(settings.has_session()).await;
+    let login = if settings.device_token.is_some() {
+        Some(LoginKind::DeviceToken)
+    } else if !settings.cookies.is_empty() {
+        Some(LoginKind::Session)
+    } else {
+        None
+    };
     Ok(ConnectionStatus {
         configured: settings.is_configured(),
         authenticated,
         offline,
         server_url: settings.server_url,
         username: settings.username,
+        login,
     })
+}
+
+/// None when the server does not report one, which older servers do not.
+#[tauri::command]
+pub async fn server_version(state: State<'_, AppState>) -> CommandResult<Option<String>> {
+    let Some(client) = state.client() else {
+        return Ok(None);
+    };
+    Ok(client.server_version().await.unwrap_or_else(|e| {
+        tracing::debug!("the server does not report its version: {e}");
+        None
+    }))
 }
 
 #[tauri::command]
@@ -52,6 +83,7 @@ pub async fn set_server_url(state: State<'_, AppState>, url: String) -> CommandR
     let switching = state.settings().server_url.as_deref() != Some(normalized.as_str());
     if switching {
         // The old session and catalogue belong to the other server.
+        state.revoke_device_token().await;
         state.disconnect();
         state.forget_catalog().await;
     }
@@ -124,9 +156,12 @@ pub async fn poll_login(app: AppHandle, state: State<'_, AppState>) -> CommandRe
     state
         .set_settings(|s| {
             s.cookies = cookies;
+            // A token that stopped working is what sent the user here.
+            s.device_token = None;
             s.username = Some(user.username);
         })
         .await?;
+    state.adopt_device_token(&url).await;
     auth_flow::close_login_window(&app);
     Ok(LoginPoll {
         signed_in: true,
@@ -163,8 +198,10 @@ pub async fn sign_out(app: AppHandle, state: State<'_, AppState>) -> CommandResu
     Ok(())
 }
 
-/// Drops the session cookies and everything fetched with them, keeping the server address.
+/// Drops the session and everything fetched with it, keeping the server address.
 async fn forget_session(state: &AppState) -> CommandResult<()> {
+    // Otherwise the server keeps listing a device that has signed out.
+    state.revoke_device_token().await;
     state.disconnect();
     state.forget_catalog().await;
     state.set_settings(Settings::clear_session).await

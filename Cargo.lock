@@ -1442,6 +1442,7 @@ dependencies = [
  "gdkwayland-sys",
  "gilrs",
  "gtk",
+ "mockito",
  "notify-rust",
  "reqwest 0.12.28",
  "semver",

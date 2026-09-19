@@ -133,7 +133,11 @@ impl GameyfinClient {
                 status: status.as_u16(),
             });
         }
-        check_status("list_saves", status, &body)?;
+        if let Err(e) = check_status("list_saves", status, &body) {
+            return Err(self
+                .refused_or_unsupported(e, format!("GET {url}"), status.as_u16())
+                .await);
+        }
         serde_json::from_str(&body).map_err(|source| ApiError::Decode {
             endpoint: "list_saves".into(),
             source,
@@ -271,8 +275,32 @@ impl GameyfinClient {
     }
 
     pub async fn my_saves(&self) -> ApiResult<Vec<SaveVersion>> {
-        self.call("SaveSyncEndpoint", "getMySaves", serde_json::json!({}))
+        match self
+            .call("SaveSyncEndpoint", "getMySaves", serde_json::json!({}))
             .await
+        {
+            Ok(saves) => Ok(saves),
+            Err(e) => Err(self
+                .refused_or_unsupported(e, "SaveSyncEndpoint.getMySaves".into(), 403)
+                .await),
+        }
+    }
+
+    /// A server without save sync refuses its routes rather than answering 404, which reads
+    /// exactly like a dead session. A session that still works tells the two apart.
+    async fn refused_or_unsupported(
+        &self,
+        error: ApiError,
+        endpoint: String,
+        status: u16,
+    ) -> ApiError {
+        if !error.is_auth() {
+            return error;
+        }
+        match self.user_info().await {
+            Ok(Some(_)) => ApiError::SaveSyncUnsupported { endpoint, status },
+            _ => error,
+        }
     }
 
     /// Deletes several versions at once. The server refuses the lot if one is not the user's.

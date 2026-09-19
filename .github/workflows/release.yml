@@ -83,6 +83,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: bundle
+    # gh-pages is shared with the docs deploy in docs.yml; one writer at a time.
+    concurrency:
+      group: gh-pages
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:

@@ -40,6 +40,17 @@ Compatibility** offers **Install 32-bit support**; restart Gameyfin afterwards.
 On Linux, what Windows games need downloads on a game's first launch. See
 [Playing games](playing.md).
 
+## Behind a proxy with its own login
+
+A proxy that asks to sign in before Gameyfin, such as Pangolin or Authelia, is signed in
+through the same window, and its cookie is kept alongside your Gameyfin login. Its session
+expires on its own schedule, and Gameyfin then asks you to sign in again.
+
+To be asked less often, raise the proxy's session lifetime, or let `/connect/**`,
+`/download/**`, `/images/**` and `/saves/**` through without it. Gameyfin's own login still
+guards them. A proxy that authenticates by `Authorization` header, such as HTTP Basic, cannot
+be used: staying signed in needs that header.
+
 ## Your games folder
 
 Everything lives in a `Gameyfin` folder inside the games folder you chose:

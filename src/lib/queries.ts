@@ -9,6 +9,7 @@ export const keys = {
   entries: ["entries"] as const,
   libraries: ["libraries"] as const,
   status: ["status"] as const,
+  serverVersion: ["server-version"] as const,
   settings: ["app-settings"] as const,
   libraryRoots: ["library-roots"] as const,
   installPlan: (gameId: number) => ["install-plan", gameId] as const,
@@ -42,6 +43,15 @@ export function useInvalidate() {
 /** The library, with each game's local state. */
 export function useEntries() {
   return useQuery({ queryKey: keys.entries, queryFn: () => backend.listEntries() });
+}
+
+/** Only changes when the server is updated, so it is not worth refetching often. */
+export function useServerVersion() {
+  return useQuery({
+    queryKey: keys.serverVersion,
+    queryFn: () => backend.serverVersion(),
+    staleTime: 10 * 60 * 1000,
+  });
 }
 
 export function useAppSettings() {

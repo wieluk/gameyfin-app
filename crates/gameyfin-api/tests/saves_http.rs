@@ -353,3 +353,55 @@ async fn deletes_several_saves_by_their_numeric_ids() {
         .unwrap();
     mock.assert_async().await;
 }
+
+/// A stock Gameyfin server has no save routes and refuses them with 403, which must not be
+/// reported to the user as a session that needs signing in again.
+#[tokio::test]
+async fn a_refused_save_route_on_a_live_session_reads_as_unsupported() {
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("GET", "/saves/game/7")
+        .with_status(403)
+        .expect(2)
+        .create_async()
+        .await;
+    server
+        .mock("POST", "/connect/SaveSyncEndpoint/getMySaves")
+        .with_status(403)
+        .create_async()
+        .await;
+    let signed_in = server
+        .mock("POST", "/connect/UserEndpoint/getUserInfo")
+        .with_body(r#"{"id":1,"username":"alice"}"#)
+        .expect_at_least(2)
+        .create_async()
+        .await;
+
+    let stock = client(&server.url());
+    for error in [
+        stock.list_saves(7).await.unwrap_err(),
+        stock.my_saves().await.unwrap_err(),
+    ] {
+        assert!(
+            matches!(error, ApiError::SaveSyncUnsupported { .. }),
+            "expected unsupported, got {error:?}"
+        );
+    }
+    signed_in.assert_async().await;
+
+    // With the session gone too, it is what it looks like: a refused session.
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("GET", "/saves/game/7")
+        .with_status(403)
+        .create_async()
+        .await;
+    server
+        .mock("POST", "/connect/UserEndpoint/getUserInfo")
+        .with_status(401)
+        .create_async()
+        .await;
+
+    let error = client(&server.url()).list_saves(7).await.unwrap_err();
+    assert!(error.is_auth(), "expected an auth error, got {error:?}");
+}

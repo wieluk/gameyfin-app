@@ -1,0 +1,8 @@
+{
+  "config": {
+    // Prose wraps at 100 columns; tables, code and headings may run longer.
+    "MD013": { "line_length": 100, "tables": false, "code_blocks": false, "headings": false }
+  },
+  // Only what the repository owns: build folders hold other projects' READMEs.
+  "globs": ["*.md", "docs/**/*.md"]
+}

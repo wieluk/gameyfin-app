@@ -71,11 +71,10 @@ pub async fn artwork(
         return Err((StatusCode::FORBIDDEN, "only image paths are served here"));
     }
 
-    let cookies = gameyfin_api::cookie_header(&state.settings().cookies);
-    let mut request = state.http().get(url.as_str());
-    if !cookies.is_empty() {
-        request = request.header(reqwest::header::COOKIE, cookies);
-    }
+    let request = state
+        .settings()
+        .credentials()
+        .apply(state.http().get(url.as_str()));
     match request.send().await {
         Ok(response) if response.status().is_success() => {
             let content_type = response

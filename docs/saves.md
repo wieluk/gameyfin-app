@@ -5,7 +5,8 @@ on every PC that syncs to the same place. You can also restore older versions an
 saves to a new location.
 
 > **Using a Gameyfin server for saves** needs server support that is not merged into
-> [Gameyfin](https://github.com/gameyfin/gameyfin) yet. Until it is, run `ghcr.io/wieluk/gameyfin:save-sync` as your server.
+> [Gameyfin](https://github.com/gameyfin/gameyfin) yet. Until it is, run
+> `ghcr.io/wieluk/gameyfin:gameyfin-app` as your server.
 > A folder or WebDAV share works with any Gameyfin server.
 
 ## How it works
@@ -164,8 +165,8 @@ Use this when you start using Gameyfin on a PC that already has progress.
 For a game the database does not know, or where it looks in the wrong place, press
 **Set folders** on its row.
 
-- **Save folders**: where this game keeps saves on this PC. Adding one makes an unknown game
-  backupable. For a known game, the folders are added to what the database already finds.
+- **Save folders**: where this game keeps saves on this PC. Adding one lets an unknown game be
+  backed up. For a known game, the folders are added to what the database already finds.
   The dialog shows where saves were already found, and offers folders named like the game
   in the usual save places: press **Add** on one. For a Windows game on Linux, **Browse**
   starts inside its prefix, and a folder picked there still lands in the right place on a
@@ -197,7 +198,7 @@ affected either way.
 
 | Problem | Try |
 | --- | --- |
-| "Your server does not support save sync" | The server lacks save support. Use `ghcr.io/wieluk/gameyfin:save-sync`, or a folder or WebDAV. |
+| "Your server does not support save sync" | The server lacks save support. Use `ghcr.io/wieluk/gameyfin:gameyfin-app`, or a folder or WebDAV. |
 | "Save sync is turned off on your server" | An administrator switched it off on the server. |
 | A game is not recognised | **Update game database**, then **Choose game**, then **Set folders**. |
 | Backed up but nothing found | Play and save in the game first. Check **Open folder**, then **Set folders**. |

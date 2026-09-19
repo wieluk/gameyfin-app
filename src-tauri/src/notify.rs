@@ -154,7 +154,8 @@ pub async fn send(app: &AppHandle, note: Note) {
     std::thread::spawn(move || desktop::show(&app, &note, id, image));
 }
 
-fn is_focused(app: &AppHandle) -> bool {
+/// Whether the main window is the one the user is looking at.
+pub fn is_focused(app: &AppHandle) -> bool {
     app.get_webview_window("main")
         .map(|window| {
             let visible = window.is_visible().unwrap_or(false);

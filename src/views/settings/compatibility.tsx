@@ -51,7 +51,7 @@ export function ProtonSection() {
     proton?.installed.find((build) => build.family === family);
 
   return (
-    <Section title="Proton">
+    <Section title="Proton" help="windowsGames">
       {proton?.launcherProblem && (
         <Alert inline>
           {proton.launcherProblem} Windows games run on Wine until this is fixed.
@@ -192,7 +192,7 @@ export function UmuSection() {
   }
 
   return (
-    <Section title="Game fixes">
+    <Section title="Game fixes" help="windowsGames">
       <Row
         label="Known games"
         value={
@@ -265,7 +265,7 @@ export function CompatibilitySection() {
   }
 
   return (
-    <Section title="Compatibility">
+    <Section title="Compatibility" help="windowsGames">
       <FormField
         label="Installer memory limit"
         htmlFor="installer-memory"
@@ -303,7 +303,7 @@ export function PrefixSection() {
   const rows = (prefixes.data ?? []).filter((prefix) => !installed.has(prefix.gameId));
 
   return (
-    <Section title="Leftover prefixes">
+    <Section title="Leftover prefixes" help="prefixes">
       {rows.length === 0 ? (
         <p className="text-[11px] text-foreground/45">
           {prefixes.isLoading ? "…" : "None. Every prefix belongs to an installed game."}

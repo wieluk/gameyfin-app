@@ -1,0 +1,24 @@
+{
+  "version": "0.2",
+  "language": "en-GB",
+  "import": ["@cspell/dict-en-gb/cspell-ext.json"],
+  "files": ["*.md", "docs/**/*.md"],
+  // Inline code is commands, paths and flags, not prose.
+  "ignoreRegExpList": ["/`[^`\\n]*`/g"],
+  "words": [
+    "Authelia",
+    "clippy",
+    "dialog",
+    "DXVK",
+    "Flathub",
+    "Gameyfin",
+    "Inno",
+    "Ludusavi",
+    "Nextcloud",
+    "NSIS",
+    "redistributables",
+    "rustup",
+    "Syncthing",
+    "Winetricks"
+  ]
+}

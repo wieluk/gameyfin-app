@@ -83,7 +83,8 @@ still apply.
 
 ## Controllers
 
-Connected controllers can drive the whole app. Press **Start** for the button map.
+Connected controllers can drive the whole app. Press **Start** for the button map. The pad
+is only read while the Gameyfin window is in front, so it stays with the game you are playing.
 
 **Settings, Interface, Controller**:
 

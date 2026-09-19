@@ -1,9 +1,13 @@
 //! Keeping the app up to date. What a package may do depends on who owns its files: Windows
 //! replaces itself, a Flatpak asks the host, deb and rpm only report a release.
 
+use std::sync::{Arc, Mutex};
+
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
 
 use crate::error::{CommandError, CommandResult};
+use crate::progress::Throttle;
 use crate::state::AppState;
 
 /// The release feed. A draft release is not published, so this only ever sees real ones.
@@ -81,6 +85,38 @@ impl UpdateOutcome {
             restart_needed: true,
         }
     }
+}
+
+/// Carries an install's progress to the banner and the About section.
+const PROGRESS_EVENT: &str = "update-progress";
+
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpdateProgress {
+    /// The step being done, since not every format can count what it is doing.
+    pub phase: String,
+    pub received_bytes: u64,
+    /// Zero until the download knows how big it is.
+    pub total_bytes: u64,
+    /// For formats that report a percentage of their own rather than byte counts.
+    pub percent: Option<u8>,
+}
+
+impl UpdateProgress {
+    /// A step with nothing to count yet, so the bar runs indeterminate under the phase.
+    fn step(phase: &str) -> Self {
+        Self {
+            phase: phase.to_string(),
+            received_bytes: 0,
+            total_bytes: 0,
+            percent: None,
+        }
+    }
+}
+
+fn emit_progress(app: &AppHandle, progress: UpdateProgress) {
+    let _ = app.emit(PROGRESS_EVENT, progress);
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,7 +272,123 @@ fn flatpak_app_id() -> String {
     std::env::var("FLATPAK_ID").unwrap_or_else(|_| "org.gameyfin.gameyfin-app".into())
 }
 
-async fn flatpak_update() -> CommandResult<UpdateOutcome> {
+/// The percentage flatpak prints in a progress line, such as `Updating… 45%`.
+fn percent_in(line: &str) -> Option<u8> {
+    line.split(|c: char| c.is_whitespace() || "()[]".contains(c))
+        .filter_map(|token| token.strip_suffix('%'))
+        .filter_map(|digits| digits.parse::<u16>().ok())
+        .next_back()
+        .map(|percent| percent.min(100) as u8)
+}
+
+/// Follows a pipe to its end, emitting what flatpak reports and keeping the text, which is
+/// all there is to explain a failure with. Splits on `\r` too: a progress bar rewrites one line.
+fn follow_flatpak(
+    app: Option<AppHandle>,
+    pipe: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+) -> (Arc<Mutex<String>>, tokio::task::JoinHandle<()>) {
+    let text = Arc::new(Mutex::new(String::new()));
+    let into = text.clone();
+    let task = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut pipe = pipe;
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 1024];
+        let mut throttle = Throttle::new(200);
+        while let Ok(read) = pipe.read(&mut chunk).await {
+            if read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            while let Some(at) = buffer.iter().position(|b| *b == b'\n' || *b == b'\r') {
+                let line = String::from_utf8_lossy(&buffer[..at]).trim().to_string();
+                buffer.drain(..=at);
+                if line.is_empty() {
+                    continue;
+                }
+                tracing::debug!("flatpak: {line}");
+                if let Ok(mut collected) = into.lock() {
+                    collected.push_str(&line);
+                    collected.push('\n');
+                }
+                let Some(app) = app.as_ref() else { continue };
+                if let Some(percent) = percent_in(&line) {
+                    // The last line before the pipe closes is dropped by the throttle, which
+                    // costs nothing: success replaces the bar and failure replaces the banner.
+                    if throttle.ready() {
+                        emit_progress(
+                            app,
+                            UpdateProgress {
+                                percent: Some(percent),
+                                ..UpdateProgress::step("Updating…")
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    });
+    (text, task)
+}
+
+/// Runs `flatpak update` on the host, following its output so the banner can move.
+async fn host_flatpak_update(app: &AppHandle, app_id: &str) -> CommandResult<()> {
+    let mut child = tokio::process::Command::new("flatpak-spawn")
+        .args([
+            "--host",
+            "flatpak",
+            "update",
+            "-y",
+            "--noninteractive",
+            app_id,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            CommandError::Message(format!("could not ask the system to run flatpak: {e}"))
+        })?;
+
+    let (out, out_task) = match child.stdout.take() {
+        Some(pipe) => {
+            let (text, task) = follow_flatpak(Some(app.clone()), pipe);
+            (text, Some(task))
+        }
+        None => (Arc::new(Mutex::new(String::new())), None),
+    };
+    let (err, err_task) = match child.stderr.take() {
+        Some(pipe) => {
+            let (text, task) = follow_flatpak(None, pipe);
+            (text, Some(task))
+        }
+        None => (Arc::new(Mutex::new(String::new())), None),
+    };
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| CommandError::Message(format!("flatpak could not be run: {e}")))?;
+    for task in [out_task, err_task].into_iter().flatten() {
+        let _ = task.await;
+    }
+    if status.success() {
+        return Ok(());
+    }
+
+    let taken = |text: &Arc<Mutex<String>>| {
+        text.lock()
+            .map(|t| t.trim().to_string())
+            .unwrap_or_default()
+    };
+    let (stderr, stdout) = (taken(&err), taken(&out));
+    Err(CommandError::Message(if stderr.is_empty() {
+        stdout
+    } else {
+        stderr
+    }))
+}
+
+async fn flatpak_update(app: &AppHandle) -> CommandResult<UpdateOutcome> {
     let app_id = flatpak_app_id();
     let fail = |step: &str, e: CommandError| {
         CommandError::Message(format!(
@@ -244,6 +396,10 @@ async fn flatpak_update() -> CommandResult<UpdateOutcome> {
         ))
     };
 
+    emit_progress(
+        app,
+        UpdateProgress::step("Checking how Gameyfin was installed…"),
+    );
     // Without a tracked repository `flatpak update` succeeds with nothing to do, forever.
     let origin = host_flatpak(&["info", "--show-origin", &app_id])
         .await
@@ -262,10 +418,12 @@ async fn flatpak_update() -> CommandResult<UpdateOutcome> {
     }
 
     let before = host_flatpak(&["info", "--show-commit", &app_id]).await.ok();
-    let log = host_flatpak(&["update", "-y", "--noninteractive", &app_id])
+    emit_progress(app, UpdateProgress::step("Updating…"));
+    host_flatpak_update(app, &app_id)
         .await
         .map_err(|e| fail("the update did not complete", e))?;
-    tracing::info!("flatpak update finished: {log}");
+    tracing::info!("flatpak update finished");
+    emit_progress(app, UpdateProgress::step("Finishing…"));
     let after = host_flatpak(&["info", "--show-commit", &app_id]).await.ok();
 
     // GitHub announces a release before the Flatpak repository has it, so say so honestly.
@@ -287,7 +445,7 @@ pub async fn update_status(state: tauri::State<'_, AppState>) -> CommandResult<U
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> CommandResult<UpdateOutcome> {
     match detect_channel() {
-        Channel::Flatpak => flatpak_update().await,
+        Channel::Flatpak => flatpak_update(&app).await,
         Channel::SelfInstall => self_install(&app).await,
         Channel::SystemPackage => Err(CommandError::Message(
             "This copy of Gameyfin was installed by your system's package manager, so it \
@@ -303,9 +461,10 @@ pub async fn install_update(app: tauri::AppHandle) -> CommandResult<UpdateOutcom
 
 /// Applies a signed update. Without a signing key at build time the plugin refuses
 /// everything, which is reported as such.
-async fn self_install(app: &tauri::AppHandle) -> CommandResult<UpdateOutcome> {
+async fn self_install(app: &AppHandle) -> CommandResult<UpdateOutcome> {
     use tauri_plugin_updater::UpdaterExt;
 
+    emit_progress(app, UpdateProgress::step("Looking for the new version…"));
     let updater = app.updater().map_err(|e| {
         CommandError::Message(format!(
             "the updater is not available in this build: {e}. \
@@ -326,8 +485,29 @@ async fn self_install(app: &tauri::AppHandle) -> CommandResult<UpdateOutcome> {
     };
 
     tracing::info!(version = %update.version, "installing an update");
+    let downloading = app.clone();
+    let installing = app.clone();
+    let mut throttle = Throttle::new(200);
+    let mut received = 0u64;
     update
-        .download_and_install(|_chunk, _total| {}, || {})
+        .download_and_install(
+            move |chunk, total| {
+                received += chunk as u64;
+                if !throttle.ready() {
+                    return;
+                }
+                emit_progress(
+                    &downloading,
+                    UpdateProgress {
+                        received_bytes: received,
+                        total_bytes: total.unwrap_or(0),
+                        ..UpdateProgress::step("Downloading…")
+                    },
+                );
+            },
+            // Writing the new bundle over the old one has nothing to count.
+            move || emit_progress(&installing, UpdateProgress::step("Installing…")),
+        )
         .await
         .map_err(|e| CommandError::Message(format!("the update could not be installed: {e}")))?;
 
@@ -411,6 +591,19 @@ mod tests {
         // apt and dnf own theirs, and a developer's build tree is nobody's business.
         assert!(!Channel::SystemPackage.can_install());
         assert!(!Channel::Development.can_install());
+    }
+
+    #[test]
+    fn a_percentage_is_read_off_a_progress_line() {
+        assert_eq!(percent_in("Updating… 45%"), Some(45));
+        assert_eq!(percent_in("[███      ] 12%"), Some(12));
+        assert_eq!(percent_in("Downloading 3/4 (67%)"), Some(67));
+        // Two numbers on one line: the later one is the newer state.
+        assert_eq!(percent_in("1/2 10% 2/2 90%"), Some(90));
+        // A count past 100 would push the bar out of its track.
+        assert_eq!(percent_in("120%"), Some(100));
+        assert_eq!(percent_in("Info: nothing to count here"), None);
+        assert_eq!(percent_in("error: %"), None);
     }
 
     #[test]

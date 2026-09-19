@@ -124,7 +124,7 @@ pub async fn start_download(
         .filter(|_| settings.auto_extract || settings.auto_install)
         .map(|dir| dir.join(EXTRACT_DIR));
     let expected_bytes = game.metadata.file_size;
-    let cookie_header = gameyfin_api::cookie_header(&settings.cookies);
+    let credentials = settings.credentials();
     let rate_limit = state.download_limit();
     rate_limit.set(u64::from(settings.download_limit_kib) * 1024);
     let downloader = gameyfin_core::Downloader::new(state.transfer_http())
@@ -150,13 +150,7 @@ pub async fn start_download(
                 }
             }
         };
-        let authorize = |req: reqwest::RequestBuilder| {
-            if cookie_header.is_empty() {
-                req
-            } else {
-                req.header(reqwest::header::COOKIE, &cookie_header)
-            }
-        };
+        let authorize = |req: reqwest::RequestBuilder| credentials.apply(req);
         let mut unpack_into = unpack_into;
         let result = loop {
             let result = downloader

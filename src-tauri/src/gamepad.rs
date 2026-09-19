@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 /// How often the pad is sampled. 60Hz: fast enough that a press never feels dropped.
 const POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -89,6 +89,7 @@ struct ConnectionEvent {
 #[derive(Clone, Default)]
 pub struct Handle {
     enabled: Arc<AtomicBool>,
+    focused: Arc<AtomicBool>,
     deadzone: Arc<std::sync::RwLock<f32>>,
 }
 
@@ -96,6 +97,7 @@ impl Handle {
     pub fn new(enabled: bool, deadzone: f64) -> Self {
         Self {
             enabled: Arc::new(AtomicBool::new(enabled)),
+            focused: Arc::new(AtomicBool::new(true)),
             deadzone: Arc::new(std::sync::RwLock::new(deadzone as f32)),
         }
     }
@@ -103,6 +105,11 @@ impl Handle {
     /// Turn reading on or off. Takes effect on the next poll.
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether the app's window is in front. Takes effect on the next poll.
+    pub fn set_focused(&self, focused: bool) {
+        self.focused.store(focused, Ordering::Relaxed);
     }
 
     pub fn set_deadzone(&self, deadzone: f64) {
@@ -113,6 +120,10 @@ impl Handle {
 
     fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    fn focused(&self) -> bool {
+        self.focused.load(Ordering::Relaxed)
     }
 
     fn deadzone(&self) -> f32 {
@@ -233,6 +244,19 @@ pub fn spawn(app: AppHandle, handle: Handle) {
         .unwrap_or_else(|e| tracing::warn!("could not start the gamepad thread: {e}"));
 }
 
+/// Follows the main window's focus, so a controller drives the app only while it is in front.
+pub fn follow_focus(app: &AppHandle, handle: Handle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    handle.set_focused(crate::notify::is_focused(app));
+    window.on_window_event(move |event| {
+        if let WindowEvent::Focused(focused) = event {
+            handle.set_focused(*focused);
+        }
+    });
+}
+
 fn run(app: AppHandle, handle: Handle) {
     let mut gilrs = match gilrs::Gilrs::new() {
         Ok(gilrs) => gilrs,
@@ -312,14 +336,18 @@ fn run(app: AppHandle, handle: Handle) {
             );
         }
 
+        // A pad is read from the device rather than from the window, so presses keep arriving
+        // while another program has focus. They are still tracked, only not delivered: a button
+        // meant for the game in front must not also drive the library behind it.
+        let deliver = handle.focused();
+        let send = |button, repeat| {
+            if deliver {
+                let _ = app.emit("gamepad-button", ButtonEvent { button, repeat });
+            }
+        };
+
         for button in pressed {
-            let _ = app.emit(
-                "gamepad-button",
-                ButtonEvent {
-                    button,
-                    repeat: false,
-                },
-            );
+            send(button, false);
         }
 
         let deadzone = handle.deadzone();
@@ -331,22 +359,10 @@ fn run(app: AppHandle, handle: Handle) {
         let rt =
             axis(&pad, gilrs::Axis::RightZ).max(button_value(&pad, gilrs::Button::RightTrigger2));
         if left_trigger.update(lt) {
-            let _ = app.emit(
-                "gamepad-button",
-                ButtonEvent {
-                    button: Button::LeftTrigger,
-                    repeat: false,
-                },
-            );
+            send(Button::LeftTrigger, false);
         }
         if right_trigger.update(rt) {
-            let _ = app.emit(
-                "gamepad-button",
-                ButtonEvent {
-                    button: Button::RightTrigger,
-                    repeat: false,
-                },
-            );
+            send(Button::RightTrigger, false);
         }
 
         // The d-pad and the left stick are one input as far as navigation is concerned.
@@ -357,13 +373,13 @@ fn run(app: AppHandle, handle: Handle) {
             deadzone,
         );
         if let Some((button, repeat)) = repeater.update(dpad.or(stick)) {
-            let _ = app.emit("gamepad-button", ButtonEvent { button, repeat });
+            send(button, repeat);
         }
 
         // The right stick scrolls, and is sent as a position rather than as steps.
         let right_x = axis(&pad, gilrs::Axis::RightStickX);
         let right_y = axis(&pad, gilrs::Axis::RightStickY);
-        if right_x.abs() >= deadzone || right_y.abs() >= deadzone {
+        if deliver && (right_x.abs() >= deadzone || right_y.abs() >= deadzone) {
             let _ = app.emit("gamepad-axis", AxisEvent { right_x, right_y });
         }
     }
@@ -489,6 +505,20 @@ mod tests {
         assert!(handle.deadzone() >= 0.05);
         handle.set_deadzone(5.0);
         assert!(handle.deadzone() <= 0.9);
+    }
+
+    #[test]
+    fn input_is_delivered_only_while_the_window_is_in_front() {
+        // Otherwise a press meant for the game being played also moves the library behind it.
+        let handle = Handle::new(true, 0.25);
+        assert!(
+            handle.focused(),
+            "a window that has just started is in front"
+        );
+        handle.set_focused(false);
+        assert!(!handle.focused());
+        handle.set_focused(true);
+        assert!(handle.focused());
     }
 
     #[test]

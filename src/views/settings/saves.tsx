@@ -42,7 +42,7 @@ export function SavesSection() {
 
   return (
     <>
-    <Section title="Save sync">
+    <Section title="Save sync" help="saveSync">
       <SwitchField
         label="Sync my saves"
         hint="Backs up your saves after you play so another PC can pick them up."
@@ -67,7 +67,7 @@ export function SavesSection() {
       </SwitchField>
     </Section>
 
-    <Section title="Where saves are kept">
+    <Section title="Where saves are kept" help="saveLocation">
       <div role="radiogroup" aria-label="Where saves are kept" className="flex flex-col gap-2">
         {(
           [
@@ -257,7 +257,7 @@ export function MigrationSection() {
   const ready = isSetUp(active, data) && isSetUp(from, data);
 
   return (
-    <Section title="Copy saves here">
+    <Section title="Copy saves here" help="moveSaves">
       <p className={HINT}>
         Copies into {PLACE[active]}, where saves are kept now. Nothing is removed from the
         place you copy from, and a second run only copies what is missing.

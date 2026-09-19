@@ -34,7 +34,7 @@ export function RootsSection() {
   const list = roots.data ?? [];
 
   return (
-    <Section title="Games folders">
+    <Section title="Games folders" help="gamesFolders">
       {list.length === 0 && !roots.isLoading && (
         <p className="text-[11px] text-foreground/45">
           No folder yet. Add one and downloads will go there.
@@ -144,7 +144,7 @@ export function AutomationSection() {
   }
 
   return (
-    <Section title="Automation">
+    <Section title="Automation" help="downloads">
       <SwitchField
         label="Extract automatically"
         hint="Unpack archives as soon as they download."

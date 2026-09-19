@@ -27,12 +27,24 @@ pub trait AuthStrategy: Send + Sync + std::fmt::Debug {
 #[derive(Debug, Clone)]
 pub struct DeviceTokenAuth {
     token: Arc<RwLock<String>>,
+    /// A reverse proxy in front of Gameyfin, such as Pangolin or Authelia, authenticates
+    /// separately and by cookie, so its cookies ride along with the token.
+    cookies: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl DeviceTokenAuth {
     pub fn new(token: impl Into<String>) -> Self {
         Self {
             token: Arc::new(RwLock::new(token.into())),
+            cookies: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// With the cookies a reverse proxy in front of Gameyfin needs to let the request through.
+    pub fn with_cookies(token: impl Into<String>, cookies: HashMap<String, String>) -> Self {
+        Self {
+            token: Arc::new(RwLock::new(token.into())),
+            cookies: Arc::new(RwLock::new(cookies)),
         }
     }
 }
@@ -41,7 +53,13 @@ impl DeviceTokenAuth {
 impl AuthStrategy for DeviceTokenAuth {
     async fn apply(&self, req: RequestBuilder) -> ApiResult<RequestBuilder> {
         let token = self.token.read().await;
-        Ok(req.bearer_auth(token.as_str()))
+        let req = req.bearer_auth(token.as_str());
+        let cookies = cookie_header(&*self.cookies.read().await);
+        Ok(if cookies.is_empty() {
+            req
+        } else {
+            req.header(reqwest::header::COOKIE, cookies)
+        })
     }
 
     fn describe(&self) -> &'static str {
