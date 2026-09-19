@@ -167,7 +167,7 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     // Controllers are polled on their own thread; the handle carries settings changes to it.
     let pad = gamepad::Handle::new(settings.gamepad_enabled, settings.gamepad_deadzone);
     state.set_gamepad(pad.clone());
-    gamepad::spawn(app.clone(), pad);
+    gamepad::spawn(app.clone(), pad.clone());
 
     // Asked once at startup: releases are not frequent enough to poll for.
     if settings.check_for_updates {
@@ -191,6 +191,8 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
             let _ = window.hide();
         }
     }
+    // After any hiding, so a start in the tray does not begin by reading the pad.
+    gamepad::follow_focus(&app, pad);
     // The UI waits for this before deciding what to show.
     let _ = app.emit("connection-restored", restored);
 
