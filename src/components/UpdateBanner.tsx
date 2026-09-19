@@ -2,10 +2,13 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import type { UpdateOutcome } from "@/bindings/UpdateOutcome";
+import type { UpdateProgress } from "@/bindings/UpdateProgress";
 import { Icon } from "@/components/Icon";
 import { Button } from "@/components/ui";
 import { backend, isMockBackend, type UpdateStatus } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
+import { formatBytes } from "@/lib/format";
+import { useTauriEvent } from "@/lib/useTauriEvent";
 
 /** Read once and reused by the banner and by Settings. Invalidated as `["update"]`. */
 export function useUpdate() {
@@ -23,16 +26,22 @@ export function useInstallUpdate() {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<UpdateOutcome | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
+
+  // Subscribed only while something is running, so a stale step cannot reappear later.
+  useTauriEvent<UpdateProgress>("update-progress", setProgress, busy);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError(null);
+    setProgress(null);
     try {
       await action();
     } catch (e) {
       setError(messageOf(e));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -40,9 +49,33 @@ export function useInstallUpdate() {
     busy,
     outcome,
     error,
+    progress,
     install: () => run(async () => setOutcome(await backend.installUpdate())),
     restart: () => run(() => backend.restartApp()),
   };
+}
+
+/** How far along an install is: a bar, plus whatever the format could count. */
+export function UpdateProgressBar({ progress }: { progress: UpdateProgress | null }) {
+  const total = progress?.totalBytes ?? 0;
+  const done =
+    progress?.percent ?? (total > 0 ? ((progress?.receivedBytes ?? 0) / total) * 100 : null);
+
+  return (
+    <span className="flex items-center gap-2">
+      <span className="h-1.5 w-24 overflow-hidden rounded-full bg-default-200">
+        <span
+          className={`block h-full rounded-full bg-primary transition-[width] ${done === null ? "animate-pulse" : ""}`}
+          style={{ width: done === null ? "100%" : `${Math.round(done)}%` }}
+        />
+      </span>
+      <span className="text-foreground/70">
+        {progress?.phase ?? "Starting…"}
+        {done !== null && ` ${Math.round(done)}%`}
+        {total > 0 && ` (${formatBytes(progress?.receivedBytes ?? 0)} of ${formatBytes(total)})`}
+      </span>
+    </span>
+  );
 }
 
 /**
@@ -52,7 +85,7 @@ export function useInstallUpdate() {
 export function UpdateBanner() {
   const update = useUpdate();
   const [dismissed, setDismissed] = useState(false);
-  const { busy, outcome, error, install, restart } = useInstallUpdate();
+  const { busy, outcome, error, progress, install, restart } = useInstallUpdate();
 
   const status = update.data;
   if (!status?.available || dismissed) return null;
@@ -70,9 +103,11 @@ export function UpdateBanner() {
         </Button>
       ) : outcome ? (
         <span className="text-foreground/70">{outcome.message}</span>
+      ) : busy ? (
+        <UpdateProgressBar progress={progress} />
       ) : status.canInstall ? (
-        <Button size="sm" variant="primary" disabled={busy} onClick={() => void install()}>
-          {busy ? "Updating…" : "Update now"}
+        <Button size="sm" variant="primary" onClick={() => void install()}>
+          Update now
         </Button>
       ) : (
         <Button size="sm" onClick={() => void backend.openUrl(status.releaseUrl)}>

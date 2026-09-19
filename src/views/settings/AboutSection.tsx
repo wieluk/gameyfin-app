@@ -1,14 +1,19 @@
 import { Row, Section } from "./controls";
 import { Alert } from "@/components/Alert";
 import { Button, SwitchField } from "@/components/ui";
-import { updateChannelNote, useInstallUpdate, useUpdate } from "@/components/UpdateBanner";
+import {
+  UpdateProgressBar,
+  updateChannelNote,
+  useInstallUpdate,
+  useUpdate,
+} from "@/components/UpdateBanner";
 import { backend } from "@/lib/backend";
 import { useAppSettings, useSettingsUpdate } from "@/lib/queries";
 import { HINT } from "@/lib/ui";
 
 export function AboutSection() {
   const update = useUpdate();
-  const { busy, outcome, error, install, restart } = useInstallUpdate();
+  const { busy, outcome, error, progress, install, restart } = useInstallUpdate();
   const settings = useAppSettings();
   const save = useSettingsUpdate();
   const status = update.data;
@@ -48,6 +53,12 @@ export function AboutSection() {
           <Button onClick={() => void backend.openUrl(status.releaseUrl)}>Release notes</Button>
         )}
       </div>
+
+      {busy && !outcome?.restartNeeded && (
+        <div className="pt-1 text-[11px]">
+          <UpdateProgressBar progress={progress} />
+        </div>
+      )}
 
       {outcome && !outcome.restartNeeded && (
         <p className="text-[11px] text-foreground/60">{outcome.message}</p>
