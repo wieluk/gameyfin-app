@@ -1,33 +1,54 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { Alert } from "@/components/Alert";
-import { Button } from "@/components/ui";
+import { Button, Checkbox } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
+import { formatBytes } from "@/lib/format";
+import { isWindows } from "@/lib/platform";
+import { keys } from "@/lib/queries";
+import { HINT } from "@/lib/ui";
 import { Modal } from "./Modal";
+
+export type UninstallOptions = {
+  runUninstaller: boolean;
+  uninstaller: string | null;
+  deletePrefix: boolean;
+};
 
 /**
  * Confirmation for removing an installed game. A detected uninstaller runs first to clear
  * registry entries and shortcuts; detection is guesswork, so the user can pick one.
  */
 export function UninstallDialog({
+  gameId,
   title,
   detected,
   installDir,
   onConfirm,
   onCancel,
 }: {
+  gameId: number;
   title: string;
   /** Looked for before the dialog opens. */
   detected: string | null;
   /** Where the game is installed. The picker opens here, and the choice must stay inside it. */
   installDir: string | null;
-  onConfirm: (options: { runUninstaller: boolean; uninstaller: string | null }) => void;
+  onConfirm: (options: UninstallOptions) => void;
   onCancel: () => void;
 }) {
-
   const [chosen, setChosen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Off by default: some Windows games keep their saves inside the prefix.
+  const [deletePrefix, setDeletePrefix] = useState(false);
+
+  const prefixes = useQuery({
+    queryKey: keys.prefixes,
+    queryFn: () => backend.listPrefixes(),
+    enabled: !isWindows,
+  });
+  const prefix = prefixes.data?.find((entry) => entry.gameId === gameId);
 
   // What will actually run: a manual choice wins over detection.
   const uninstaller = chosen ?? detected;
@@ -81,6 +102,22 @@ export function UninstallDialog({
           </div>
         </div>
 
+        {prefix && (
+          <div className="mt-3">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground/80">
+              <Checkbox
+                checked={deletePrefix}
+                onChange={(e) => setDeletePrefix(e.target.checked)}
+              />
+              Also delete the compatibility prefix ({formatBytes(prefix.bytes)})
+            </label>
+            <p className={`mt-1 ${HINT}`}>
+              Anything the game saved inside the prefix goes with it, which for some Windows
+              games includes save files. Kept, it is reused if you install the game again.
+            </p>
+          </div>
+        )}
+
         {error && (
           <Alert inline className="mt-2">
             {error}
@@ -95,7 +132,9 @@ export function UninstallDialog({
         {/* Offered only when there is something to skip: an uninstaller that hangs or
             refuses should not be the only way out of an uninstall. */}
         {uninstaller && (
-          <Button onClick={() => onConfirm({ runUninstaller: false, uninstaller: null })}>
+          <Button
+            onClick={() => onConfirm({ runUninstaller: false, uninstaller: null, deletePrefix })}
+          >
             Delete files only
           </Button>
         )}
@@ -103,7 +142,7 @@ export function UninstallDialog({
           variant="danger"
           icon="close"
           autoFocus
-          onClick={() => onConfirm({ runUninstaller: true, uninstaller: chosen })}
+          onClick={() => onConfirm({ runUninstaller: true, uninstaller: chosen, deletePrefix })}
         >
           {uninstaller ? "Run uninstaller" : "Uninstall"}
         </Button>

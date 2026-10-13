@@ -34,9 +34,9 @@ file system.
 Once a Windows game has run, its options in **Installed** have **Compatibility prefix**,
 with **Wine settings**, **Registry**, **Browse C:**, **Winetricks** and **Delete prefix**.
 Compatibility settings exist on Linux only. A deleted prefix is rebuilt on next launch, but
-anything the game kept inside it is gone, including saves that were not backed up. Prefixes
-of games that are no longer installed are listed under **Settings, Compatibility, Leftover
-prefixes**.
+anything the game kept inside it is gone, including saves that were not backed up.
+Uninstalling a game offers to delete its prefix too. Prefixes kept that way are listed under
+**Settings, Compatibility, Leftover prefixes**.
 
 ### Winetricks
 

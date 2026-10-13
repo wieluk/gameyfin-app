@@ -161,7 +161,13 @@ async fn launch(
                 let verbs = gameyfin_core::diagnose::winetricks_for(&session.error_output);
                 match failed_to_start(&session, &verbs) {
                     Some(message) => {
-                        tracing::error!(game_id, output = %session.error_output, "the game exited immediately");
+                        tracing::error!(
+                            game_id,
+                            duration = ?session.duration,
+                            end = ?session.end,
+                            output = %session.error_output,
+                            "the game exited immediately"
+                        );
                         // Kept so the game's prefix options can offer these ticked.
                         library
                             .update_record(game_id, |r| {
@@ -195,11 +201,18 @@ pub async fn stop_game(
     Ok(())
 }
 
-/// Explains a non-zero exit from a short run. A clean quick exit is a launcher handing off.
+/// Explains a short run. The supervisor waits out a launcher's hand-off, so even a clean
+/// exit this early means the game is gone. Only a stop the user asked for stays quiet.
 fn failed_to_start(session: &gameyfin_core::Session, verbs: &[&str]) -> Option<String> {
     let code = match session.end {
-        gameyfin_core::SessionEnd::Exited { code: Some(code) } if code != 0 => code,
-        _ => return None,
+        gameyfin_core::SessionEnd::Exited { code } => code,
+        gameyfin_core::SessionEnd::Terminated => return None,
+    };
+    let seconds = session.duration.as_secs();
+    let how = match code {
+        Some(0) => format!("The game closed after {seconds}s without reporting an error"),
+        Some(code) => format!("The game exited after {seconds}s with code {code}"),
+        None => format!("The game was killed after {seconds}s"),
     };
     // Wine prints pages of `fixme:` on a normal run; what went wrong is at the end.
     let lines: Vec<&str> = session
@@ -219,14 +232,14 @@ fn failed_to_start(session: &gameyfin_core::Session, verbs: &[&str]) -> Option<S
         ))
     };
     Some(match (advice, tail.is_empty()) {
-        (Some(advice), true) => advice,
-        (Some(advice), false) => format!("{advice}\n\nThe game exited with code {code}:\n{tail}"),
-        (None, true) => {
-            format!(
-                "The game exited immediately with code {code} and wrote nothing that explains why."
-            )
-        }
-        (None, false) => format!("The game exited immediately with code {code}:\n{tail}"),
+        (Some(advice), true) => format!("{advice}\n\n{how}."),
+        (Some(advice), false) => format!("{advice}\n\n{how}:\n{tail}"),
+        // Silent exits are often DRM or a launcher check failing before any window opens.
+        (None, true) => format!(
+            "{how} and wrote nothing that explains why. Games that need Steam, an Xbox \
+             service or anti-cheat often close like this."
+        ),
+        (None, false) => format!("{how}:\n{tail}"),
     })
 }
 
@@ -513,5 +526,55 @@ fn screen_dpi(app: &AppHandle) -> u32 {
             window.and_then(|w| w.scale_factor().ok()).unwrap_or(1.0),
             None,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gameyfin_core::{Session, SessionEnd};
+    use std::time::Duration;
+
+    fn session(end: SessionEnd, output: &str) -> Session {
+        Session {
+            duration: Duration::from_secs(3),
+            end,
+            error_output: output.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_clean_quick_exit_is_reported() {
+        let message = failed_to_start(&session(SessionEnd::Exited { code: Some(0) }, ""), &[])
+            .expect("a silent exit should explain itself");
+        assert!(message.starts_with("The game closed after 3s without reporting an error"));
+    }
+
+    #[test]
+    fn a_crash_shows_its_code_and_output() {
+        let message = failed_to_start(
+            &session(SessionEnd::Exited { code: Some(5) }, "err: something broke"),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            message,
+            "The game exited after 3s with code 5:\nerr: something broke"
+        );
+    }
+
+    #[test]
+    fn a_signal_is_reported() {
+        let message =
+            failed_to_start(&session(SessionEnd::Exited { code: None }, ""), &[]).unwrap();
+        assert!(message.starts_with("The game was killed after 3s"));
+    }
+
+    #[test]
+    fn a_stop_the_user_asked_for_stays_quiet() {
+        assert_eq!(
+            failed_to_start(&session(SessionEnd::Terminated, ""), &[]),
+            None
+        );
     }
 }

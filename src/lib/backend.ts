@@ -84,11 +84,17 @@ export const backend = {
   rescanLibrary: () => invoke<number>("rescan_library"),
   locateInstall: (gameId: number, path: string) => invoke<void>("locate_install", { gameId, path }),
   /** `uninstaller` overrides detection, for a game whose uninstaller is oddly named. */
-  uninstall: (gameId: number, runUninstaller?: boolean, uninstaller?: string | null) =>
+  uninstall: (
+    gameId: number,
+    runUninstaller?: boolean,
+    uninstaller?: string | null,
+    deletePrefix?: boolean,
+  ) =>
     invoke<void>("uninstall_game", {
       gameId,
       runUninstaller: runUninstaller ?? true,
       uninstaller: uninstaller ?? null,
+      deletePrefix: deletePrefix ?? false,
     }),
   findUninstaller: (gameId: number) => invoke<string | null>("find_game_uninstaller", { gameId }),
   deleteStaging: (gameId: number) => invoke<void>("delete_staging", { gameId }),

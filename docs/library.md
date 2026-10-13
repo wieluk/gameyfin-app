@@ -99,6 +99,9 @@ setup options. See
 **Uninstall** looks for the game's own uninstaller and runs it, or lets you choose one.
 Without one, only the game's files are removed. Uninstalling does not delete your stored saves.
 
+On Linux, a Windows game's [prefix](playing.md#prefixes) is kept unless you tick **Also delete
+the compatibility prefix**. Saves the game kept inside it go too, unless they were backed up.
+
 ## Games folders
 
 **Settings, Library, Games folders** lists every folder Gameyfin uses, with free space.

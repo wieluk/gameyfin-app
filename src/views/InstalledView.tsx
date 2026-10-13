@@ -7,7 +7,7 @@ import { PrefixOptions } from "@/components/PrefixOptions";
 import { SetupPicker } from "@/components/SetupList";
 import { ShortcutOptions } from "@/components/ShortcutOptions";
 import { TransferProgress } from "@/components/TransferProgress";
-import { UninstallDialog } from "@/components/UninstallDialog";
+import { UninstallDialog, type UninstallOptions } from "@/components/UninstallDialog";
 import { UntrackedFolders } from "@/components/UntrackedFolders";
 import { Button, FormField, IconButton, Select, Switch, ViewHeader } from "@/components/ui";
 import { installedFiles, isInstalled } from "@/lib/actions";
@@ -104,12 +104,24 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
   const play = () => run(() => backend.launch(entry.game.id));
   const runSetup = (setup: string) => run(() => backend.installSetups(entry.game.id, [setup]));
 
-  function uninstall(options: { runUninstaller: boolean; uninstaller: string | null }) {
+  function uninstall(options: UninstallOptions) {
     uninstallPrompt.close();
     // The uninstaller (chosen in the dialog) runs first to clear registry entries and shortcuts.
     return run(async () => {
-      await backend.uninstall(entry.game.id, options.runUninstaller, options.uninstaller);
-      await queryClient.invalidateQueries({ queryKey: keys.entries });
+      try {
+        await backend.uninstall(
+          entry.game.id,
+          options.runUninstaller,
+          options.uninstaller,
+          options.deletePrefix,
+        );
+      } finally {
+        // Also on failure: the game can be gone while its prefix could not be deleted.
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: keys.entries }),
+          queryClient.invalidateQueries({ queryKey: keys.prefixes }),
+        ]);
+      }
     });
   }
 
@@ -289,6 +301,7 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
 
       {uninstallPrompt.opened && (
         <UninstallDialog
+          gameId={entry.game.id}
           title={entry.game.title}
           detected={uninstallPrompt.opened.data}
           installDir={path}
