@@ -209,13 +209,13 @@ export function SavesView() {
         </p>
 
         {notice && (
-          <p role="status" className="mb-3 text-[11px] text-success-600">
+          <p role="status" className="mb-3 text-[0.6875rem] text-success-600">
             {notice}
           </p>
         )}
 
         {folderError && (
-          <p role="alert" className="mb-3 text-[11px] text-warning-600">
+          <p role="alert" className="mb-3 text-[0.6875rem] text-warning-600">
             {folderError}
           </p>
         )}
@@ -395,14 +395,14 @@ function SaveRow({
           <p className="flex items-baseline gap-2 truncate text-sm font-medium">
             {row.title}
             {!row.installed && (
-              <span className="shrink-0 text-[11px] font-normal text-foreground/40">
+              <span className="shrink-0 text-[0.6875rem] font-normal text-foreground/40">
                 not installed here
               </span>
             )}
           </p>
           <p className={`truncate text-xs ${summary.tone}`}>{summary.text}</p>
           {row.versions > 0 && (
-            <p className="truncate text-[11px] text-foreground/40">
+            <p className="truncate text-[0.6875rem] text-foreground/40">
               {row.versions} {row.versions === 1 ? "version" : "versions"}
               {row.newestAt ? `, newest ${formatRelative(row.newestAt)}` : ""}
               {row.newestDevice ? ` from ${row.newestDevice}` : ""}
@@ -412,7 +412,7 @@ function SaveRow({
           {outcome && (
             <p
               role="status"
-              className={`mt-0.5 text-[11px] leading-relaxed ${
+              className={`mt-0.5 text-[0.6875rem] leading-relaxed ${
                 outcome.ok ? "text-success-600" : "text-warning-600"
               }`}
             >
@@ -437,6 +437,10 @@ function SaveRow({
           {state.kind === "in-sync" && row.installed && (
             <Action label="Back up" onClick={onBackup} busy={busy} />
           )}
+          {/* Not forced, so a retry stops at a conflict instead of overwriting a newer save. */}
+          {state.kind === "failed" && row.installed && (
+            <Action label="Try again" onClick={onBackup} busy={busy} />
+          )}
           {state.kind === "unmatched" && (
             <>
               <Action label="Choose game" onClick={onIdentify} busy={busy} primary />
@@ -452,7 +456,7 @@ function SaveRow({
           )}
           {!row.installed && row.versions > 0 && (
             <span
-              className="self-center text-[11px] text-foreground/40"
+              className="self-center text-[0.6875rem] text-foreground/40"
               title="A save is restored into the game's own folders, which only exist once it is installed."
             >
               Install to restore
@@ -474,7 +478,7 @@ function SaveRow({
           </div>
 
           {state.kind === "platform-mismatch" && (
-            <p className="text-[11px] leading-relaxed text-warning-600">
+            <p className="text-[0.6875rem] leading-relaxed text-warning-600">
               Saved on {platformLabel(state.remote) || state.remote}, and this PC plays it as{" "}
               {platformLabel(state.local) || state.local}.
               {state.crossOsAvailable

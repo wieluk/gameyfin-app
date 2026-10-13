@@ -46,7 +46,7 @@ export function UntrackedFolders({ folder }: { folder: LibraryFolder }) {
       <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground/40">
         Not linked to a game
       </h3>
-      <p className="mb-2 mt-1 text-[11px] text-foreground/45">
+      <p className="mb-2 mt-1 text-[0.6875rem] text-foreground/45">
         Folders in {folder === "installations" ? "Installations" : "Downloads"} that Gameyfin
         does not manage. Assign one to a game to manage it here.
       </p>
@@ -60,7 +60,7 @@ export function UntrackedFolders({ folder }: { folder: LibraryFolder }) {
               <p className="truncate text-sm text-foreground" title={row.path}>
                 {row.name}
               </p>
-              <p className="truncate text-[11px] text-foreground/45">
+              <p className="truncate text-[0.6875rem] text-foreground/45">
                 {formatBytes(row.bytes)}
                 {row.gameId !== null ? ", its game is no longer on the server" : ""}
               </p>

@@ -79,7 +79,7 @@ export function UninstallDialog({
               <p className="text-xs text-foreground/70">
                 {chosen ? "Will run the program you chose:" : "Found an uninstaller:"}
               </p>
-              <p className="mt-1 break-all font-mono text-[11px] text-foreground/55">
+              <p className="mt-1 break-all font-mono text-[0.6875rem] text-foreground/55">
                 {uninstaller}
               </p>
             </>

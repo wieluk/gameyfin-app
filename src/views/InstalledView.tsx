@@ -146,6 +146,9 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
     entry.state.kind === "installed" && (entry.archivePresent || stagingPresent) && !dismissedCleanup;
   // Nothing to play until setup has run.
   const needsSetup = setups.length > 0 && !executable;
+  // Why the last start failed, which this row would otherwise leave to Library to say.
+  const launchFailure =
+    entry.state.kind === "failed" && entry.state.stage === "launch" ? entry.state.message : null;
 
   return (
     <article className="rounded-xl border border-default-200 bg-content1">
@@ -154,14 +157,14 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
           <div className="flex items-center gap-2">
             <h3 className="truncate text-sm font-medium text-foreground">{entry.game.title}</h3>
             {running && (
-              <span className="flex shrink-0 items-center gap-1 rounded bg-success/15 px-1.5 py-0.5 text-[10px] font-medium text-success">
+              <span className="flex shrink-0 items-center gap-1 rounded bg-success/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-success">
                 <span className="h-1 w-1 animate-pulse rounded-full bg-success" />
                 Running
               </span>
             )}
             {nowRunning?.runtime && (
               <span
-                className="truncate text-[10px] text-foreground/45"
+                className="truncate text-[0.625rem] text-foreground/45"
                 title={nowRunning.runtime}
               >
                 {nowRunning.runtime}
@@ -211,6 +214,15 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
           onClick={() => setExpanded((e) => !e)}
         />
       </div>
+
+      {launchFailure && (
+        <p
+          role="alert"
+          className="whitespace-pre-line break-words border-t border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+        >
+          {launchFailure}
+        </p>
+      )}
 
       {needsSetup && (
         <div className="flex flex-wrap items-center gap-2 border-t border-warning/30 bg-warning/10 px-3 py-2">
@@ -408,13 +420,13 @@ function Options({
           </Button>
         </div>
         {missing ? (
-          <p className="text-[11px] text-warning-600">
+          <p className="text-[0.6875rem] text-warning-600">
             That file is no longer in the game's folder. Choose another, or browse for it.
           </p>
         ) : (
           !executables.isLoading &&
           listed.length === 0 && (
-            <p className="text-[11px] text-foreground/40">
+            <p className="text-[0.6875rem] text-foreground/40">
               Nothing launchable was found here. Browse to point at the file yourself.
             </p>
           )
@@ -424,11 +436,11 @@ function Options({
       {installDir && (
         <div>
           <p className="mb-1 text-xs text-foreground/55">Installed at</p>
-          <code className="block break-all text-[11px] text-foreground/60">{installDir}</code>
+          <code className="block break-all text-[0.6875rem] text-foreground/60">{installDir}</code>
         </div>
       )}
 
-      <LaunchOptions gameId={gameId} />
+      <LaunchOptions gameId={gameId} title={entry.game.title} />
 
       <PrefixOptions gameId={gameId} title={entry.game.title} />
 
@@ -500,11 +512,11 @@ function InstalledSetups({ gameId }: { gameId: number }) {
 
   return (
     <details className="rounded-lg border border-default-200/60 px-2.5 py-1.5">
-      <summary className="cursor-pointer text-[11px] text-foreground/45">
+      <summary className="cursor-pointer text-[0.6875rem] text-foreground/45">
         Setup programs{recognised.length > 0 ? ` (${recognised.length})` : ""}
         {left > 0 ? `, ${left} not installed` : ""}
       </summary>
-      <p className="mt-2 text-[11px] leading-relaxed text-foreground/45">
+      <p className="mt-2 text-[0.6875rem] leading-relaxed text-foreground/45">
         Installers that came with this game, usually DLC or patches. They install into the same
         folder, in the order shown.
       </p>

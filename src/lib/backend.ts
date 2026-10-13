@@ -6,6 +6,7 @@
 import type { AppNotification } from "@/bindings/AppNotification";
 import type { ConflictChoice } from "@/bindings/ConflictChoice";
 import type { ConnectionStatus } from "@/bindings/ConnectionStatus";
+import type { FixMatch } from "@/bindings/FixMatch";
 import type { GameOptions } from "@/bindings/GameOptions";
 import type { GameOptionsPatch } from "@/bindings/GameOptionsPatch";
 import type { InstalledProton } from "@/bindings/InstalledProton";
@@ -198,6 +199,8 @@ export const backend = {
     invoke<string>("run_winetricks", { gameId, verbs }),
   umuStatus: (gameId?: number) => invoke<UmuStatus>("umu_status", { gameId: gameId ?? null }),
   refreshUmuDatabase: () => invoke<number>("refresh_umu_database"),
+  /** Rows of the umu list matching a title or an id. */
+  searchGameFixes: (query: string) => invoke<FixMatch[]>("search_game_fixes", { query }),
 
   /** Where one game's saves stand, without changing anything. */
   saveState: (gameId: number) => invoke<SaveSyncState>("save_state", { gameId }),

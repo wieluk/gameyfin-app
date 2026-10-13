@@ -81,7 +81,7 @@ export function DiagnosticsSection() {
       <div className="mt-2 flex items-center justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs text-foreground/55">Artwork cache</p>
-          <p className="text-[11px] text-foreground/45">
+          <p className="text-[0.6875rem] text-foreground/45">
             {cacheSize.data === undefined
               ? "…"
               : `${formatBytes(cacheSize.data)}, cleans itself as it grows`}
@@ -112,7 +112,7 @@ export function DiagnosticsSection() {
       <div className="mt-2 flex items-center justify-between gap-4 border-t border-default-200/60 pt-3">
         <div className="min-w-0">
           <p className="text-xs text-foreground/55">Reset settings</p>
-          <p className="text-[11px] text-foreground/45">
+          <p className="text-[0.6875rem] text-foreground/45">
             Server, games folders, save location and per-game options stay.
           </p>
         </div>

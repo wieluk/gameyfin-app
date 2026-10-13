@@ -235,7 +235,7 @@ export function InstallDialog({
               onClick={() => void start(option.key, option.interactive)}
               className="rounded-xl border border-default-200 p-4 text-left transition-colors hover:border-primary/50 hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-default-200 disabled:hover:bg-transparent"
             >
-              <span className="flex items-center gap-2 text-[15px] font-medium text-foreground">
+              <span className="flex items-center gap-2 text-[0.9375rem] font-medium text-foreground">
                 {option.label}
                 {starting === option.key && (
                   <span
@@ -244,11 +244,11 @@ export function InstallDialog({
                   />
                 )}
               </span>
-              <p className="mt-1 text-[13px] leading-relaxed text-foreground/55">
+              <p className="mt-1 text-[0.8125rem] leading-relaxed text-foreground/55">
                 {option.description}
               </p>
               {option.blockedBy && (
-                <p className="mt-1.5 rounded-lg bg-warning/10 px-2 py-1 text-[11px] text-warning-600">
+                <p className="mt-1.5 rounded-lg bg-warning/10 px-2 py-1 text-[0.6875rem] text-warning-600">
                   {option.blockedBy}
                 </p>
               )}

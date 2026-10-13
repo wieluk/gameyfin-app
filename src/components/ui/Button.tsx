@@ -19,7 +19,7 @@ const VARIANT = {
 const PRESSED = "border border-primary/50 bg-primary/10 text-primary";
 
 const SIZE = {
-  sm: "px-2.5 py-1 text-[11px]",
+  sm: "px-2.5 py-1 text-[0.6875rem]",
   md: "px-3 py-1.5 text-xs",
   lg: "px-4 py-2.5 text-sm",
 } as const;

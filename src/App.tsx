@@ -179,7 +179,7 @@ function OfflineBanner({ serverUrl }: { serverUrl: string | null }) {
   return (
     <div
       role="status"
-      className="flex shrink-0 items-center justify-center gap-2 bg-warning/15 px-4 py-1.5 text-[11px] text-warning-600"
+      className="flex shrink-0 items-center justify-center gap-2 bg-warning/15 px-4 py-1.5 text-[0.6875rem] text-warning-600"
     >
       <Icon name="offline" className="h-3.5 w-3.5 shrink-0" />
       <span>
@@ -202,7 +202,7 @@ function shortHost(url: string): string {
 /** Fixture-data banner, so a screenshot is never mistaken for the real thing. */
 function MockBanner() {
   return (
-    <div className="shrink-0 bg-warning/15 px-4 py-1 text-center text-[11px] text-warning-600">
+    <div className="shrink-0 bg-warning/15 px-4 py-1 text-center text-[0.6875rem] text-warning-600">
       Running outside Tauri, showing fixture data
     </div>
   );

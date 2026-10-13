@@ -280,8 +280,16 @@ pub async fn apply_game_runtime(
     config
         .environment
         .extend(crate::proton::container_mounts(state, runtime));
-    if let gameyfin_core::Runtime::Proton { umu_id, .. } = &mut config.runtime {
-        *umu_id = state.umu_id_for_game(game_id).await;
+    if let gameyfin_core::Runtime::Proton {
+        umu_id,
+        store,
+        proton,
+        ..
+    } = &mut config.runtime
+    {
+        let fix = state.game_fix(game_id, Some(proton)).await;
+        tracing::info!(game_id, umu_id = %fix.id, store = %fix.store, "the Proton fix this run names");
+        (*umu_id, *store) = (fix.id, fix.store);
     }
 }
 

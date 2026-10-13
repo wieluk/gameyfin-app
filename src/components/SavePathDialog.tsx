@@ -155,7 +155,7 @@ export function SavePathDialog({
       <div className="max-h-[60vh] overflow-y-auto px-5 pb-4">
         {found.length > 0 && (
           <p
-            className="mb-3 flex items-center gap-1.5 text-[11px] text-success-600"
+            className="mb-3 flex items-center gap-1.5 text-[0.6875rem] text-success-600"
             title={found.join("\n")}
           >
             <Icon name="check" className="h-3 w-3 shrink-0" />
@@ -176,7 +176,7 @@ export function SavePathDialog({
                   className="flex items-center gap-2 rounded-lg border border-dashed border-default-200 py-1 pl-3 pr-1"
                 >
                   <code
-                    className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/70"
+                    className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-foreground/70"
                     title={path}
                   >
                     {displayPath(path, locations)}

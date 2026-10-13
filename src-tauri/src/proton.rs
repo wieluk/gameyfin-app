@@ -161,6 +161,7 @@ pub struct ProtonStatus {
     pub installed: Vec<InstalledProton>,
     pub latest_umu: Option<ProtonRelease>,
     pub latest_ge: Option<ProtonRelease>,
+    pub latest_cachyos: Option<ProtonRelease>,
     pub launcher_problem: Option<String>,
     pub supports_32bit: bool,
     /// 32-bit OpenGL drivers, without which a 32-bit program that draws with OpenGL cannot open a window.
@@ -183,9 +184,10 @@ pub async fn proton_status(state: State<'_, AppState>) -> CommandResult<ProtonSt
                 .ok()
         }
     };
-    let (latest_umu, latest_ge) = tokio::join!(
+    let (latest_umu, latest_ge, latest_cachyos) = tokio::join!(
         latest(ProtonFamily::UmuProton),
-        latest(ProtonFamily::GeProton)
+        latest(ProtonFamily::GeProton),
+        latest(ProtonFamily::ProtonCachyos)
     );
     let installed = blocking("could not list Proton builds", move || {
         Ok::<_, std::convert::Infallible>(proton::installed(&config_dir))
@@ -195,6 +197,7 @@ pub async fn proton_status(state: State<'_, AppState>) -> CommandResult<ProtonSt
         installed,
         latest_umu,
         latest_ge,
+        latest_cachyos,
         launcher_problem: umu_launcher().await.err(),
         supports_32bit: gameyfin_core::runtime::has_32bit_support(),
         supports_32bit_graphics: gameyfin_core::runtime::has_32bit_graphics(),

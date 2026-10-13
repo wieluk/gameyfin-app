@@ -14,8 +14,8 @@ in sync between PCs.
   finds the game's executable and uninstalls cleanly.
 - **Playing**: playtime tracking, and a readable reason when a game crashes on start.
 - **Windows games on Linux**: Proton through umu with per-title fixes, optional GE-Proton and
-  Gameyfin's own Wine as a fallback, all downloaded when needed. Per-game launch options,
-  prefixes and winetricks.
+  Proton-CachyOS, and Gameyfin's own Wine as a fallback, all downloaded when needed. Per-game
+  launch options, prefixes and winetricks.
 - **Save sync**: saves are backed up with [Ludusavi](https://github.com/mtkennerly/ludusavi)
   after you play and restored before you start. They can be kept on the Gameyfin server,
   in a folder or on a WebDAV share, with version history, conflict handling and

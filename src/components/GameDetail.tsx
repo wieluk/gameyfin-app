@@ -176,7 +176,7 @@ function Tags({ game, onFilter }: { game: LibraryEntry["game"]; onFilter: () => 
             setAdvanced(true);
             onFilter();
           }}
-          className="rounded-full bg-default-100 px-2.5 py-0.5 text-[11px] text-foreground/65 transition-colors hover:bg-primary/15 hover:text-primary"
+          className="rounded-full bg-default-100 px-2.5 py-0.5 text-[0.6875rem] text-foreground/65 transition-colors hover:bg-primary/15 hover:text-primary"
         >
           {value}
         </button>
@@ -220,7 +220,7 @@ function Photos({ urls, title }: { urls: string[]; title: string }) {
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
-        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-foreground/40">
+        <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wide text-foreground/40">
           Photos
           <span className="ml-2 font-normal normal-case tracking-normal text-foreground/30">
             {urls.length}

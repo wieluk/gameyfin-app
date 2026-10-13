@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use gameyfin_api::Game;
+use gameyfin_core::umu::GameFix;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
@@ -666,6 +667,8 @@ pub struct GameOptionsPatch {
     /// Empty clears the pin.
     pub proton_build: Option<String>,
     pub launch_toggles: Option<gameyfin_core::environment::LaunchToggles>,
+    /// An empty id returns to the fix the umu database finds.
+    pub game_fix: Option<GameFix>,
 }
 
 #[tauri::command]
@@ -676,6 +679,14 @@ pub async fn set_game_options(
     options: GameOptionsPatch,
 ) -> CommandResult<()> {
     let chosen = |value: String| Some(value).filter(|v| !v.is_empty() && v != "auto");
+    // Checked before anything is stored, so a refused fix leaves the other fields alone too.
+    let game_fix = match options.game_fix {
+        Some(fix) if fix.id.trim().is_empty() => Some(None),
+        Some(fix) => Some(Some(
+            GameFix::checked(&fix.id, &fix.store).map_err(CommandError::msg)?,
+        )),
+        None => None,
+    };
     state
         .library()
         .update_record(game_id, |r| {
@@ -694,6 +705,9 @@ pub async fn set_game_options(
             if let Some(v) = options.launch_toggles {
                 r.launch_toggles = v;
             }
+            if let Some(v) = game_fix {
+                r.game_fix = v;
+            }
         })
         .await;
     notify(&app);
@@ -710,6 +724,12 @@ pub struct GameOptions {
     pub proton_build: Option<String>,
     pub proton_builds: Vec<gameyfin_core::proton::InstalledProton>,
     pub launch_toggles: gameyfin_core::environment::LaunchToggles,
+    /// The Proton fix chosen by hand, if one was.
+    pub game_fix: Option<GameFix>,
+    /// What the umu database finds for this game, which applies unless one was chosen.
+    pub automatic_fix: GameFix,
+    /// The fix filed under the game's Steam AppID, when the Proton build ships one.
+    pub steam_fix: Option<GameFix>,
     /// Winetricks verbs the last failed start pointed at.
     pub suggested_winetricks: Vec<String>,
 }
@@ -722,6 +742,17 @@ pub async fn game_options(state: State<'_, AppState>, game_id: i64) -> CommandRe
         Ok::<_, std::convert::Infallible>(gameyfin_core::proton::installed(&config_dir))
     })
     .await?;
+    // The build this game would run, since each ships its own set of fixes.
+    let proton = gameyfin_core::proton::pick(&proton_builds, record.proton_build.as_deref())
+        .map(|build| build.path);
+    let automatic_fix = state.automatic_fix(game_id, proton.as_deref()).await;
+    let steam_fix = match (state.game(game_id).await, &proton) {
+        (Ok(game), Some(build)) => game
+            .steam_app_id()
+            .and_then(|id| GameFix::checked(&id.to_string(), gameyfin_core::umu::NO_STORE).ok())
+            .filter(|fix| fix.shipped_in(build)),
+        _ => None,
+    };
 
     Ok(GameOptions {
         launch_arguments: record.launch_arguments,
@@ -730,6 +761,9 @@ pub async fn game_options(state: State<'_, AppState>, game_id: i64) -> CommandRe
         proton_build: record.proton_build,
         proton_builds,
         launch_toggles: record.launch_toggles,
+        game_fix: record.game_fix,
+        automatic_fix,
+        steam_fix,
         suggested_winetricks: record.suggested_winetricks,
     })
 }

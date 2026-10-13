@@ -155,7 +155,7 @@ export function SetupList({ setups, selected, onToggle, onMove, disabled = false
               />
               {setup.matched && (
                 <span
-                  className={`w-12 shrink-0 rounded px-1.5 py-0.5 text-center text-[10px] font-medium ${ROLE_STYLE[setup.role]}`}
+                  className={`w-12 shrink-0 rounded px-1.5 py-0.5 text-center text-[0.625rem] font-medium ${ROLE_STYLE[setup.role]}`}
                 >
                   {ROLE_LABEL[setup.role]}
                 </span>
@@ -166,7 +166,7 @@ export function SetupList({ setups, selected, onToggle, onMove, disabled = false
               >
                 {setup.path}
               </span>
-              {note && <span className="shrink-0 text-[11px] text-foreground/45">{note}</span>}
+              {note && <span className="shrink-0 text-[0.6875rem] text-foreground/45">{note}</span>}
             </label>
             {/* For keyboards and controllers, which cannot drag. */}
             {movable && (
@@ -200,10 +200,10 @@ export function SetupList({ setups, selected, onToggle, onMove, disabled = false
 export function OtherPrograms({ setups, selected, onToggle, disabled }: ListProps) {
   return (
     <details className="mt-2 rounded-lg border border-default-200/60 px-2.5 py-1.5">
-      <summary className="cursor-pointer text-[11px] text-foreground/45">
+      <summary className="cursor-pointer text-[0.6875rem] text-foreground/45">
         Other programs in the download ({setups.length})
       </summary>
-      <p className="mt-2 text-[11px] leading-relaxed text-foreground/45">
+      <p className="mt-2 text-[0.6875rem] leading-relaxed text-foreground/45">
         Not recognised as a setup, patch or DLC. Tick one to add it to the list above.
       </p>
       <div className="mt-2">

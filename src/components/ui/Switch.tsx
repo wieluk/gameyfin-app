@@ -121,7 +121,7 @@ function SwitchRow({
           {label}
         </label>
         {hint && (
-          <p id={`${id}-hint`} className="mt-0.5 text-[11px] leading-relaxed text-foreground/45">
+          <p id={`${id}-hint`} className="mt-0.5 text-[0.6875rem] leading-relaxed text-foreground/45">
             {hint}
           </p>
         )}

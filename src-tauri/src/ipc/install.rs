@@ -1010,6 +1010,10 @@ async fn prepare_installer(
         config.working_dir = program.parent().map(Path::to_path_buf);
         super::launch::apply_game_runtime(&state, game_id, &runtime, &mut config).await;
         super::launch::apply_game_options(&state.library().record(game_id), &mut config);
+        // After the game's own variables, so `PROTON_USE_XALIA=0` typed there turns it off.
+        if !runtime.is_wine() && state.gamepad_connected() {
+            gameyfin_core::environment::gamepad_ui(&mut config.environment);
+        }
         if wow64 {
             config
                 .environment

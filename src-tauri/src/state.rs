@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use gameyfin_api::{ApiError, CookieSessionAuth, DeviceTokenAuth, Game, GameyfinClient, Library};
+use gameyfin_core::umu::GameFix;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CommandError, CommandResult};
@@ -456,24 +457,44 @@ impl AppState {
         Ok(count)
     }
 
-    /// The umu id for a title, honouring the fixes setting.
-    pub fn umu_id_for(&self, title: &str, steam_app_id: Option<u32>) -> String {
+    /// The fix the umu database finds for a game, honouring the fixes setting. `proton` is
+    /// the build about to run, which settles which of the game's stores to name.
+    pub async fn automatic_fix(&self, game_id: i64, proton: Option<&Path>) -> GameFix {
         if !self.settings().umu_fixes {
-            return gameyfin_core::umu::DEFAULT_ID.to_string();
+            return GameFix::default();
         }
-        read(&self.umu).resolve(title, steam_app_id)
+        let Ok(game) = self.game(game_id).await else {
+            return GameFix::default();
+        };
+        read(&self.umu).resolve(&game.title, game.steam_app_id(), |fix| {
+            proton.is_some_and(|build| fix.shipped_in(build))
+        })
     }
 
-    /// The umu id for a game, falling back to the generic one.
-    pub async fn umu_id_for_game(&self, game_id: i64) -> String {
-        match self.game(game_id).await {
-            Ok(game) => self.umu_id_for(&game.title, game.steam_app_id()),
-            Err(_) => gameyfin_core::umu::DEFAULT_ID.to_string(),
+    /// The fix a game launches with: its own where one was chosen by hand.
+    pub async fn game_fix(&self, game_id: i64, proton: Option<&Path>) -> GameFix {
+        match self.library().record(game_id).game_fix {
+            Some(chosen) => chosen,
+            None => self.automatic_fix(game_id, proton).await,
         }
+    }
+
+    /// Database rows matching a title or an id, as `(title, fix)`.
+    pub fn search_fixes(&self, query: &str, limit: usize) -> Vec<(String, GameFix)> {
+        read(&self.umu)
+            .search(query, limit)
+            .into_iter()
+            .map(|entry| (entry.title.clone(), entry.fix()))
+            .collect()
     }
 
     pub fn set_gamepad(&self, handle: crate::gamepad::Handle) {
         let _ = self.gamepad.set(handle);
+    }
+
+    /// Whether a controller is attached and the app is set to read one.
+    pub fn gamepad_connected(&self) -> bool {
+        self.gamepad.get().is_some_and(|handle| handle.connected())
     }
 
     pub fn apply_gamepad_settings(&self) {

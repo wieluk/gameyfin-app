@@ -100,7 +100,7 @@ export function PrefixOptions({ gameId, title }: { gameId: number; title: string
 
   return (
     <details className="rounded-lg border border-default-200/60 px-2.5 py-1.5">
-      <summary className="cursor-pointer text-[11px] text-foreground/45">
+      <summary className="cursor-pointer text-[0.6875rem] text-foreground/45">
         Compatibility prefix ({formatBytes(prefix.bytes)})
         {suggested.length > 0 && <span className="text-warning-600">, components missing</span>}
       </summary>
@@ -123,13 +123,13 @@ export function PrefixOptions({ gameId, title }: { gameId: number; title: string
         </Button>
       </div>
 
-      <p className="mt-3 text-[11px] font-medium text-foreground/70">Winetricks</p>
+      <p className="mt-3 text-[0.6875rem] font-medium text-foreground/70">Winetricks</p>
       <p className={HINT}>
         Installs Windows components a game needs but does not bring, such as Visual C++. Most
         games need none; use it when a start fails with a missing DLL or ProtonDB says to.
       </p>
       {suggested.length > 0 && (
-        <p className="mt-1 text-[11px] leading-relaxed text-warning-600">
+        <p className="mt-1 text-[0.6875rem] leading-relaxed text-warning-600">
           The last start failed because components were missing. They are ticked below.
         </p>
       )}
@@ -138,7 +138,7 @@ export function PrefixOptions({ gameId, title }: { gameId: number; title: string
           <label
             key={component.verb}
             title={component.verb}
-            className="flex cursor-pointer items-center gap-2 text-[11px] text-foreground/80"
+            className="flex cursor-pointer items-center gap-2 text-[0.6875rem] text-foreground/80"
           >
             <Checkbox
               checked={selected.has(component.verb)}
@@ -168,7 +168,7 @@ export function PrefixOptions({ gameId, title }: { gameId: number; title: string
               : `Install ${verbs.length} components`}
         </Button>
       </div>
-      {result && <p className="mt-1 text-[11px] text-foreground/70">{result}</p>}
+      {result && <p className="mt-1 text-[0.6875rem] text-foreground/70">{result}</p>}
       {action.error && (
         <Alert inline className="mt-1">
           {action.error}

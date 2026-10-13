@@ -53,7 +53,7 @@ export function NotificationSection() {
         checked={settings.data?.notifyUpdates ?? true}
         onChange={(next) => save({ notifyUpdates: next })}
       />
-      <p className={HINT}>
+      <p className={`${HINT} mt-1 border-t border-default-200/60 pt-2`}>
         Held back while you are looking at the window, apart from failures. Every notification is
         also listed behind the bell in the title bar.
       </p>

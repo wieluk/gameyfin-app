@@ -24,6 +24,8 @@ pub enum Runtime {
         proton: PathBuf,
         /// umu game id, used to apply per-title fixes.
         umu_id: String,
+        /// The store whose protonfixes folder holds that id's fix.
+        store: String,
         /// Resolved rather than taken from `PATH`: a desktop entry lacks the shell's `PATH`, and a
         /// Flatpak puts it elsewhere.
         launcher: PathBuf,
@@ -70,6 +72,7 @@ impl LaunchConfig {
                 prefix: prefix.into(),
                 proton: proton.into(),
                 umu_id: DEFAULT_UMU_ID.to_string(),
+                store: crate::umu::NO_STORE.to_string(),
                 launcher: launcher.into(),
             },
         }
@@ -239,6 +242,7 @@ pub fn resolve_command(config: &LaunchConfig) -> CoreResult<ResolvedCommand> {
             prefix,
             proton,
             umu_id,
+            store,
             launcher,
         } => {
             if prefix.as_os_str().is_empty() {
@@ -255,9 +259,9 @@ pub fn resolve_command(config: &LaunchConfig) -> CoreResult<ResolvedCommand> {
                 proton.to_string_lossy().into_owned(),
             );
             env.insert("GAMEID".to_string(), umu_id.clone());
-            // "none" is umu's value for a game that did not come from a known storefront.
+            // A `STORE` typed into the game's own variables wins.
             env.entry("STORE".to_string())
-                .or_insert_with(|| "none".into());
+                .or_insert_with(|| store.clone());
 
             Ok(ResolvedCommand {
                 program: launcher.clone().into_os_string(),
@@ -461,12 +465,15 @@ mod tests {
                 prefix: "/prefixes/7".into(),
                 proton: "/cfg/proton/GE-Proton11-6-x86_64".into(),
                 umu_id: "umu-1234".into(),
+                store: "gog".into(),
                 launcher: "/usr/bin/umu-run".into(),
             },
         };
         let cmd = resolve_command(&config).unwrap();
         assert_eq!(cmd.env["PROTONPATH"], "/cfg/proton/GE-Proton11-6-x86_64");
         assert_eq!(cmd.env["GAMEID"], "umu-1234");
+        // Protonfixes looks the id up in this store's folder.
+        assert_eq!(cmd.env["STORE"], "gog");
     }
 
     #[test]

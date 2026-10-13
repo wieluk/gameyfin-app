@@ -36,7 +36,7 @@ export function RootsSection() {
   return (
     <Section title="Games folders" help="gamesFolders">
       {list.length === 0 && !roots.isLoading && (
-        <p className="text-[11px] text-foreground/45">
+        <p className="text-[0.6875rem] text-foreground/45">
           No folder yet. Add one and downloads will go there.
         </p>
       )}
@@ -49,18 +49,18 @@ export function RootsSection() {
           >
             <div className="flex items-baseline justify-between gap-3">
               <code
-                className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground"
+                className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-foreground"
                 title={root.path}
               >
                 {root.path}
               </code>
               {root.isDefault && (
-                <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">
+                <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[0.625rem] text-primary">
                   Default
                 </span>
               )}
             </div>
-            <p className="mt-0.5 text-[11px] text-foreground/45">
+            <p className="mt-0.5 text-[0.6875rem] text-foreground/45">
               {!root.exists
                 ? "This folder is missing. Games in it will not be found until it is back."
                 : root.freeBytes === null
@@ -185,12 +185,6 @@ export function AutomationSection() {
           checked={autoInstall}
           onChange={(next) => save({ autoInstall: next })}
         >
-          <SwitchField
-            label="Delete the download after installing"
-            hint="Remove the download once the game is installed."
-            checked={settings.data?.deleteDownloadAfterInstall ?? false}
-            onChange={(next) => save({ deleteDownloadAfterInstall: next })}
-          />
           <SetupSwitches
             id="inno-setup-arguments"
             label="Inno Setup options"
@@ -207,27 +201,35 @@ export function AutomationSection() {
             disabled={!autoInstall}
             onCommit={(value, clearDraft) => commit({ nsisArguments: value }, clearDraft)}
           />
-          <FormField
-            label="Never offer these executables"
-            htmlFor="ignored-executables"
-            hint="File names never picked as the game, one per line."
-          >
-            <TextArea
-              id="ignored-executables"
-              rows={6}
-              mono
-              value={ignored ?? savedIgnored}
-              onChange={(e) => setIgnored(e.target.value)}
-              onBlur={() => {
-                if (ignored !== null && ignored !== savedIgnored) {
-                  commit({ ignoredExecutables: ignored.split("\n") }, () => setIgnored(null));
-                }
-              }}
-              spellCheck={false}
-            />
-          </FormField>
         </SwitchField>
       </div>
+
+      {/* Below the group: these two apply to an install started by hand as well. */}
+      <SwitchField
+        label="Delete the download after installing"
+        hint="Remove the download once the game is installed."
+        checked={settings.data?.deleteDownloadAfterInstall ?? false}
+        onChange={(next) => save({ deleteDownloadAfterInstall: next })}
+      />
+      <FormField
+        label="Never offer these executables"
+        htmlFor="ignored-executables"
+        hint="File names never picked as the game, one per line."
+      >
+        <TextArea
+          id="ignored-executables"
+          rows={6}
+          mono
+          value={ignored ?? savedIgnored}
+          onChange={(e) => setIgnored(e.target.value)}
+          onBlur={() => {
+            if (ignored !== null && ignored !== savedIgnored) {
+              commit({ ignoredExecutables: ignored.split("\n") }, () => setIgnored(null));
+            }
+          }}
+          spellCheck={false}
+        />
+      </FormField>
 
       <SaveError error={error} />
     </Section>

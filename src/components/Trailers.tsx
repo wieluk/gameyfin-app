@@ -18,7 +18,7 @@ export function Trailers({ urls, title }: { urls: string[]; title: string }) {
 
   return (
     <section>
-      <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-foreground/40">
+      <h4 className="mb-2 text-[0.6875rem] font-semibold uppercase tracking-wide text-foreground/40">
         Videos
         <span className="ml-2 font-normal normal-case tracking-normal text-foreground/30">
           {videos.length}
@@ -78,7 +78,7 @@ export function Trailers({ urls, title }: { urls: string[]; title: string }) {
                 <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-primary backdrop-blur-sm transition-colors group-hover:bg-primary group-hover:text-white">
                   <Icon name="play" className="h-4 w-4" filled />
                 </span>
-                <span className="relative px-2 text-[11px] text-foreground/45">
+                <span className="relative px-2 text-[0.6875rem] text-foreground/45">
                   {id || file ? "Play trailer" : "Open in browser"}
                 </span>
               </button>

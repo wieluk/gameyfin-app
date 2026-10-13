@@ -66,7 +66,7 @@ export function RootChooser({
       >
         <h2 className="text-sm font-semibold text-foreground">Where should {title} go?</h2>
         {requiredBytes ? (
-          <p className="mt-1 text-[11px] text-foreground/45">
+          <p className="mt-1 text-[0.6875rem] text-foreground/45">
             This download needs about {formatBytes(requiredBytes)}.
           </p>
         ) : null}
@@ -127,10 +127,10 @@ function RootOption({
         className={`h-4 w-4 shrink-0 ${selected ? "text-primary" : "text-foreground/40"}`}
       />
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-mono text-[11px] text-foreground" title={root.path}>
+        <span className="block truncate font-mono text-[0.6875rem] text-foreground" title={root.path}>
           {root.path}
         </span>
-        <span className="block text-[11px] text-foreground/45">
+        <span className="block text-[0.6875rem] text-foreground/45">
           {!root.exists
             ? "This folder is missing"
             : root.freeBytes === null
@@ -140,7 +140,7 @@ function RootOption({
         </span>
       </span>
       {tooSmall && (
-        <span className="shrink-0 rounded bg-danger/15 px-1.5 py-0.5 text-[10px] text-danger">
+        <span className="shrink-0 rounded bg-danger/15 px-1.5 py-0.5 text-[0.625rem] text-danger">
           Not enough room
         </span>
       )}

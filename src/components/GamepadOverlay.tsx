@@ -39,7 +39,7 @@ function Overlay() {
         </div>
 
         {name && (
-          <p className="mb-3 truncate text-[11px] text-foreground/45" title={name}>
+          <p className="mb-3 truncate text-[0.6875rem] text-foreground/45" title={name}>
             Connected: {name}
           </p>
         )}
@@ -47,7 +47,7 @@ function Overlay() {
         <dl className="flex flex-col gap-1.5">
           {BUTTON_HELP.map((row) => (
             <div key={row.keys} className="flex items-baseline justify-between gap-4 text-xs">
-              <dt className="shrink-0 rounded border border-default-200 bg-content2 px-1.5 py-0.5 font-mono text-[10px] text-foreground/70">
+              <dt className="shrink-0 rounded border border-default-200 bg-content2 px-1.5 py-0.5 font-mono text-[0.625rem] text-foreground/70">
                 {row.keys}
               </dt>
               <dd className="text-right text-foreground/60">{row.action}</dd>
@@ -74,7 +74,7 @@ export function GamepadIndicator() {
       onClick={toggleHelp}
       title="Controller connected. Press Start for the button map."
       aria-label="Controller connected, show the button map"
-      className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-foreground/45 transition-colors hover:bg-default-100 hover:text-foreground"
+      className="flex items-center gap-1 rounded-lg px-2 py-1 text-[0.6875rem] text-foreground/45 transition-colors hover:bg-default-100 hover:text-foreground"
     >
       <Icon name="controller" className="h-3.5 w-3.5" />
     </button>

@@ -36,11 +36,11 @@ see the free space on each.
   silently. A game with patches or DLC installs the game, then the patches, then the DLC.
   It waits for you when no setup is clearly the game, or the game's setup has no silent mode.
   Setups without a silent mode are left for you in **Installed**.
-  - **Delete the download after installing**: the starting choice in the install dialog, off
-    while a setup program is left out.
   - **Inno Setup options** (default `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) and
     **NSIS options** (default `/S`). Empty restores the default.
-  - **Never offer these executables**.
+- **Delete the download after installing**: the starting choice in the install dialog, off
+  while a setup program is left out.
+- **Never offer these executables**.
 
 ## Installing
 

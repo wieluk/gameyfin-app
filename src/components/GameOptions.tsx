@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Alert } from "@/components/Alert";
-import { FormField, Select, SwitchField, TextArea, TextInput } from "@/components/ui";
+import { describeFix, FixPickerDialog } from "@/components/FixPickerDialog";
+import { Button, FormField, Select, SwitchField, TextArea, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { isWindows } from "@/lib/platform";
@@ -40,8 +41,9 @@ function blurOnEnter(e: React.KeyboardEvent<HTMLInputElement>) {
 }
 
 /** Everything that applies to running the game: flags, environment and Proton settings. */
-export function LaunchOptions({ gameId }: { gameId: number }) {
+export function LaunchOptions({ gameId, title }: { gameId: number; title: string }) {
   const { data, save } = useGameOptions(gameId);
+  const [pickingFix, setPickingFix] = useState(false);
 
   const [launch, setLaunch] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<string | null>(null);
@@ -152,6 +154,28 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
         </FormField>
       )}
 
+      {!isWindows && data?.automaticFix && (
+        <FormField
+          label="Proton fix"
+          hint="The per-title workaround Proton applies. Automatic looks the game up in the list under Settings, Compatibility."
+        >
+          <div className="flex items-center gap-2">
+            <p className="min-w-0 flex-1 truncate rounded-lg border border-default-200 bg-content2 px-3 py-1.5 font-mono text-xs text-foreground">
+              {data.gameFix
+                ? describeFix(data.gameFix)
+                : `Automatic: ${describeFix(data.automaticFix)}`}
+            </p>
+            <Button onClick={() => setPickingFix(true)}>Choose…</Button>
+            {data.gameFix && (
+              // An empty id clears the choice.
+              <Button variant="ghost" onClick={() => void apply({ gameFix: { id: "", store: "" } })}>
+                Automatic
+              </Button>
+            )}
+          </div>
+        </FormField>
+      )}
+
       {!isWindows && (
         <div className="flex flex-col gap-2 pt-1">
           <SwitchField
@@ -170,7 +194,19 @@ export function LaunchOptions({ gameId }: { gameId: number }) {
       )}
 
       {error && <Alert inline>{error}</Alert>}
-      {saved && <p className="text-[11px] text-success-600">Saved</p>}
+      {saved && <p className="text-[0.6875rem] text-success-600">Saved</p>}
+
+      {pickingFix && (
+        <FixPickerDialog
+          gameTitle={title}
+          steamFix={data?.steamFix ?? null}
+          onChoose={async (fix) => {
+            await save({ gameFix: fix });
+            flashSaved();
+          }}
+          onClose={() => setPickingFix(false)}
+        />
+      )}
     </div>
   );
 }
@@ -215,7 +251,7 @@ export function SetupOptions({ gameId, hint }: { gameId: number; hint?: string }
         />
       </FormField>
       {error && <Alert inline>{error}</Alert>}
-      {saved && <p className="text-[11px] text-success-600">Saved</p>}
+      {saved && <p className="text-[0.6875rem] text-success-600">Saved</p>}
     </div>
   );
 }

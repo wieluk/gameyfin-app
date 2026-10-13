@@ -205,7 +205,7 @@ function DownloadRow({
               style={{ width: `${progressPercent(entry) ?? 100}%` }}
             />
           </div>
-          <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-foreground/45">
+          <div className="mt-2 flex items-center justify-between gap-3 text-[0.6875rem] text-foreground/45">
             <span className="min-w-0 truncate">
               {state.kind === "downloading"
                 ? formatSpeed(state.bytesPerSecond)
@@ -315,7 +315,7 @@ function statusText(entry: LibraryEntry): string {
     case "downloading":
       return `${formatBytes(state.receivedBytes)} of ${formatBytes(state.totalBytes)}`;
     case "downloaded":
-      return `Ready to extract (${formatBytes(state.bytes)})`;
+      return `Ready to install (${formatBytes(state.bytes)})`;
     case "extracting":
       return "Extracting";
     case "extracted":

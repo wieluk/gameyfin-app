@@ -42,6 +42,8 @@ pub struct GameRecord {
     pub launch_environment: String,
     pub proton_build: Option<String>,
     pub launch_toggles: gameyfin_core::environment::LaunchToggles,
+    /// A Proton fix chosen by hand, in place of the one the umu database finds.
+    pub game_fix: Option<gameyfin_core::umu::GameFix>,
     /// Winetricks verbs the last failed start pointed at, offered ticked until installed.
     pub suggested_winetricks: Vec<String>,
     /// A setup program Windows refused without elevation, so the retry runs that exact file.

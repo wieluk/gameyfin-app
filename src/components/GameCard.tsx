@@ -104,7 +104,7 @@ function InstallingBadge({ progress }: { progress?: TransferProgress }) {
     progress && progress.totalBytes > 0 ? (progress.receivedBytes / progress.totalBytes) * 100 : undefined;
   return (
     <div className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-sm">
-      <div className="mb-1 flex justify-between text-[10px] text-white/80">
+      <div className="mb-1 flex justify-between text-[0.625rem] text-white/80">
         <span>Installing</span>
         {progress ? <span>{formatInstallProgress(progress)}</span> : null}
       </div>
@@ -126,7 +126,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
     const eta = formatEta(state.receivedBytes, state.totalBytes, state.bytesPerSecond);
     return (
       <div className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-sm">
-        <div className="mb-1 flex justify-between text-[10px] text-white/80">
+        <div className="mb-1 flex justify-between text-[0.625rem] text-white/80">
           <span>{formatSpeed(state.bytesPerSecond)}</span>
           {eta ? <span>{eta}</span> : null}
         </div>
@@ -141,7 +141,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
 
   if (state.kind === "downloaded") {
     return (
-      <span className="absolute left-2 top-2 rounded-md bg-warning/90 px-2 py-0.5 text-[10px] font-medium text-white shadow">
+      <span className="absolute left-2 top-2 rounded-md bg-warning/90 px-2 py-0.5 text-[0.625rem] font-medium text-white shadow">
         Ready to install
       </span>
     );
@@ -153,17 +153,17 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
         className="absolute inset-x-0 bottom-0 bg-danger/85 px-2.5 py-1.5 backdrop-blur-sm"
         title={state.message}
       >
-        <p className="truncate text-[10px] font-medium text-white">
+        <p className="truncate text-[0.625rem] font-medium text-white">
           {STAGE_FAILURE[state.stage]}
         </p>
-        <p className="truncate text-[10px] text-white/80">{state.message}</p>
+        <p className="truncate text-[0.625rem] text-white/80">{state.message}</p>
       </div>
     );
   }
 
   if (state.kind === "running") {
     return (
-      <span className="absolute left-2 top-2 flex items-center gap-1.5 rounded-md bg-success px-2 py-0.5 text-[10px] font-semibold text-white shadow">
+      <span className="absolute left-2 top-2 flex items-center gap-1.5 rounded-md bg-success px-2 py-0.5 text-[0.625rem] font-semibold text-white shadow">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
         Running
       </span>
@@ -179,7 +179,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
           className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-sm"
           title={busy?.kind === "preparing" ? busy.message : undefined}
         >
-          <div className="mb-1 flex justify-between text-[10px] text-white/80">
+          <div className="mb-1 flex justify-between text-[0.625rem] text-white/80">
             <span>Setting up</span>
             <span>{formatSpeed(download.bytesPerSecond)}</span>
           </div>
@@ -199,7 +199,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
       return (
         <span
           title={busy.kind === "installing" ? undefined : busy.message}
-          className={`absolute left-2 top-2 rounded-md px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm ${
+          className={`absolute left-2 top-2 rounded-md px-2 py-0.5 text-[0.625rem] font-medium text-white backdrop-blur-sm ${
             busy.kind === "failed" ? "bg-danger/85" : "bg-black/75"
           }`}
         >
@@ -212,7 +212,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
       );
     }
     return (
-      <span className="absolute left-2 top-2 rounded-md bg-black/65 px-2 py-0.5 text-[10px] font-medium text-white/90 backdrop-blur-sm">
+      <span className="absolute left-2 top-2 rounded-md bg-black/65 px-2 py-0.5 text-[0.625rem] font-medium text-white/90 backdrop-blur-sm">
         Installed
       </span>
     );

@@ -179,7 +179,8 @@ export function LibraryView() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search your library"
-          className="max-w-md flex-1"
+          // Wraps to a row of its own before it gets too narrow to type in.
+          className="!min-w-48 max-w-md flex-1"
         />
 
         <Select
@@ -384,7 +385,7 @@ function CardSizes({
             value === size ? "text-primary" : "text-foreground/40 hover:text-foreground"
           }`}
         >
-          <span className={`${square[size]} rounded-[3px] border-2 border-current`} />
+          <span className={`${square[size]} rounded-[0.1875rem] border-2 border-current`} />
         </button>
       ))}
     </div>

@@ -26,15 +26,19 @@ export function TransferProgress({
           style={{ width: `${done ?? 100}%` }}
         />
       </div>
-      <div className="mt-1 flex justify-between text-[11px] text-foreground/45">
+      <div className="mt-1 flex justify-between text-[0.6875rem] text-foreground/45">
         <span>{label ?? (done === undefined ? "Working…" : `${Math.round(done)}%`)}</span>
         <span>
-          {bytesPerSecond !== undefined && bytesPerSecond > 0 ? formatSpeed(bytesPerSecond) : ""}
-          {totalBytes !== undefined && totalBytes > 0
-            ? ` ${formatBytes(receivedBytes ?? 0)} of ${formatBytes(totalBytes)}`
-            : receivedBytes
-              ? ` ${formatBytes(receivedBytes)}`
-              : ""}
+          {[
+            bytesPerSecond !== undefined && bytesPerSecond > 0 ? formatSpeed(bytesPerSecond) : "",
+            totalBytes !== undefined && totalBytes > 0
+              ? `${formatBytes(receivedBytes ?? 0)} of ${formatBytes(totalBytes)}`
+              : receivedBytes
+                ? formatBytes(receivedBytes)
+                : "",
+          ]
+            .filter(Boolean)
+            .join(", ")}
         </span>
       </div>
     </div>

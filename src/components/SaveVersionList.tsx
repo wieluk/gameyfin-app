@@ -54,14 +54,14 @@ export function SaveVersionList({
   }
 
   if (versions.isLoading) {
-    return <p className="text-[11px] text-foreground/40">Looking…</p>;
+    return <p className="text-[0.6875rem] text-foreground/40">Looking…</p>;
   }
   if (versions.error) {
     return <Alert inline>{messageOf(versions.error)}</Alert>;
   }
   const list = versions.data ?? [];
   if (list.length === 0) {
-    return <p className="text-[11px] text-foreground/40">Nothing stored for this game yet.</p>;
+    return <p className="text-[0.6875rem] text-foreground/40">Nothing stored for this game yet.</p>;
   }
 
   const disabled = busy || working;
@@ -71,7 +71,7 @@ export function SaveVersionList({
     <div className="flex flex-col gap-2">
       <ul className="flex flex-col gap-1">
         {list.map((version) => (
-          <li key={version.id} className="flex items-center gap-2 text-[11px]">
+          <li key={version.id} className="flex items-center gap-2 text-[0.6875rem]">
             <span className="min-w-0 flex-1 truncate text-foreground/70">
               {formatRelative(version.createdAt)}
               {version.deviceName ? ` from ${version.deviceName}` : ""}
@@ -141,7 +141,7 @@ export function SaveVersionList({
       {error && <Alert inline>{error}</Alert>}
 
       {list.length > 0 && (
-        <div className="flex items-center justify-end gap-2 text-[11px]">
+        <div className="flex items-center justify-end gap-2 text-[0.6875rem]">
           {deletingAll ? (
             <>
               <span className="text-danger">

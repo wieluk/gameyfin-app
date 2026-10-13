@@ -337,6 +337,7 @@ pub fn run() {
             integrations::open_prefix_tool,
             integrations::run_winetricks,
             integrations::umu_status,
+            integrations::search_game_fixes,
             integrations::refresh_umu_database,
             saves::save_state,
             saves::save_overview,

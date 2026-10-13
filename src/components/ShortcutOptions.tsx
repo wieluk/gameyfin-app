@@ -82,7 +82,7 @@ export function ShortcutOptions({ gameId }: { gameId: number }) {
         )}
       </div>
 
-      {note && <p className="mt-1.5 text-[11px] text-foreground/50">{note}</p>}
+      {note && <p className="mt-1.5 text-[0.6875rem] text-foreground/50">{note}</p>}
       {error && (
         <Alert inline className="mt-1.5">
           {error}

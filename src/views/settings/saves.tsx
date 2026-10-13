@@ -85,7 +85,7 @@ export function SavesSection() {
             />
             <span>
               <span className="block text-xs text-foreground/80">{BACKEND_LABELS[id]}</span>
-              <span className="mt-0.5 block text-[11px] leading-relaxed text-foreground/45">
+              <span className="mt-0.5 block text-[0.6875rem] leading-relaxed text-foreground/45">
                 {hint}
               </span>
             </span>
@@ -182,7 +182,7 @@ function WebDavFields({ onChanged }: { onChanged?: () => void }) {
         placeholder={data?.hasWebdavPassword ? "Saved, type to replace" : ""}
         onCommit={(value) => update({ webdavPassword: value })}
       />
-      <p className="text-[11px] text-warning-600">
+      <p className="text-[0.6875rem] text-warning-600">
         This password is stored unencrypted in this PC's settings file, and never shown
         again once saved. Use an app password rather than your account password if your
         server offers one.
@@ -335,7 +335,7 @@ export function MigrationSection() {
             {summary.failed > 0 ? `, ${summary.failed} failed` : ""}
           </p>
           {summary.problems.map((problem) => (
-            <p key={problem} className="text-[11px] leading-relaxed text-danger">
+            <p key={problem} className="text-[0.6875rem] leading-relaxed text-danger">
               {problem}
             </p>
           ))}
