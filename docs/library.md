@@ -19,11 +19,14 @@ Press **Download** on a game. With more than one games folder, you choose where 
 see the free space on each.
 
 - Zip and tar downloads are unpacked while they arrive, so a game needs only its own size in
-  free space. 7z, rar and other archives are unpacked as soon as the download finishes. An
-  interrupted download starts over.
+  free space. 7z, rar and other archives are unpacked as soon as the download finishes.
+- **Pause** keeps what has arrived and **Resume** carries on from there, also after quitting
+  the app. A failed download resumes the same way with **Retry download**. This needs a
+  server that can resume downloads; with one that cannot, the download starts over.
 - A setup program or disc image is saved as it is and waits for **Install**.
 - **Speed limit**: set one on the Downloads page. It is off by default.
-- **Cancel** stops a download; **Delete download** removes a finished one.
+- **Cancel** stops a download and deletes what has arrived; **Delete download** removes a
+  finished one.
 - Progress shows on the taskbar or dock icon, and a notification tells you when a game is
   ready.
 

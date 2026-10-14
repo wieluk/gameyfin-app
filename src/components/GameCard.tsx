@@ -137,6 +137,18 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
     );
   }
 
+  if (state.kind === "paused") {
+    const percent = state.totalBytes > 0 ? (state.receivedBytes / state.totalBytes) * 100 : 0;
+    return (
+      <div className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-sm">
+        <div className="mb-1 text-[0.625rem] text-white/80">Paused</div>
+        <div className="h-1 overflow-hidden rounded-full bg-white/20">
+          <div className="h-full rounded-full bg-white/50" style={{ width: `${percent}%` }} />
+        </div>
+      </div>
+    );
+  }
+
   if (state.kind === "installing") return <InstallingBadge progress={state.progress} />;
 
   if (state.kind === "downloaded") {
@@ -225,6 +237,9 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
 function subtitle(entry: LibraryEntry): string {
   if (entry.state.kind === "downloading") {
     return `${formatBytes(entry.state.receivedBytes)} of ${formatBytes(entry.state.totalBytes)}`;
+  }
+  if (entry.state.kind === "paused") {
+    return `Paused, ${formatBytes(entry.state.receivedBytes)} of ${formatBytes(entry.state.totalBytes)}`;
   }
   if (entry.state.kind === "downloaded") {
     return `Downloaded (${formatBytes(entry.state.bytes)})`;

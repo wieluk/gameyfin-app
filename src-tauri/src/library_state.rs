@@ -52,6 +52,21 @@ pub struct GameRecord {
     pub save_restore_strategy: SaveRestoreStrategy,
     /// Hand-entered `(source, target)` path mappings.
     pub save_redirects: Vec<(String, String)>,
+    /// A download stopped part way, by a pause, a failure or quitting, kept so it can resume.
+    pub partial_download: Option<PartialDownload>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartialDownload {
+    /// Remembered so a resume lands beside the partial file whatever the folder settings say now.
+    pub destination: PathBuf,
+    /// Set when it was unpacking as it arrived, so a resume unpacks too.
+    pub unpack_into: Option<PathBuf>,
+    pub received_bytes: u64,
+    pub total_bytes: u64,
+    /// The server can continue it; otherwise a resume starts over.
+    pub resumable: bool,
 }
 
 /// Mirrors `gameyfin_saves::RestoreStrategy` with a wire form independent of that crate.
@@ -133,6 +148,7 @@ pub enum Activity {
         received_bytes: u64,
         total_bytes: u64,
         bytes_per_second: f64,
+        resumable: bool,
     },
     Extracting {
         percent: f64,
@@ -265,6 +281,13 @@ pub enum GameState {
         received_bytes: u64,
         total_bytes: u64,
         bytes_per_second: f64,
+        /// A pause keeps what arrived; without it a resume starts over.
+        resumable: bool,
+    },
+    Paused {
+        received_bytes: u64,
+        total_bytes: u64,
+        resumable: bool,
     },
     Downloaded {
         archive_path: String,
@@ -504,10 +527,12 @@ impl LibraryState {
                 received_bytes,
                 total_bytes,
                 bytes_per_second,
+                resumable,
             } => GameState::Downloading {
                 received_bytes,
                 total_bytes,
                 bytes_per_second,
+                resumable,
             },
             Activity::Extracting { percent } => GameState::Extracting { percent },
             Activity::Installing { progress, step } => GameState::Installing { progress, step },
@@ -623,6 +648,13 @@ fn resting_state(record: GameRecord) -> GameState {
     if record.is_installed() {
         return installed_state(record, None);
     }
+    if let Some(partial) = record.partial_download {
+        return GameState::Paused {
+            received_bytes: partial.received_bytes,
+            total_bytes: partial.total_bytes,
+            resumable: partial.resumable,
+        };
+    }
     if let Some(dir) = record.existing_staging() {
         return GameState::Extracted {
             path: display(&dir),
@@ -716,6 +748,7 @@ mod tests {
             received_bytes,
             total_bytes,
             bytes_per_second: 0.0,
+            resumable: true,
         }
     }
 
@@ -786,6 +819,33 @@ mod tests {
         state.set_activity(4, downloading(1, 9));
         assert!(matches!(state.state_of(4), GameState::Downloading { .. }));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_partial_download_rests_as_paused_until_it_resumes() {
+        let state = LibraryState::default();
+        state
+            .update_record(1, |r| {
+                r.partial_download = Some(PartialDownload {
+                    destination: PathBuf::from("/library/Gameyfin/Downloads/(1) A/A"),
+                    unpack_into: None,
+                    received_bytes: 4,
+                    total_bytes: 9,
+                    resumable: true,
+                })
+            })
+            .await;
+        assert!(matches!(
+            state.state_of(1),
+            GameState::Paused {
+                received_bytes: 4,
+                total_bytes: 9,
+                resumable: true
+            }
+        ));
+
+        state.set_activity(1, downloading(5, 9));
+        assert!(matches!(state.state_of(1), GameState::Downloading { .. }));
     }
 
     #[tokio::test]
