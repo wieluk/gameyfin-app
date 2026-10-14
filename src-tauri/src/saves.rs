@@ -684,7 +684,7 @@ pub(crate) fn hostname() -> Option<String> {
 /// What a backup scan captured. "Found nothing" and "never tried" are different answers.
 #[derive(Debug, Clone, Copy)]
 struct ScanSummary {
-    /// Whether the requested title appeared in the reply at all.
+    /// Whether Ludusavi's database knows the title, found files or not.
     matched: bool,
     files: usize,
 }
@@ -701,14 +701,23 @@ async fn back_up(
     tokio::fs::create_dir_all(&context.staging)
         .await
         .context("could not create the save folder")?;
-    let output = ludusavi
+    let output = match ludusavi
         .backup(title, &context.staging, BackupFormat::Zip)
         .await
-        .context("save backup failed")?;
+    {
+        Err(gameyfin_saves::SaveError::NoMatch { .. }) => {
+            return Ok(ScanSummary {
+                matched: false,
+                files: 0,
+            })
+        }
+        result => result.context("save backup failed")?,
+    };
 
+    // A known game with no files is left out of the reply, so only `NoMatch` means unknown.
     let scanned = output.games.get(title);
     let summary = ScanSummary {
-        matched: scanned.is_some(),
+        matched: true,
         files: scanned.map_or(0, |game| {
             game.files
                 .values()
