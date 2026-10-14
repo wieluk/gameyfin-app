@@ -4,8 +4,9 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use gameyfin_core::checkpoint::Checkpoint;
-use gameyfin_core::download::{Downloader, Outcome, StartMode};
+use gameyfin_core::checkpoint::{Checkpoint, UnpackPoint};
+use gameyfin_core::download::{Cancel, Downloader, Outcome, StartMode};
+use gameyfin_core::CoreError;
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("gameyfin-dl-{}-{name}", std::process::id()));
@@ -597,4 +598,326 @@ async fn a_gzip_holding_no_tar_reports_it_cannot_be_unpacked_on_the_way() {
         "{result:?}"
     );
     assert!(!dir.exists());
+}
+
+/// Bytes that barely compress, so a zip of them is as long as they are.
+fn noise(len: usize, seed: u32) -> Vec<u8> {
+    let mut x = seed;
+    (0..len)
+        .map(|_| {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (x >> 24) as u8
+        })
+        .collect()
+}
+
+/// A body sent in small pieces, so a pause lands part way through.
+fn slowly(bytes: Vec<u8>) -> impl Fn(&mut dyn std::io::Write) -> std::io::Result<()> {
+    move |w| {
+        for piece in bytes.chunks(2048) {
+            w.write_all(piece)?;
+            w.flush()?;
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        Ok(())
+    }
+}
+
+fn three_files() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("Game/a.bin", noise(60_000, 1)),
+        ("Game/data/b.bin", noise(60_000, 2)),
+        ("Game/c.bin", noise(60_000, 3)),
+    ]
+}
+
+fn zip_of(files: &[(&'static str, Vec<u8>)]) -> Vec<u8> {
+    let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    zip_on_the_fly(&entries)
+}
+
+#[tokio::test]
+async fn a_paused_unpack_resumes_from_the_entry_it_stopped_in() {
+    let files = three_files();
+    let zip = zip_of(&files);
+    let mut server = mockito::Server::new_async().await;
+    let _whole = server
+        .mock("GET", "/game")
+        .match_header("range", mockito::Matcher::Missing)
+        .with_status(200)
+        .with_header("etag", "\"v1\"")
+        .with_header("accept-ranges", "bytes")
+        .with_header("content-length", &zip.len().to_string())
+        .with_chunked_body(slowly(zip.clone()))
+        .create_async()
+        .await;
+
+    let dest = scratch("pause-unpack");
+    let dir = dest.with_file_name("extracted");
+    let url = format!("{}/game", server.url());
+    let cancel = Cancel::new();
+    let pause_at = zip.len() * 2 / 3;
+    let result = Downloader::new(reqwest::Client::new())
+        .with_cancel(cancel.clone())
+        .download_or_unpack(
+            &url,
+            &dest,
+            Some(&dir),
+            |r| r,
+            |p| {
+                assert!(p.resumable, "an ETag and Accept-Ranges make it resumable");
+                if p.received_bytes as usize >= pause_at {
+                    cancel.pause();
+                }
+            },
+        )
+        .await;
+
+    assert!(matches!(result, Err(CoreError::Paused)), "{result:?}");
+    assert!(dir.exists(), "a pause keeps what was unpacked");
+    let point = Checkpoint::load(&dest)
+        .await
+        .and_then(|cp| cp.unpack)
+        .expect("the entry to resume from");
+    let at = point.next_entry_at as usize;
+    assert!(at > 0, "the first entry was finished before the pause");
+    assert_eq!(&zip[at..at + 4], b"PK\x03\x04", "it resumes at an entry");
+
+    let resumed = server
+        .mock("GET", "/game")
+        .match_header("range", format!("bytes={at}-").as_str())
+        .match_header("if-range", "\"v1\"")
+        .with_status(206)
+        .with_header(
+            "content-range",
+            &format!("bytes {at}-{}/{}", zip.len() - 1, zip.len()),
+        )
+        .with_header("etag", "\"v1\"")
+        .with_body(&zip[at..])
+        .create_async()
+        .await;
+
+    let mut samples = Vec::new();
+    let outcome = Downloader::new(reqwest::Client::new())
+        .download_or_unpack(&url, &dest, Some(&dir), |r| r, |p| samples.push(p))
+        .await
+        .unwrap();
+
+    resumed.assert_async().await;
+    match outcome {
+        Outcome::Unpacked { bytes, .. } => assert_eq!(bytes, 180_000),
+        other => panic!("expected an unpacked folder, got {other:?}"),
+    }
+    for (name, data) in &files {
+        assert_eq!(&std::fs::read(dir.join(name)).unwrap(), data, "{name}");
+    }
+    assert!(Checkpoint::load(&dest).await.is_none());
+    assert!(samples[0].received_bytes > at as u64, "progress carries on");
+    assert_eq!(samples.last().unwrap().received_bytes, zip.len() as u64);
+}
+
+#[tokio::test]
+async fn an_unpack_from_an_old_server_starts_over_after_a_pause() {
+    // Gameyfin 2.4 sends no ETag, so nothing says the zip is unchanged when asked again.
+    let files = three_files();
+    let zip = zip_of(&files);
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+        .mock("GET", "/game")
+        .with_status(200)
+        .with_chunked_body(slowly(zip.clone()))
+        .expect(2)
+        .create_async()
+        .await;
+
+    let dest = scratch("pause-old-server");
+    let dir = dest.with_file_name("extracted");
+    let url = format!("{}/game", server.url());
+    let cancel = Cancel::new();
+    let result = Downloader::new(reqwest::Client::new())
+        .with_cancel(cancel.clone())
+        .download_or_unpack(
+            &url,
+            &dest,
+            Some(&dir),
+            |r| r,
+            |p| {
+                assert!(!p.resumable);
+                if p.received_bytes > 70_000 {
+                    cancel.pause();
+                }
+            },
+        )
+        .await;
+    assert!(matches!(result, Err(CoreError::Paused)), "{result:?}");
+    assert!(Checkpoint::load(&dest).await.is_none());
+
+    let outcome = Downloader::new(reqwest::Client::new())
+        .download_or_unpack(&url, &dest, Some(&dir), |r| r, |_| {})
+        .await
+        .unwrap();
+
+    assert!(matches!(outcome, Outcome::Unpacked { bytes: 180_000, .. }));
+    for (name, data) in &files {
+        assert_eq!(&std::fs::read(dir.join(name)).unwrap(), data, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn a_changed_archive_unpacks_again_from_the_start() {
+    let files = three_files();
+    let zip = zip_of(&files);
+    let mut server = mockito::Server::new_async().await;
+    // Answering a stale If-Range as the server does: the whole new file.
+    let mock = server
+        .mock("GET", "/game")
+        .match_header("if-range", "\"v1\"")
+        .with_status(200)
+        .with_header("etag", "\"v2\"")
+        .with_header("accept-ranges", "bytes")
+        .with_body(&zip)
+        .create_async()
+        .await;
+
+    let dest = scratch("changed");
+    let dir = dest.with_file_name("extracted");
+    std::fs::create_dir_all(dir.join("Game")).unwrap();
+    std::fs::write(dir.join("Game/old.bin"), b"from the previous version").unwrap();
+    let mut cp = Checkpoint::new(Some(999), Some("\"v1\"".into()), None);
+    cp.unpack = Some(UnpackPoint {
+        next_entry_at: 500,
+        unpacked_bytes: 400,
+    });
+    cp.save(&dest).await.unwrap();
+
+    let outcome = Downloader::new(reqwest::Client::new())
+        .download_or_unpack(
+            &format!("{}/game", server.url()),
+            &dest,
+            Some(&dir),
+            |r| r,
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+    mock.assert_async().await;
+    assert!(matches!(outcome, Outcome::Unpacked { bytes: 180_000, .. }));
+    assert!(!dir.join("Game/old.bin").exists(), "the old unpack is gone");
+    for (name, data) in &files {
+        assert_eq!(&std::fs::read(dir.join(name)).unwrap(), data, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn a_cancelled_unpack_is_removed() {
+    let zip = zip_of(&three_files());
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+        .mock("GET", "/game")
+        .with_status(200)
+        .with_header("etag", "\"v1\"")
+        .with_header("accept-ranges", "bytes")
+        .with_chunked_body(slowly(zip.clone()))
+        .create_async()
+        .await;
+
+    let dest = scratch("cancel-unpack");
+    let dir = dest.with_file_name("extracted");
+    let cancel = Cancel::new();
+    let result = Downloader::new(reqwest::Client::new())
+        .with_cancel(cancel.clone())
+        .download_or_unpack(
+            &format!("{}/game", server.url()),
+            &dest,
+            Some(&dir),
+            |r| r,
+            |p| {
+                if p.received_bytes > 70_000 {
+                    cancel.cancel();
+                }
+            },
+        )
+        .await;
+
+    assert!(matches!(result, Err(CoreError::Cancelled)), "{result:?}");
+    assert!(!dir.exists());
+    assert!(Checkpoint::load(&dest).await.is_none());
+}
+
+#[tokio::test]
+async fn a_resume_names_the_version_it_continues() {
+    let payload = body(4096);
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/game")
+        .match_header("range", "bytes=1024-")
+        .match_header("if-range", "\"v1\"")
+        .with_status(206)
+        .with_header("content-range", "bytes 1024-4095/4096")
+        .with_header("etag", "\"v1\"")
+        .with_body(&payload[1024..])
+        .create_async()
+        .await;
+
+    let dest = scratch("if-range");
+    std::fs::write(&dest, &payload[..1024]).unwrap();
+    let mut cp = Checkpoint::new(Some(4096), Some("\"v1\"".into()), None);
+    cp.received_bytes = 1024;
+    cp.save(&dest).await.unwrap();
+
+    let mut resumable = Vec::new();
+    let outcome = Downloader::new(reqwest::Client::new())
+        .download(
+            &format!("{}/game", server.url()),
+            &dest,
+            |r| r,
+            |p| resumable.push(p.resumable),
+        )
+        .await
+        .unwrap();
+
+    mock.assert_async().await;
+    assert_eq!(outcome.mode, StartMode::Resumed);
+    assert_eq!(std::fs::read(&dest).unwrap(), payload);
+    assert!(resumable.iter().all(|r| *r));
+}
+
+#[tokio::test]
+async fn a_pause_during_a_stall_returns_promptly() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buf = [0u8; 1024];
+        let _ = socket.read(&mut buf).await;
+        let header = "HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nETag: \"v1\"\r\nAccept-Ranges: bytes\r\n\r\n";
+        socket.write_all(header.as_bytes()).await.unwrap();
+        socket.write_all(&[7u8; 1000]).await.unwrap();
+        socket.flush().await.unwrap();
+        // Then nothing, holding the connection open.
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    });
+
+    let dest = scratch("stall");
+    let cancel = Cancel::new();
+    // Paused from elsewhere while no bytes are arriving, as the Pause button does.
+    let pauser = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        pauser.pause();
+    });
+    let started = std::time::Instant::now();
+    let result = Downloader::new(reqwest::Client::new())
+        .with_cancel(cancel)
+        .download(&format!("http://{addr}/game"), &dest, |r| r, |_| {})
+        .await;
+
+    assert!(matches!(result, Err(CoreError::Paused)), "{result:?}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert_eq!(std::fs::read(&dest).unwrap(), vec![7u8; 1000]);
+    let cp = Checkpoint::load(&dest).await.expect("checkpoint kept");
+    assert_eq!(cp.received_bytes, 1000);
+    assert_eq!(cp.etag.as_deref(), Some("\"v1\""));
 }

@@ -303,6 +303,7 @@ pub fn run() {
             ipc::library::list_entries,
             ipc::library::start_download,
             ipc::library::cancel_download,
+            ipc::library::pause_download,
             ipc::library::rescan_library,
             ipc::library::delete_staging,
             ipc::library::delete_download,

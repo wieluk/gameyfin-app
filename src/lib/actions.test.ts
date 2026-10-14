@@ -24,7 +24,9 @@ describe("isLocal", () => {
     // These appear in Downloads, but offering them in an offline library would promise
     // something the user cannot finish without the server.
     expect(
-      isLocal(entry({ kind: "downloading", receivedBytes: 1, totalBytes: 9, bytesPerSecond: 1 })),
+      isLocal(
+        entry({ kind: "downloading", receivedBytes: 1, totalBytes: 9, bytesPerSecond: 1, resumable: true }),
+      ),
     ).toBe(false);
     expect(isLocal(entry({ kind: "preparing", message: "Setting up" }))).toBe(false);
     expect(isLocal(entry(fixture.failed({ message: "no" })))).toBe(false);
@@ -91,5 +93,20 @@ describe("a game that fails to start", () => {
       expect(isInDownloads(entry(state))).toBe(true);
       expect(isInstalled(entry(state))).toBe(false);
     }
+  });
+});
+
+describe("a paused download", () => {
+  const paused = entry({ kind: "paused", receivedBytes: 4, totalBytes: 9, resumable: true });
+
+  it("waits in Downloads", () => {
+    expect(isInDownloads(paused)).toBe(true);
+    expect(isLocal(paused)).toBe(false);
+  });
+
+  it("offers Resume, which picks the download up again", () => {
+    const action = primaryAction(paused.state);
+    expect(action.label).toBe("Resume");
+    expect(action.disabled).toBe(false);
   });
 });

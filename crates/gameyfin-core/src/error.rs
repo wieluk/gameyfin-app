@@ -17,10 +17,14 @@ pub enum CoreError {
     #[error("download finished at {actual} bytes but {expected} were expected")]
     SizeMismatch { expected: u64, actual: u64 },
 
-    /// The caller asked for the transfer to stop. Not a failure: the partial file and its
-    /// checkpoint are intact, so it resumes rather than restarting.
+    /// The caller asked for the transfer to stop. Not a failure, and the partial file and
+    /// checkpoint are left for the caller to keep or discard.
     #[error("cancelled")]
     Cancelled,
+
+    /// Stopped to continue later, keeping what arrived, including a partly unpacked folder.
+    #[error("paused")]
+    Paused,
 
     #[error("no executable found under {0}")]
     NoExecutable(String),

@@ -26,6 +26,7 @@ export function DownloadsView() {
   // Inspecting the download first, so the dialog opens complete.
   const install = usePreloaded((entry: LibraryEntry) => backend.installOptions(entry.game.id));
   const [deleting, setDeleting] = useState<LibraryEntry | null>(null);
+  const [cancelling, setCancelling] = useState<LibraryEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
@@ -106,7 +107,13 @@ export function DownloadsView() {
       await backend.runSetupElevated(gameId);
       await queryClient.invalidateQueries({ queryKey: keys.entries });
     });
-  const cancelDownload = (entry: LibraryEntry) => run(() => backend.cancelDownload(entry.game.id));
+  const pauseDownload = (entry: LibraryEntry) => run(() => backend.pauseDownload(entry.game.id));
+  const resumeDownload = (entry: LibraryEntry) => run(() => backend.startDownload(entry.game.id));
+  function confirmCancel() {
+    const target = cancelling;
+    setCancelling(null);
+    if (target) void run(() => backend.cancelDownload(target.game.id));
+  }
   const stopInstall = (entry: LibraryEntry) => run(() => backend.stopGame(entry.game.id));
 
   return (
@@ -121,7 +128,9 @@ export function DownloadsView() {
             onInstall={(target) => void run(() => install.open(target))}
             opening={install.loading?.game.id === entry.game.id}
             onDelete={setDeleting}
-            onCancel={cancelDownload}
+            onPause={pauseDownload}
+            onResume={resumeDownload}
+            onCancel={setCancelling}
             onStopInstall={stopInstall}
             onOpenFolder={openFolder}
             onElevate={runAsAdministrator}
@@ -136,6 +145,16 @@ export function DownloadsView() {
           entry={install.opened.target}
           plan={install.opened.data}
           onClose={install.close}
+        />
+      )}
+
+      {cancelling && (
+        <ConfirmDialog
+          title={`Cancel the download of ${cancelling.game.title}?`}
+          body={<>What has arrived so far is deleted. Pause keeps it instead.</>}
+          confirmLabel="Cancel download"
+          onConfirm={confirmCancel}
+          onCancel={() => setCancelling(null)}
         />
       )}
 
@@ -162,6 +181,8 @@ function DownloadRow({
   entry,
   onInstall,
   onDelete,
+  onPause,
+  onResume,
   onCancel,
   onStopInstall,
   onOpenFolder,
@@ -174,6 +195,8 @@ function DownloadRow({
   opening: boolean;
   onInstall: (entry: LibraryEntry) => void;
   onDelete: (entry: LibraryEntry) => void;
+  onPause: (entry: LibraryEntry) => void;
+  onResume: (entry: LibraryEntry) => void;
   onCancel: (entry: LibraryEntry) => void;
   onStopInstall: (entry: LibraryEntry) => void;
   onOpenFolder: (gameId: number) => void;
@@ -194,13 +217,18 @@ function DownloadRow({
       </div>
 
       {(state.kind === "downloading" ||
+        state.kind === "paused" ||
         state.kind === "extracting" ||
         state.kind === "installing") && (
         <>
           <div className="h-1.5 overflow-hidden rounded-full bg-default-200">
             <div
               className={`h-full rounded-full transition-[width] ${
-                state.kind === "downloading" ? "bg-primary" : "bg-warning"
+                state.kind === "downloading"
+                  ? "bg-primary"
+                  : state.kind === "paused"
+                    ? "bg-default-400"
+                    : "bg-warning"
               } ${progressPercent(entry) === undefined ? "animate-pulse" : ""}`}
               style={{ width: `${progressPercent(entry) ?? 100}%` }}
             />
@@ -209,7 +237,11 @@ function DownloadRow({
             <span className="min-w-0 truncate">
               {state.kind === "downloading"
                 ? formatSpeed(state.bytesPerSecond)
-                : state.kind === "extracting"
+                : state.kind === "paused"
+                  ? state.resumable
+                    ? "Paused"
+                    : "Paused. This server cannot resume, so it starts over."
+                  : state.kind === "extracting"
                   ? `${Math.round(state.percent)}%`
                   : [state.step, formatInstallProgress(state.progress)].filter(Boolean).join(", ")}
             </span>
@@ -224,6 +256,24 @@ function DownloadRow({
               {/* Extraction always finishes, so it cannot be stopped; an installer can wedge,
                   so it can, and "Retry install" starts it over. */}
               {state.kind === "downloading" && (
+                <Button
+                  size="sm"
+                  onClick={() => onPause(entry)}
+                  title={
+                    state.resumable
+                      ? undefined
+                      : "This server cannot resume downloads, so it will start over."
+                  }
+                >
+                  Pause
+                </Button>
+              )}
+              {state.kind === "paused" && (
+                <Button size="sm" variant="primary" icon="download" onClick={() => onResume(entry)}>
+                  Resume
+                </Button>
+              )}
+              {(state.kind === "downloading" || state.kind === "paused") && (
                 <Button size="sm" variant="destructive" onClick={() => onCancel(entry)}>
                   Cancel
                 </Button>
@@ -299,7 +349,7 @@ function DownloadRow({
 /** Undefined when the total is unknown, so the bar pulses. */
 function progressPercent(entry: LibraryEntry): number | undefined {
   const { state } = entry;
-  if (state.kind === "downloading") {
+  if (state.kind === "downloading" || state.kind === "paused") {
     return state.totalBytes > 0 ? (state.receivedBytes / state.totalBytes) * 100 : 0;
   }
   if (state.kind === "extracting") return state.percent;
@@ -314,6 +364,8 @@ function statusText(entry: LibraryEntry): string {
   switch (state.kind) {
     case "downloading":
       return `${formatBytes(state.receivedBytes)} of ${formatBytes(state.totalBytes)}`;
+    case "paused":
+      return `Paused, ${formatBytes(state.receivedBytes)} of ${formatBytes(state.totalBytes)}`;
     case "downloaded":
       return `Ready to install (${formatBytes(state.bytes)})`;
     case "extracting":

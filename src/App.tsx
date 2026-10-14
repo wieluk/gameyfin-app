@@ -111,7 +111,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
 
   // Anything mid-pipeline or awaiting a decision counts towards the Downloads badge.
   const pending = (entries.data ?? []).filter((e) =>
-    ["downloading", "extracting", "extracted", "installing"].includes(e.state.kind),
+    ["downloading", "paused", "extracting", "extracted", "installing"].includes(e.state.kind),
   ).length;
 
   // Saves needing a decision badge their tab too. One request covers the whole library.

@@ -73,6 +73,7 @@ export const backend = {
   /** `root` must be one of the configured games folders; omitted means the default. */
   startDownload: (gameId: number, root?: string) =>
     invoke<void>("start_download", { gameId, root: root ?? null }),
+  pauseDownload: (gameId: number) => invoke<void>("pause_download", { gameId }),
   cancelDownload: (gameId: number) => invoke<void>("cancel_download", { gameId }),
   installOptions: (gameId: number) => invoke<InstallPlan>("install_options", { gameId }),
   install: (gameId: number, method?: string, deleteArchive?: boolean, deleteDownload?: boolean) =>

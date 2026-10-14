@@ -9,7 +9,9 @@ use tauri::{AppHandle, Manager, State};
 
 use super::{notify, notify_state, LibraryFolder};
 use crate::error::{blocking, CommandError, CommandResult, Context};
-use crate::library_state::{scan_download_setups, Activity, GameState, Stage, EXTRACT_DIR};
+use crate::library_state::{
+    scan_download_setups, Activity, GameState, PartialDownload, Stage, EXTRACT_DIR,
+};
 use crate::progress::Throttle;
 use crate::state::AppState;
 
@@ -72,10 +74,16 @@ pub async fn start_download(
     root: Option<String>,
 ) -> CommandResult<()> {
     let library = state.library().clone();
+    // Without a named folder, a paused or failed download resumes beside its partial file.
+    let previous = library
+        .record(game_id)
+        .partial_download
+        .filter(|_| root.is_none());
     let idle = Activity::Downloading {
-        received_bytes: 0,
-        total_bytes: 0,
+        received_bytes: previous.as_ref().map_or(0, |p| p.received_bytes),
+        total_bytes: previous.as_ref().map_or(0, |p| p.total_bytes),
         bytes_per_second: 0.0,
+        resumable: previous.as_ref().is_some_and(|p| p.resumable),
     };
     let Some(claim) = library.claim(game_id, idle) else {
         return Ok(());
@@ -84,13 +92,6 @@ pub async fn start_download(
 
     let client = state.require_client()?;
     let settings = state.settings();
-    // Without a named folder a retry resumes beside the partial file.
-    let root = match root {
-        Some(root) => settings
-            .require_root(Some(root))
-            .map_err(CommandError::Message)?,
-        None => super::root_for_game(&state, game_id)?,
-    };
     let game = state.game(game_id).await?;
     let providers = client.download_providers().await.map_err(|e| {
         if e.is_unreachable() {
@@ -107,23 +108,52 @@ pub async fn start_download(
             .ok_or_else(|| CommandError::msg("The server has no download provider enabled."))?
             .clone();
 
+    let mut partial = match previous {
+        Some(partial) => partial,
+        None => {
+            let root = match root {
+                Some(root) => settings
+                    .require_root(Some(root))
+                    .map_err(CommandError::Message)?,
+                None => super::root_for_game(&state, game_id)?,
+            };
+            let destination = crate::downloads::download_path(
+                &root,
+                game.id,
+                &game.title,
+                &crate::downloads::provisional_filename(&game.title),
+            );
+            let unpack_into = destination
+                .parent()
+                .filter(|_| settings.auto_extract || settings.auto_install)
+                .map(|dir| dir.join(EXTRACT_DIR));
+            PartialDownload {
+                destination,
+                unpack_into,
+                received_bytes: 0,
+                total_bytes: game.metadata.file_size,
+                resumable: false,
+            }
+        }
+    };
+
     // Refused up front rather than after gigabytes: the server knows the size.
-    if game.metadata.file_size > 0 {
-        gameyfin_core::download::check_space(Path::new(&root), game.metadata.file_size)
+    let remaining = game
+        .metadata
+        .file_size
+        .saturating_sub(partial.received_bytes);
+    if remaining > 0 {
+        gameyfin_core::download::check_space(&partial.destination, remaining)
             .map_err(|e| CommandError::msg(e.to_string()))?;
     }
 
+    // Recorded before any bytes move, so quitting part way leaves a paused download.
+    library
+        .update_record(game_id, |r| r.partial_download = Some(partial.clone()))
+        .await;
+
     let url = client.download_url(&game, &provider.key);
-    let destination = crate::downloads::download_path(
-        &root,
-        game.id,
-        &game.title,
-        &crate::downloads::provisional_filename(&game.title),
-    );
-    let unpack_into = destination
-        .parent()
-        .filter(|_| settings.auto_extract || settings.auto_install)
-        .map(|dir| dir.join(EXTRACT_DIR));
+    let destination = partial.destination.clone();
     let expected_bytes = game.metadata.file_size;
     let credentials = settings.credentials();
     let rate_limit = state.download_limit();
@@ -134,16 +164,19 @@ pub async fn start_download(
 
     tauri::async_runtime::spawn(async move {
         let _claim = claim;
+        let last = std::sync::Mutex::new(None::<gameyfin_core::Progress>);
         let mut on_progress = {
-            let (library, app) = (library.clone(), app.clone());
+            let (library, app, last) = (library.clone(), app.clone(), &last);
             let mut throttle = Throttle::new(300);
             move |p: gameyfin_core::Progress| {
+                *crate::state::lock(last) = Some(p);
                 library.set_activity(
                     game_id,
                     Activity::Downloading {
                         received_bytes: p.received_bytes,
                         total_bytes: p.total_bytes.unwrap_or(expected_bytes),
                         bytes_per_second: p.bytes_per_second,
+                        resumable: p.resumable,
                     },
                 );
                 if throttle.ready() {
@@ -152,22 +185,23 @@ pub async fn start_download(
             }
         };
         let authorize = |req: reqwest::RequestBuilder| credentials.apply(req);
-        let mut unpack_into = unpack_into;
         let result = loop {
             let result = downloader
                 .download_or_unpack(
                     &url,
                     &destination,
-                    unpack_into.as_deref(),
+                    partial.unpack_into.as_deref(),
                     &authorize,
                     &mut on_progress,
                 )
                 .await;
             match result {
                 // A format the stream reader refuses is fetched again as a plain file.
-                Err(gameyfin_core::CoreError::CannotStream(reason)) if unpack_into.is_some() => {
+                Err(gameyfin_core::CoreError::CannotStream(reason))
+                    if partial.unpack_into.is_some() =>
+                {
                     tracing::info!(game_id, %reason, "saving the download as a file instead");
-                    unpack_into = None;
+                    partial.unpack_into = None;
                 }
                 result => break result,
             }
@@ -181,6 +215,9 @@ pub async fn start_download(
                 if gameyfin_core::extract::is_torrent_metainfo(&outcome.path) =>
             {
                 let _ = tokio::fs::remove_file(&outcome.path).await;
+                library
+                    .update_record(game_id, |r| r.partial_download = None)
+                    .await;
                 let message = format!(
                     "{} hands back a torrent, which Gameyfin cannot download from. Pick another provider under Downloads.",
                     provider.name
@@ -193,6 +230,7 @@ pub async fn start_download(
                     .update_record(game_id, |r| {
                         r.archive_path = Some(outcome.path.clone());
                         r.archive_bytes = outcome.bytes;
+                        r.partial_download = None;
                     })
                     .await;
                 library.clear_activity(game_id);
@@ -213,6 +251,9 @@ pub async fn start_download(
             }
             Ok(Outcome::Unpacked { dir, bytes }) => {
                 tracing::info!(game_id, ?dir, bytes, "download unpacked as it arrived");
+                library
+                    .update_record(game_id, |r| r.partial_download = None)
+                    .await;
                 let setups = {
                     let dir = dir.clone();
                     tokio::task::spawn_blocking(move || scan_download_setups(&dir))
@@ -223,13 +264,79 @@ pub async fn start_download(
             }
             Err(gameyfin_core::CoreError::Cancelled) => {
                 tracing::info!(game_id, "download cancelled");
+                discard_partial(&partial).await;
+                library
+                    .update_record(game_id, |r| r.partial_download = None)
+                    .await;
                 library.clear_activity(game_id);
             }
-            Err(e) => fail(&app, game_id, Stage::Download, &game.title, e.to_string()).await,
+            Err(e) => {
+                let last = *crate::state::lock(&last);
+                stopped_at(&mut partial, last).await;
+                let paused = matches!(e, gameyfin_core::CoreError::Paused);
+                // A failure with nothing on disk has nothing to resume.
+                let keep = paused || left_anything(&partial).await;
+                library
+                    .update_record(game_id, |r| {
+                        r.partial_download = keep.then(|| partial.clone())
+                    })
+                    .await;
+                if paused {
+                    tracing::info!(
+                        game_id,
+                        received = partial.received_bytes,
+                        "download paused"
+                    );
+                    library.clear_activity(game_id);
+                } else {
+                    fail(&app, game_id, Stage::Download, &game.title, e.to_string()).await;
+                }
+            }
         }
         notify(&app);
     });
     Ok(())
+}
+
+/// Where a stopped download got to. The checkpoint is exact, and behind the last progress
+/// for a zip, which resumes from the start of the entry it was in.
+async fn stopped_at(partial: &mut PartialDownload, last: Option<gameyfin_core::Progress>) {
+    let Some(last) = last else {
+        return;
+    };
+    partial.resumable = last.resumable;
+    partial.total_bytes = last.total_bytes.unwrap_or(partial.total_bytes);
+    partial.received_bytes = match gameyfin_core::Checkpoint::load(&partial.destination).await {
+        Some(checkpoint) if last.resumable => checkpoint.received_bytes,
+        _ => last.received_bytes,
+    };
+}
+
+async fn left_anything(partial: &PartialDownload) -> bool {
+    let exists = |path: &Path| tokio::fs::try_exists(path.to_path_buf());
+    exists(&partial.destination).await.unwrap_or(false)
+        || match &partial.unpack_into {
+            Some(dir) => exists(dir).await.unwrap_or(false),
+            None => false,
+        }
+}
+
+/// Deletes what a stopped download left: the partial file, its checkpoint and anything
+/// unpacked, then the game's download folder if that leaves it empty.
+async fn discard_partial(partial: &PartialDownload) {
+    let _ = tokio::fs::remove_file(&partial.destination).await;
+    let _ = gameyfin_core::Checkpoint::clear(&partial.destination).await;
+    if let Some(dir) = &partial.unpack_into {
+        if let Err(e) = tokio::fs::remove_dir_all(dir).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(?dir, "could not remove a cancelled download: {e}");
+            }
+        }
+    }
+    if let Some(folder) = partial.destination.parent() {
+        // Only succeeds when empty, which is the point.
+        let _ = tokio::fs::remove_dir(folder).await;
+    }
 }
 
 /// Records a failure on the game's row and tells the desktop.
@@ -241,7 +348,22 @@ pub async fn fail(app: &AppHandle, game_id: i64, stage: Stage, title: &str, mess
     crate::notify::failed(app, game_id, stage.label(), title, &message).await;
 }
 
-/// A saved file keeps its checkpoint for a resume; a download being unpacked starts over.
+/// Stops a download, keeping what arrived so it can resume.
+#[tauri::command]
+pub async fn pause_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_id: i64,
+) -> CommandResult<()> {
+    if let Some(cancel) = state.downloads.get(game_id) {
+        cancel.pause();
+    }
+    notify(&app);
+    Ok(())
+}
+
+/// Stops a download and deletes what it left. A paused one has nothing running, so its
+/// files go straight away.
 #[tauri::command]
 pub async fn cancel_download(
     app: AppHandle,
@@ -250,6 +372,15 @@ pub async fn cancel_download(
 ) -> CommandResult<()> {
     if let Some(cancel) = state.downloads.get(game_id) {
         cancel.cancel();
+    } else if let Some(partial) = state.library().record(game_id).partial_download {
+        let claim = claim(&state, game_id, "Cancelling the download")?;
+        discard_partial(&partial).await;
+        state
+            .library()
+            .update_record(game_id, |r| r.partial_download = None)
+            .await;
+        drop(claim);
+        state.library().clear_activity(game_id);
     }
     notify(&app);
     Ok(())
@@ -512,6 +643,10 @@ fn download_targets(
         record.archive_path.as_ref().and_then(parent),
         record.extracted_dir.as_ref().and_then(parent),
         record.extracted_dir.clone(),
+        record
+            .partial_download
+            .as_ref()
+            .and_then(|p| parent(&p.destination)),
         derived,
     ]
     .into_iter()
@@ -547,6 +682,7 @@ async fn remove_download(state: &AppState, game_id: i64, keep: Option<&Path>) ->
             r.archive_bytes = 0;
             r.extracted_dir = None;
             r.staging_setups.clear();
+            r.partial_download = None;
         })
         .await;
     Ok(())
