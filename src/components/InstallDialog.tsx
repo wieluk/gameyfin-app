@@ -48,6 +48,8 @@ export function InstallDialog({
   const [order, setOrder] = useState<string[] | null>(null);
   const setups = arranged(plan.setups, order);
   const recognised = setups.filter((s) => s.matched);
+  // Every program in the download is listed, so only a recognised one makes this a setup install.
+  const hasSetups = recognised.length > 0;
   // Null until touched, so the plan's recommendation applies once it loads.
   const [pickedSetups, setPickedSetups] = useState<string[] | null>(null);
   const selected = pickedSetups ?? defaultSelection(setups);
@@ -143,7 +145,7 @@ export function InstallDialog({
           hint="Passed to the setup program, and kept for this game. A silent-install flag is what lets it install without asking anything."
         />
         {/* A silent install is told where to go, so there is nothing to type. */}
-        {plan.needsInstallPath && !(setups.length > 0 && silent) && (
+        {plan.needsInstallPath && !(hasSetups && silent) && (
           <div>
             <p className="mb-1 text-xs text-foreground/55">Type this into the installer</p>
             <div className="flex items-start gap-2">
@@ -192,7 +194,7 @@ export function InstallDialog({
       </header>
 
       <div className={PANEL_BODY}>
-        {plan.options.length === 0 && setups.length === 0 && (
+        {plan.options.length === 0 && !hasSetups && (
           <Alert>
             This app cannot install a {plan.payload} yet. Install it yourself, then
             point the app at the folder below.
@@ -202,7 +204,7 @@ export function InstallDialog({
         {/* One card per way of installing, each with its own button, so what belongs to which
             choice is never in doubt. The first is the one to pick when unsure. */}
         <div className="flex flex-col">
-          {setups.length > 0 && (
+          {hasSetups && (
             <MethodCard
               title="Run the setup programs"
               description="The game's own installers, in the order they run. Drag to change it."
@@ -233,12 +235,12 @@ export function InstallDialog({
 
           {plan.options.map((option, index) => (
             <div key={option.key}>
-              {(setups.length > 0 || index > 0) && <Or />}
+              {(hasSetups || index > 0) && <Or />}
               <MethodCard
                 title={option.label}
                 description={option.description}
-                recommended={setups.length === 0 && index === 0 && plan.options.length > 1}
-                primary={setups.length === 0 && index === 0}
+                recommended={!hasSetups && index === 0 && plan.options.length > 1}
+                primary={!hasSetups && index === 0}
                 action={ACTION_LABELS[option.key] ?? "Start"}
                 busy={starting === option.key}
                 disabled={Boolean(option.blockedBy) || starting !== null}
@@ -257,14 +259,14 @@ export function InstallDialog({
                     onChange={setDeleteArchive}
                   />
                 )}
-                {option.interactive && setups.length === 0 && wizardSettings()}
+                {option.interactive && !hasSetups && wizardSettings()}
               </MethodCard>
             </div>
           ))}
         </div>
 
         {/* Shared by every card above, so it sits outside them. */}
-        {(setups.length > 0 || plan.options.some((o) => o.key !== "extract")) && (
+        {(hasSetups || plan.options.some((o) => o.key !== "extract")) && (
           <div className="mt-4 rounded-lg border border-default-200 px-3 py-2">
             <SwitchField
               label="Delete the download after installing"
