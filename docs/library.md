@@ -118,4 +118,5 @@ Gameyfin.
 
 Folders Gameyfin does not manage, such as a game copied in by hand or one the server no longer
 has, are listed at the bottom of **Installed** and **Downloads** under **Not linked to a game**.
+When there are any, a button next to **Open folder** says how many and jumps to the list.
 **Assign to a game** renames the folder after a game and adopts it. **Delete** removes it.

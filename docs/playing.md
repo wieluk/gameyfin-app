@@ -4,7 +4,8 @@
 
 Press **Play**. Gameyfin watches the whole game while it runs, including games that start
 through a launcher that closes at once, and records your playtime. If a game quits within a
-few seconds, Gameyfin reads its output and tells you why in plain words where it can.
+few seconds, Gameyfin reads its output and tells you why in plain words where it can, on the
+game's card in **Library** and on its row in **Installed**.
 
 With save sync on, a newer save from another PC is restored before the game starts and your
 save is backed up after it closes. See [Save sync](saves.md).

@@ -116,3 +116,62 @@ export function outcomeOf(state: SaveSyncState): { text: string; ok: boolean } {
       return { text: describe(state).text, ok: true };
   }
 }
+
+/** What a row in the Saves list needs to sort and summarise it. */
+type Listed = { state: SaveSyncState; installed: boolean };
+
+/** How soon a row needs the user, lowest first. A row needing nothing sorts last. */
+export function attentionRank({ state, installed }: Listed): number {
+  switch (state.kind) {
+    case "conflict":
+      return 0;
+    case "platform-mismatch":
+      return 1;
+    case "failed":
+      return 2;
+    case "remote-newer":
+      return installed ? 3 : 6;
+    case "unmatched":
+      return 4;
+    case "local-newer":
+    case "never-synced":
+      return installed ? 5 : 6;
+    default:
+      return 6;
+  }
+}
+
+/** Attention first, the server's order kept within each group. */
+export function byAttention<T extends Listed>(rows: T[]): T[] {
+  return rows
+    .map((row, index) => ({ row, index, rank: attentionRank(row) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(({ row }) => row);
+}
+
+const ATTENTION: [rank: number, one: string, many: (n: number) => string][] = [
+  [0, "1 conflict to settle", (n) => `${n} conflicts to settle`],
+  [1, "1 saved on another system", (n) => `${n} saved on another system`],
+  [2, "1 failed", (n) => `${n} failed`],
+  [3, "1 newer save to restore", (n) => `${n} newer saves to restore`],
+  [4, "1 game to identify", (n) => `${n} games to identify`],
+  [5, "1 not backed up yet", (n) => `${n} not backed up yet`],
+];
+
+/** One line on what needs doing, such as "1 newer save to restore, 1 failed". */
+export function attentionSummary(rows: Listed[]): string {
+  const games = `${rows.length} ${rows.length === 1 ? "game" : "games"}`;
+  const parts = ATTENTION.flatMap(([rank, one, many]) => {
+    const count = rows.filter((row) => attentionRank(row) === rank).length;
+    return count === 0 ? [] : [count === 1 ? one : many(count)];
+  });
+  return parts.length === 0 ? `${games}. Nothing needs you.` : `${games}. ${parts.join(", ")}.`;
+}
+
+/** Whether "Back up all" includes a row: installed, its saves found, and nothing to settle. */
+export function backsUp({ state, installed }: Listed): boolean {
+  return (
+    installed &&
+    ["in-sync", "local-newer", "never-synced", "failed"].includes(state.kind)
+  );
+}

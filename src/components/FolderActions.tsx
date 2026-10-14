@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui";
+import { UntrackedJump } from "@/components/UntrackedFolders";
 import { backend, type LibraryFolder } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 
-/** The Rescan and Open folder pair shared by the Downloads and Installed headers. */
+/** Rescan, Open folder and any unlinked folders, shared by the Downloads and Installed headers. */
 export function FolderActions({
   folder,
   onError,
@@ -55,6 +56,7 @@ export function FolderActions({
       >
         Open folder
       </Button>
+      <UntrackedJump folder={folder} />
     </>
   );
 }

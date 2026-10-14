@@ -66,6 +66,7 @@ export function NotificationSection() {
 export function WindowSection() {
   const settings = useAppSettings();
   const { save, error } = useSettingSaver();
+  const autostart = settings.data?.autostart ?? false;
 
   return (
     <Section title="Window" help="window">
@@ -76,17 +77,19 @@ export function WindowSection() {
         onChange={(next) => save({ closeToTray: next })}
       />
       <SwitchField
-        label="Start hidden in the tray"
-        hint="For starting Gameyfin with your session without a window appearing."
-        checked={settings.data?.startMinimized ?? false}
-        onChange={(next) => save({ startMinimized: next })}
-      />
-      <SwitchField
         label="Start Gameyfin when I log in"
-        hint="Starts Gameyfin hidden in the tray with your session, so background downloads keep working."
-        checked={settings.data?.autostart ?? false}
+        hint="Starts Gameyfin with your session, so background downloads keep working."
+        checked={autostart}
         onChange={(next) => save({ autostart: next })}
-      />
+      >
+        <SwitchField
+          label="Start hidden in the tray"
+          hint="Only for that start. Opening Gameyfin yourself always shows the window."
+          checked={settings.data?.autostartHidden ?? true}
+          disabled={!autostart}
+          onChange={(next) => save({ autostartHidden: next })}
+        />
+      </SwitchField>
       <SwitchField
         label="Bring Gameyfin back when a game closes"
         hint="Raises the window once a game quits, where its save upload and any error are shown. Turn it off if you start games from Steam."

@@ -185,8 +185,9 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
         tauri::async_runtime::spawn(saves::ensure_manifest(app.clone()));
     }
 
+    // Only a login start hides: one by hand, or the restart after an update, must show the window.
     // Hiding needs somewhere to be hidden to, which only the tray provides.
-    if (settings.start_minimized || launched_hidden) && tray::has_tray() {
+    if launched_hidden && settings.autostart_hidden && tray::has_tray() {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.hide();
         }

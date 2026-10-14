@@ -69,10 +69,14 @@ Each game shows one line saying where it stands:
 | Not sure which game this is | No certain database match. | **Choose game**, or **Set folders**. |
 | Nothing saved yet, or the saves are not where the game keeps them | Recognised, but no files found. | Play first, or **Set folders**. |
 | Not backed up yet | Never synced on this PC. | **Back up**. |
+| An error in red | The last backup or restore failed, for the reason shown. | Fix the cause, then **Try again**. |
 
-By default only installed games are listed. **Show remote saves** adds games with stored saves
-that are not installed here, and **Show all games** lists your whole library. A save can only
-be restored once its game is installed.
+**Show** picks the list: **Installed** (the default), **With saves** adds games with stored saves
+that are not installed here, and **All games** lists your whole library. A save can only be
+restored once its game is installed. **Search saves** narrows the list by title.
+
+A line above the list counts what needs you, such as a newer save to restore or a failed
+backup, and those games come first.
 
 Expand a game to:
 
@@ -83,8 +87,14 @@ Expand a game to:
 - **Open folder** where the saves are on this PC
 - **Set folders** or **Choose game**
 
-At the top, **Open saves folder** opens `Gameyfin/Saves`, and **Delete all saves** removes
-every stored save for every game. Save files on this PC are not touched.
+The **⋯** menu at the top holds the actions for every game at once, each asking first:
+
+- **Back up all**: backs up every installed game whose saves were found, one after another.
+  An unchanged save is not uploaded again, and a game with a newer save elsewhere is left for
+  you to decide.
+- **Open backups folder**: opens `Gameyfin/Saves`.
+- **Delete all saves**: removes every stored save for every game. Save files on this PC are
+  not touched.
 
 ## First start on a PC
 
