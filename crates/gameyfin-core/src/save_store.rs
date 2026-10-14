@@ -313,6 +313,7 @@ impl SaveStore for FolderStore {
             ludusavi_title: metadata.ludusavi_title.clone(),
             locked: false,
             created_at: Some(iso8601_now()),
+            base_save_id: existing.first().map(|v| v.id.clone()),
         };
 
         tokio::fs::copy(archive, self.archive_for(game_id, &id))
@@ -620,6 +621,7 @@ impl SaveStore for WebDavStore {
             ludusavi_title: metadata.ludusavi_title.clone(),
             locked: false,
             created_at: Some(iso8601_now()),
+            base_save_id: existing.first().map(|v| v.id.clone()),
         };
 
         let put = |path: String, body: Vec<u8>| {
@@ -911,6 +913,9 @@ mod folder_tests {
 
         let listed = store.list(42).await.unwrap();
         assert_eq!(2, listed.len(), "the losing version is kept, not replaced");
+        // Recorded as written on top of what it beat, so another PC sees a newer save, not a fork.
+        assert_eq!(Some(listed[1].id.clone()), listed[0].base_save_id);
+        assert_eq!(None, listed[1].base_save_id);
     }
 
     #[tokio::test]
@@ -966,6 +971,7 @@ mod folder_tests {
                 ludusavi_title: None,
                 locked,
                 created_at: None,
+                base_save_id: None,
             };
             std::fs::write(
                 root.join(format!("42/{id}.json")),

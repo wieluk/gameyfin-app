@@ -36,7 +36,7 @@ export class ErrorBoundary extends React.Component<
           The window could not finish drawing. Reloading usually clears it, and your
           downloads and saves are not affected.
         </p>
-        <pre className="max-h-40 max-w-xl overflow-auto rounded-lg bg-content2 p-3 text-left text-[11px] text-foreground/70">
+        <pre className="max-h-40 max-w-xl overflow-auto rounded-lg bg-content2 p-3 text-left text-[0.6875rem] text-foreground/70">
           {this.state.error.message}
         </pre>
         <Button variant="primary" size="lg" onClick={() => window.location.reload()}>

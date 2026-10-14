@@ -72,6 +72,7 @@ const entries: LibraryEntry[] = [
     receivedBytes: 4.2 * 1024 ** 3,
     totalBytes: 21 * 1024 ** 3,
     bytesPerSecond: 18 * 1024 ** 2,
+    resumable: true,
   }),
   entry(4, "Outer Wilds", "Adventure", {
     kind: "installing",

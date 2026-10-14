@@ -125,18 +125,18 @@ export function ScanThisPcDialog({
                 />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs text-foreground">{find.ludusaviTitle}</p>
-                  <p className="truncate text-[11px] text-foreground/45">
+                  <p className="truncate text-[0.6875rem] text-foreground/45">
                     {find.files} {find.files === 1 ? "file" : "files"},{" "}
                     {formatBytes(find.bytes)}
                     {find.folder ? ` in ${find.folder}` : ""}
                   </p>
                   {find.gameId !== null && find.matched !== "recorded" && (
-                    <p className="truncate text-[11px] text-foreground/45">
+                    <p className="truncate text-[0.6875rem] text-foreground/45">
                       Matched to {find.gameTitle} in your library.
                     </p>
                   )}
                   {find.alreadyBackedUp && (
-                    <p className="truncate text-[11px] text-foreground/45">
+                    <p className="truncate text-[0.6875rem] text-foreground/45">
                       Already backed up; ticking it uploads what is here now.
                     </p>
                   )}
@@ -152,7 +152,7 @@ export function ScanThisPcDialog({
         )}
 
         {progress && (
-          <p role="status" className="mt-3 text-[11px] text-foreground/60">
+          <p role="status" className="mt-3 text-[0.6875rem] text-foreground/60">
             {progress}
           </p>
         )}
@@ -242,7 +242,7 @@ function MatchToGame({
             </li>
           ))}
           {shown.length === 0 && (
-            <li className="px-2.5 py-1.5 text-[11px] text-foreground/45">
+            <li className="px-2.5 py-1.5 text-[0.6875rem] text-foreground/45">
               Nothing in your library matches that name.
             </li>
           )}

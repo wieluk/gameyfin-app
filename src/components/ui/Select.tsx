@@ -4,7 +4,7 @@ import { Icon } from "@/components/Icon";
 
 /** Native underneath, so keyboards, gamepads and the system popup all keep working. */
 const SIZE = {
-  sm: "py-1 pl-2.5 pr-7 text-[11px]",
+  sm: "py-1 pl-2.5 pr-7 text-[0.6875rem]",
   md: "py-1.5 pl-3 pr-8 text-xs",
 } as const;
 

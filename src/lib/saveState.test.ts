@@ -1,6 +1,14 @@
 import { describe as group, expect, it } from "vitest";
 
-import { describe, outcomeOf, restoredOutcome } from "./saveState";
+import {
+  attentionSummary,
+  backsUp,
+  byAttention,
+  describe,
+  outcomeOf,
+  restoredOutcome,
+} from "./saveState";
+import type { SaveSyncState } from "@/types";
 
 group("restoredOutcome", () => {
   it("says a restore put the save back and where, never that it backed up", () => {
@@ -97,5 +105,37 @@ group("describe", () => {
 
     expect(known.text).not.toEqual(unknown.text);
     expect(unknown.text).toContain("database");
+  });
+});
+
+group("attention", () => {
+  const row = (state: SaveSyncState, installed = true) => ({ state, installed });
+  const inSync = row({ kind: "in-sync", lastSyncedAt: null });
+  const newer = row({ kind: "remote-newer", remoteAt: null, device: null });
+  const failed = row({ kind: "failed", message: "HTTP 507" });
+  const unknown = row({ kind: "unmatched", candidates: [] });
+
+  it("puts what needs the user first and keeps the server's order otherwise", () => {
+    const sorted = byAttention([inSync, newer, unknown, failed]);
+    expect(sorted).toEqual([failed, newer, unknown, inSync]);
+  });
+
+  it("does not ask to restore a game that is not installed here", () => {
+    const remote = row({ kind: "remote-newer", remoteAt: null, device: null }, false);
+    expect(attentionSummary([remote])).toBe("1 game. Nothing needs you.");
+  });
+
+  it("names each kind of problem once, with its count", () => {
+    expect(attentionSummary([inSync, newer, failed, row({ kind: "failed", message: "x" })])).toBe(
+      "4 games. 2 failed, 1 newer save to restore.",
+    );
+  });
+
+  it("backs up only installed games with nothing to settle", () => {
+    expect(backsUp(inSync)).toBe(true);
+    expect(backsUp(failed)).toBe(true);
+    expect(backsUp(newer)).toBe(false);
+    expect(backsUp(unknown)).toBe(false);
+    expect(backsUp(row({ kind: "local-newer", localAt: null }, false))).toBe(false);
   });
 });

@@ -36,7 +36,7 @@ export function RootsSection() {
   return (
     <Section title="Games folders" help="gamesFolders">
       {list.length === 0 && !roots.isLoading && (
-        <p className="text-[11px] text-foreground/45">
+        <p className="text-[0.6875rem] text-foreground/45">
           No folder yet. Add one and downloads will go there.
         </p>
       )}
@@ -49,18 +49,18 @@ export function RootsSection() {
           >
             <div className="flex items-baseline justify-between gap-3">
               <code
-                className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground"
+                className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-foreground"
                 title={root.path}
               >
                 {root.path}
               </code>
               {root.isDefault && (
-                <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">
+                <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[0.625rem] text-primary">
                   Default
                 </span>
               )}
             </div>
-            <p className="mt-0.5 text-[11px] text-foreground/45">
+            <p className="mt-0.5 text-[0.6875rem] text-foreground/45">
               {!root.exists
                 ? "This folder is missing. Games in it will not be found until it is back."
                 : root.freeBytes === null
@@ -184,50 +184,49 @@ export function AutomationSection() {
           hint="Install games when their download finishes, running Inno Setup and NSIS installers silently."
           checked={autoInstall}
           onChange={(next) => save({ autoInstall: next })}
-        >
-          <SwitchField
-            label="Delete the download after installing"
-            hint="Remove the download once the game is installed."
-            checked={settings.data?.deleteDownloadAfterInstall ?? false}
-            onChange={(next) => save({ deleteDownloadAfterInstall: next })}
-          />
-          <SetupSwitches
-            id="inno-setup-arguments"
-            label="Inno Setup options"
-            hint="Silent install switches for Inno Setup, empty for the default."
-            saved={settings.data?.innoSetupArguments}
-            disabled={!autoInstall}
-            onCommit={(value, clearDraft) => commit({ innoSetupArguments: value }, clearDraft)}
-          />
-          <SetupSwitches
-            id="nsis-arguments"
-            label="NSIS options"
-            hint="Silent install switches for NSIS, empty for the default."
-            saved={settings.data?.nsisArguments}
-            disabled={!autoInstall}
-            onCommit={(value, clearDraft) => commit({ nsisArguments: value }, clearDraft)}
-          />
-          <FormField
-            label="Never offer these executables"
-            htmlFor="ignored-executables"
-            hint="File names never picked as the game, one per line."
-          >
-            <TextArea
-              id="ignored-executables"
-              rows={6}
-              mono
-              value={ignored ?? savedIgnored}
-              onChange={(e) => setIgnored(e.target.value)}
-              onBlur={() => {
-                if (ignored !== null && ignored !== savedIgnored) {
-                  commit({ ignoredExecutables: ignored.split("\n") }, () => setIgnored(null));
-                }
-              }}
-              spellCheck={false}
-            />
-          </FormField>
-        </SwitchField>
+        />
       </div>
+
+      {/* Not under the switch above: these apply to an install started by hand as well. */}
+      <SwitchField
+        label="Delete the download after installing"
+        hint="Remove the download once the game is installed."
+        checked={settings.data?.deleteDownloadAfterInstall ?? false}
+        onChange={(next) => save({ deleteDownloadAfterInstall: next })}
+      />
+      <SetupSwitches
+        id="inno-setup-arguments"
+        label="Inno Setup options"
+        hint="Silent install switches for Inno Setup, used by automatic installs and by Install silently. Empty for the default."
+        saved={settings.data?.innoSetupArguments}
+        onCommit={(value, clearDraft) => commit({ innoSetupArguments: value }, clearDraft)}
+      />
+      <SetupSwitches
+        id="nsis-arguments"
+        label="NSIS options"
+        hint="Silent install switches for NSIS, used by automatic installs and by Install silently. Empty for the default."
+        saved={settings.data?.nsisArguments}
+        onCommit={(value, clearDraft) => commit({ nsisArguments: value }, clearDraft)}
+      />
+      <FormField
+        label="Never offer these executables"
+        htmlFor="ignored-executables"
+        hint="File names never picked as the game, one per line."
+      >
+        <TextArea
+          id="ignored-executables"
+          rows={6}
+          mono
+          value={ignored ?? savedIgnored}
+          onChange={(e) => setIgnored(e.target.value)}
+          onBlur={() => {
+            if (ignored !== null && ignored !== savedIgnored) {
+              commit({ ignoredExecutables: ignored.split("\n") }, () => setIgnored(null));
+            }
+          }}
+          spellCheck={false}
+        />
+      </FormField>
 
       <SaveError error={error} />
     </Section>
@@ -239,14 +238,12 @@ function SetupSwitches({
   label,
   hint,
   saved,
-  disabled,
   onCommit,
 }: {
   id: string;
   label: string;
   hint: string;
   saved: string | undefined;
-  disabled: boolean;
   onCommit: (value: string, clearDraft: () => void) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -255,7 +252,6 @@ function SetupSwitches({
       <TextInput
         id={id}
         mono
-        disabled={disabled}
         value={draft ?? saved ?? ""}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => {

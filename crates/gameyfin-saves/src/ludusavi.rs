@@ -262,10 +262,31 @@ impl Ludusavi {
     }
 
     pub async fn restore(&self, title: &str, source: &Path) -> SaveResult<ApiOutput<ScanGame>> {
+        self.run_restore(title, source, false).await
+    }
+
+    /// What a restore would change on this PC, without writing. A file the same as the backup's
+    /// is reported unchanged, which is how two machines' saves are compared.
+    pub async fn restore_preview(
+        &self,
+        title: &str,
+        source: &Path,
+    ) -> SaveResult<ApiOutput<ScanGame>> {
+        self.run_restore(title, source, true).await
+    }
+
+    async fn run_restore(
+        &self,
+        title: &str,
+        source: &Path,
+        preview: bool,
+    ) -> SaveResult<ApiOutput<ScanGame>> {
         let mut args = self.base_args();
+        args.extend(["restore".into(), "--api".into()]);
+        if preview {
+            args.push("--preview".into());
+        }
         args.extend([
-            "restore".into(),
-            "--api".into(),
             "--force".into(),
             "--no-cloud-sync".into(),
             "--path".into(),
@@ -471,6 +492,19 @@ mod tests {
         assert!(args.contains(&"restore".to_string()));
         assert!(args.contains(&"--force".to_string()));
         assert!(args.windows(2).any(|w| w == ["--path", "/tmp/dl"]));
+        assert!(!args.contains(&"--preview".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_restore_preview_writes_nothing() {
+        let runner = Arc::new(FakeRunner::new(vec![FakeRunner::ok(
+            r#"{"games":{"Celeste":{"decision":"Processed","files":{}}}}"#,
+        )]));
+        let lud = ludusavi(runner.clone());
+        lud.restore_preview("Celeste", Path::new("/tmp/dl"))
+            .await
+            .unwrap();
+        assert!(runner.call(0).contains(&"--preview".to_string()));
     }
 
     #[tokio::test]

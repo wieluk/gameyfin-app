@@ -184,9 +184,12 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     if settings.save_sync_enabled {
         tauri::async_runtime::spawn(saves::ensure_manifest(app.clone()));
     }
+    // Runs whatever the setting is now, since sync can be switched on later.
+    tauri::async_runtime::spawn(saves::retry_pending_uploads(app.clone()));
 
+    // Only a login start hides: one by hand, or the restart after an update, must show the window.
     // Hiding needs somewhere to be hidden to, which only the tray provides.
-    if (settings.start_minimized || launched_hidden) && tray::has_tray() {
+    if launched_hidden && settings.autostart_hidden && tray::has_tray() {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.hide();
         }
@@ -300,6 +303,7 @@ pub fn run() {
             ipc::library::list_entries,
             ipc::library::start_download,
             ipc::library::cancel_download,
+            ipc::library::pause_download,
             ipc::library::rescan_library,
             ipc::library::delete_staging,
             ipc::library::delete_download,
@@ -337,6 +341,7 @@ pub fn run() {
             integrations::open_prefix_tool,
             integrations::run_winetricks,
             integrations::umu_status,
+            integrations::search_game_fixes,
             integrations::refresh_umu_database,
             saves::save_state,
             saves::save_overview,
@@ -354,7 +359,6 @@ pub fn run() {
             saves::save_locations,
             saves::scan_this_pc,
             saves::skip_save_sync,
-            saves::set_save_cross_os,
             saves::set_save_mapping,
             saves::migrate_saves,
             saves::save_tool_status,

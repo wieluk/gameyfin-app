@@ -1,14 +1,15 @@
 //! Unpacking a zip while it downloads, including the ones Gameyfin builds on the fly with a data
 //! descriptor after every entry, which `zip`'s own stream reader cannot follow.
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use flate2::bufread::DeflateDecoder;
 use flate2::Crc;
 
+use crate::checkpoint::UnpackPoint;
 use crate::download::Cancel;
 use crate::error::{CoreError, CoreResult};
 use crate::extract::safe_join;
@@ -40,22 +41,57 @@ pub fn is_streamable(head: &[u8]) -> bool {
         && (method == DEFLATED || (method == STORED && flags & FLAG_DESCRIPTOR == 0))
 }
 
+/// Where an unpack can continue, moved past each entry once it is on disk. Shared with the
+/// downloader, which saves it when the transfer stops.
+#[derive(Debug, Clone, Default)]
+pub struct ResumeMark(Arc<Mutex<UnpackPoint>>);
+
+impl ResumeMark {
+    pub fn new(start: UnpackPoint) -> Self {
+        Self(Arc::new(Mutex::new(start)))
+    }
+
+    pub fn get(&self) -> UnpackPoint {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set(&self, point: UnpackPoint) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = point;
+    }
+}
+
 /// Unpacks a zip read front to back and returns the bytes written. Ending before the central
 /// directory is an error, never a partial game.
 pub fn extract_stream<R: Read>(reader: R, destination: &Path, cancel: &Cancel) -> CoreResult<u64> {
+    extract_stream_from(reader, destination, cancel, &ResumeMark::default())
+}
+
+/// As [`extract_stream`], for a body that starts at `mark`'s entry rather than the zip's first.
+/// The bytes returned include those unpacked before it.
+pub fn extract_stream_from<R: Read>(
+    reader: R,
+    destination: &Path,
+    cancel: &Cancel,
+    mark: &ResumeMark,
+) -> CoreResult<u64> {
     std::fs::create_dir_all(destination)?;
-    let mut input = BufReader::with_capacity(BUFFER, reader);
+    let start = mark.get();
+    let mut input = BufReader::with_capacity(BUFFER, Counted::new(reader));
     let mut buffer = vec![0u8; BUFFER];
-    let mut total = 0u64;
-    // Where each entry went, for the Unix modes only the central directory records.
-    let mut placed = HashMap::new();
+    let mut total = start.unpacked_bytes;
 
     loop {
+        // Every entry before this point is complete on disk.
+        let consumed = input.get_ref().count - input.buffer().len() as u64;
+        mark.set(UnpackPoint {
+            next_entry_at: start.next_entry_at + consumed,
+            unpacked_bytes: total,
+        });
         stop_if_cancelled(cancel)?;
         match read_u32(&mut input).map_err(truncated)? {
             LOCAL_HEADER => {}
             CENTRAL_HEADER => {
-                finish_central_directory(&mut input, &placed)?;
+                finish_central_directory(&mut input, destination)?;
                 return Ok(total);
             }
             END_OF_CENTRAL => return Ok(total),
@@ -122,10 +158,27 @@ pub fn extract_stream<R: Read>(reader: R, destination: &Path, cancel: &Cancel) -
             )));
         }
 
-        if let Some(path) = target.filter(|_| !is_dir) {
-            placed.insert(header.name, path);
-        }
         total += body.uncompressed;
+    }
+}
+
+/// Counts what the zip reader takes, so an entry's offset in the archive is known.
+struct Counted<R> {
+    inner: R,
+    count: u64,
+}
+
+impl<R> Counted<R> {
+    fn new(inner: R) -> Self {
+        Self { inner, count: 0 }
+    }
+}
+
+impl<R: Read> Read for Counted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.count += read as u64;
+        Ok(read)
     }
 }
 
@@ -276,10 +329,7 @@ fn descriptor_is_wide(compressed: u64, uncompressed: u64, zip64: bool) -> bool {
 }
 
 /// Reads the closing directory for its Unix modes, and so a body cut off inside it fails.
-fn finish_central_directory<R: Read>(
-    input: &mut R,
-    placed: &HashMap<String, PathBuf>,
-) -> CoreResult<()> {
+fn finish_central_directory<R: Read>(input: &mut R, destination: &Path) -> CoreResult<()> {
     loop {
         let mut fixed = [0u8; 42];
         input.read_exact(&mut fixed).map_err(truncated)?;
@@ -287,13 +337,10 @@ fn finish_central_directory<R: Read>(
         input.read_exact(&mut name).map_err(truncated)?;
         let skip = u64::from(u16_at(&fixed, 26)) + u64::from(u16_at(&fixed, 28));
         std::io::copy(&mut input.by_ref().take(skip), &mut std::io::sink())?;
+        // Worked out again rather than remembered, so entries unpacked before a resume count too.
+        let path = safe_join(destination, &String::from_utf8_lossy(&name)).filter(|p| p.is_file());
         // The high byte of "version made by" names the system the attributes belong to.
-        restore_mode(
-            placed,
-            &String::from_utf8_lossy(&name),
-            fixed[1],
-            u32_at(&fixed, 34),
-        );
+        restore_mode(path.as_deref(), fixed[1], u32_at(&fixed, 34));
 
         match read_u32(input).map_err(truncated)? {
             CENTRAL_HEADER => {}
@@ -308,18 +355,18 @@ fn finish_central_directory<R: Read>(
 }
 
 #[cfg(unix)]
-fn restore_mode(placed: &HashMap<String, PathBuf>, name: &str, host: u8, external: u32) {
+fn restore_mode(path: Option<&Path>, host: u8, external: u32) {
     const UNIX: u8 = 3;
     let mode = external >> 16;
     if host == UNIX && mode != 0 {
-        if let Some(path) = placed.get(name) {
+        if let Some(path) = path {
             crate::extract::set_mode(path, mode);
         }
     }
 }
 
 #[cfg(not(unix))]
-fn restore_mode(_placed: &HashMap<String, PathBuf>, _name: &str, _host: u8, _external: u32) {}
+fn restore_mode(_path: Option<&Path>, _host: u8, _external: u32) {}
 
 fn stop_if_cancelled(cancel: &Cancel) -> CoreResult<()> {
     if cancel.is_cancelled() {
@@ -374,6 +421,7 @@ fn read_u64<R: Read + ?Sized>(input: &mut R) -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn scratch(name: &str) -> PathBuf {
         let dir =
@@ -526,6 +574,140 @@ mod tests {
                 .mode();
             assert_ne!(mode & 0o111, 0, "the central directory's mode is applied");
         }
+    }
+
+    /// Where each local header starts, as a resume would ask for it.
+    fn entry_offsets(bytes: &[u8]) -> Vec<u64> {
+        let signature = LOCAL_HEADER.to_le_bytes();
+        let central = CENTRAL_HEADER.to_le_bytes();
+        let end = bytes.windows(4).position(|w| w == central).unwrap();
+        (0..end)
+            .filter(|&i| bytes[i..i + 4] == signature)
+            .map(|i| i as u64)
+            .collect()
+    }
+
+    #[test]
+    fn the_mark_follows_each_finished_entry() {
+        let bytes = zip(&[("a.txt", b"first"), ("b.txt", b"second")], ON_THE_FLY);
+        let central = bytes
+            .windows(4)
+            .position(|w| w == CENTRAL_HEADER.to_le_bytes())
+            .unwrap() as u64;
+        let mark = ResumeMark::default();
+
+        extract_stream_from(Trickle(&bytes), &scratch("mark"), &Cancel::new(), &mark).unwrap();
+
+        // Last set just before the central directory, with every entry counted.
+        assert_eq!(
+            mark.get(),
+            UnpackPoint {
+                next_entry_at: central,
+                unpacked_bytes: 11
+            }
+        );
+    }
+
+    #[test]
+    fn an_unpack_continues_from_the_entry_it_stopped_in() {
+        let bytes = zip(
+            &[
+                ("Game/a.txt", b"first"),
+                ("Game/data/b.txt", b"second"),
+                ("Game/c.txt", b"third"),
+            ],
+            ON_THE_FLY,
+        );
+        let second = entry_offsets(&bytes)[1];
+        let dir = scratch("continue");
+        // The first entry landed in an earlier attempt; the second was cut off part way.
+        std::fs::create_dir_all(dir.join("Game/data")).unwrap();
+        std::fs::write(dir.join("Game/a.txt"), b"first").unwrap();
+        std::fs::write(dir.join("Game/data/b.txt"), b"sec").unwrap();
+        let mark = ResumeMark::new(UnpackPoint {
+            next_entry_at: second,
+            unpacked_bytes: 5,
+        });
+
+        let total = extract_stream_from(
+            Trickle(&bytes[second as usize..]),
+            &dir,
+            &Cancel::new(),
+            &mark,
+        )
+        .unwrap();
+
+        assert_eq!(total, 16);
+        assert_eq!(std::fs::read(dir.join("Game/a.txt")).unwrap(), b"first");
+        assert_eq!(
+            std::fs::read(dir.join("Game/data/b.txt")).unwrap(),
+            b"second"
+        );
+        assert_eq!(std::fs::read(dir.join("Game/c.txt")).unwrap(), b"third");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("Game/a.txt"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_ne!(
+                mode & 0o111,
+                0,
+                "entries from before the resume get their mode too"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cancel_leaves_the_mark_at_the_unfinished_entry() {
+        let big: Vec<u8> = (0..400_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        let bytes = zip(&[("a.txt", b"first"), ("big.bin", &big)], ON_THE_FLY);
+        let second = entry_offsets(&bytes)[1];
+        let central = bytes
+            .windows(4)
+            .position(|w| w == CENTRAL_HEADER.to_le_bytes())
+            .unwrap();
+        let cancel = Cancel::new();
+        let mark = ResumeMark::default();
+
+        // Cancels once the reader is halfway through the second entry.
+        struct CancelAt<'a> {
+            bytes: &'a [u8],
+            at: usize,
+            after: usize,
+            cancel: &'a Cancel,
+        }
+        impl Read for CancelAt<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.at >= self.after {
+                    self.cancel.cancel();
+                }
+                let n = buf.len().min(self.bytes.len() - self.at).min(4096);
+                buf[..n].copy_from_slice(&self.bytes[self.at..self.at + n]);
+                self.at += n;
+                Ok(n)
+            }
+        }
+        let reader = CancelAt {
+            bytes: &bytes,
+            at: 0,
+            after: (second as usize + central) / 2,
+            cancel: &cancel,
+        };
+
+        let result = extract_stream_from(reader, &scratch("cancel-mark"), &cancel, &mark);
+
+        assert!(matches!(result, Err(CoreError::Cancelled)));
+        assert_eq!(
+            mark.get(),
+            UnpackPoint {
+                next_entry_at: second,
+                unpacked_bytes: 5
+            }
+        );
     }
 
     #[test]

@@ -117,7 +117,7 @@ export function VersionSection({ tool, children }: { tool: VersionTool; children
               }}
             />
           </div>
-          <p className="text-[11px] text-foreground/45">
+          <p className="text-[0.6875rem] text-foreground/45">
             {progress
               ? `${formatBytes(progress.receivedBytes)} of ${formatBytes(progress.totalBytes)} at ${formatSpeed(progress.bytesPerSecond)}`
               : "Starting download…"}

@@ -31,6 +31,14 @@ pub fn for_toggles(toggles: &LaunchToggles, proton: bool) -> Vec<(String, String
     .collect()
 }
 
+/// Asks Proton for its gamepad helper on every window. Left alone, Proton limits it to the
+/// dialogs it recognises, and a setup wizard is not one. A value already set is kept.
+pub fn gamepad_ui(environment: &mut BTreeMap<String, String>) {
+    environment
+        .entry("PROTON_USE_XALIA".to_string())
+        .or_insert_with(|| "1".to_string());
+}
+
 /// Read a typed block into variables, ignoring blank lines and `#` comments.
 pub fn parse(input: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
@@ -87,6 +95,17 @@ mod tests {
             vec![("PROTON_USE_WOW64".to_string(), "1".to_string())]
         );
         assert!(for_toggles(&LaunchToggles::default(), true).is_empty());
+    }
+
+    #[test]
+    fn the_gamepad_helper_is_asked_for_unless_a_value_was_typed() {
+        let mut environment = BTreeMap::new();
+        gamepad_ui(&mut environment);
+        assert_eq!(environment["PROTON_USE_XALIA"], "1");
+
+        let mut typed = parse("PROTON_USE_XALIA=0");
+        gamepad_ui(&mut typed);
+        assert_eq!(typed["PROTON_USE_XALIA"], "0");
     }
 
     #[test]

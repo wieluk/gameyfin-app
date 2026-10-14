@@ -91,7 +91,7 @@ export function UpdateBanner() {
   if (!status?.available || dismissed) return null;
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-primary/15 px-4 py-1.5 text-[11px] text-primary">
+    <div className="flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-primary/15 px-4 py-1.5 text-[0.6875rem] text-primary">
       <span className="flex items-center gap-2">
         <Icon name="download" className="h-3.5 w-3.5 shrink-0" />
         Gameyfin {status.latestVersion} is available. You have {status.currentVersion}.

@@ -3,9 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import { SaveVersionList } from "./SaveVersionList";
-import type { SaveVersion } from "@/types";
+import type { OfferedSave } from "@/bindings/OfferedSave";
 
-const versions: SaveVersion[] = ["b", "a"].map((id) => ({
+const versions: OfferedSave[] = ["b", "a"].map((id) => ({
+  restorable: id === "b",
+  version: {
   id,
   gameId: 1,
   gameTitle: null,
@@ -17,6 +19,7 @@ const versions: SaveVersion[] = ["b", "a"].map((id) => ({
   ludusaviTitle: null,
   locked: false,
   createdAt: null,
+  },
 }));
 
 const deleteSaveVersions = vi.fn(async () => {});
@@ -38,6 +41,14 @@ function show() {
 }
 
 describe("SaveVersionList", () => {
+  it("offers no restore for a version made on a system that does not map here", async () => {
+    show();
+    const [newest, older] = await screen.findAllByRole("button", { name: "Restore" });
+    expect((newest as HTMLButtonElement).disabled).toBe(false);
+    expect((older as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Windows, does not restore here")).toBeTruthy();
+  });
+
   it("deletes a version only once the user confirms", async () => {
     show();
     const [first] = await screen.findAllByRole("button", { name: "Delete this version" });

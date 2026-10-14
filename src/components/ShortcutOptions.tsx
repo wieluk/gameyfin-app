@@ -5,6 +5,7 @@ import { Alert } from "@/components/Alert";
 import { Button } from "@/components/ui";
 import { backend, type ShortcutLocation } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
+import { isWindows } from "@/lib/platform";
 
 /**
  * Where an installed game can be launched from. Shortcuts run Gameyfin with `--launch <id>`,
@@ -56,7 +57,7 @@ export function ShortcutOptions({ gameId }: { gameId: number }) {
       <p className="mb-1 text-xs text-foreground/55">Add to</p>
       <div className="flex flex-wrap gap-1.5">
         <Toggle
-          label="Applications menu"
+          label={isWindows ? "Start menu" : "Applications menu"}
           on={data?.menu ?? false}
           busy={busy === "menu"}
           disabled={!data}
@@ -82,7 +83,7 @@ export function ShortcutOptions({ gameId }: { gameId: number }) {
         )}
       </div>
 
-      {note && <p className="mt-1.5 text-[11px] text-foreground/50">{note}</p>}
+      {note && <p className="mt-1.5 text-[0.6875rem] text-foreground/50">{note}</p>}
       {error && (
         <Alert inline className="mt-1.5">
           {error}

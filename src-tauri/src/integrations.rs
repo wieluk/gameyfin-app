@@ -468,7 +468,7 @@ pub async fn umu_status(
 ) -> CommandResult<UmuStatus> {
     // Resolved through the state, so this is exactly what a launch would use.
     let resolved = match game_id {
-        Some(id) => Some(state.umu_id_for_game(id).await),
+        Some(id) => Some(state.game_fix(id, None).await.id),
         None => None,
     };
     Ok(UmuStatus {
@@ -477,6 +477,31 @@ pub async fn umu_status(
         enabled: state.settings().umu_fixes,
         resolved,
     })
+}
+
+/// One row of the umu database, as the fix picker lists it.
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FixMatch {
+    pub title: String,
+    pub fix: gameyfin_core::umu::GameFix,
+}
+
+/// How many rows the picker shows. More than fit on screen means the search was too vague.
+const FIX_MATCHES: usize = 30;
+
+/// Database rows matching a title or an id, for choosing a game's fix by hand.
+#[tauri::command]
+pub async fn search_game_fixes(
+    state: State<'_, AppState>,
+    query: String,
+) -> CommandResult<Vec<FixMatch>> {
+    Ok(state
+        .search_fixes(&query, FIX_MATCHES)
+        .into_iter()
+        .map(|(title, fix)| FixMatch { title, fix })
+        .collect())
 }
 
 #[tauri::command]

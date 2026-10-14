@@ -1010,6 +1010,10 @@ async fn prepare_installer(
         config.working_dir = program.parent().map(Path::to_path_buf);
         super::launch::apply_game_runtime(&state, game_id, &runtime, &mut config).await;
         super::launch::apply_game_options(&state.library().record(game_id), &mut config);
+        // After the game's own variables, so `PROTON_USE_XALIA=0` typed there turns it off.
+        if !runtime.is_wine() && state.gamepad_connected() {
+            gameyfin_core::environment::gamepad_ui(&mut config.environment);
+        }
         if wow64 {
             config
                 .environment
@@ -1657,10 +1661,13 @@ pub async fn uninstall_game(
     game_id: i64,
     run_uninstaller: Option<bool>,
     uninstaller: Option<String>,
+    delete_prefix: Option<bool>,
 ) -> CommandResult<()> {
     let Some(dir) = state.library().record(game_id).install_dir else {
         return Ok(());
     };
+    // Resolved now: the games folder is found through the install path cleared below.
+    let prefix = super::layout_for(&state, game_id)?.prefix_dir(game_id);
     let _claim = claim(&state, game_id, Activity::preparing("Uninstalling"))?;
     notify_state(&app, game_id);
 
@@ -1701,9 +1708,19 @@ pub async fn uninstall_game(
             r.elevation_program = None;
         })
         .await;
+    // After the record, so a prefix that will not go leaves the game uninstalled regardless.
+    let prefix_removed = if delete_prefix.unwrap_or(false) && prefix.is_dir() {
+        tracing::info!(game_id, ?prefix, "deleting the compatibility prefix");
+        tokio::fs::remove_dir_all(&prefix).await.context(format!(
+            "the game was uninstalled, but its prefix at {} could not be deleted",
+            prefix.display()
+        ))
+    } else {
+        Ok(())
+    };
     state.library().clear_activity(game_id);
     notify(&app);
-    Ok(())
+    prefix_removed
 }
 
 async fn run_uninstaller_program(

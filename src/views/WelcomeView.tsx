@@ -85,7 +85,7 @@ export function WelcomeView({
           )}
         </div>
 
-        <p className="mt-6 text-center text-[11px] text-foreground/45">
+        <p className="mt-6 text-center text-[0.6875rem] text-foreground/45">
           Stuck?{" "}
           <button
             type="button"
@@ -125,7 +125,7 @@ function Steps({ current }: { current: Step }) {
               }`}
             />
             <span
-              className={`mt-1.5 block text-[11px] ${
+              className={`mt-1.5 block text-[0.6875rem] ${
                 i <= index ? "text-foreground/70" : "text-foreground/35"
               }`}
             >
@@ -185,7 +185,7 @@ function ServerStep({
         spellCheck={false}
         autoCapitalize="none"
       />
-      <p className="text-[11px] text-foreground/45">
+      <p className="text-[0.6875rem] text-foreground/45">
         https:// is assumed if you leave the scheme out.
       </p>
 
@@ -308,7 +308,7 @@ function SignInStep({
       <BackLink onClick={onBack} label="Change server" />
 
       <div className="rounded-lg border border-default-200 bg-content2 px-3 py-2.5">
-        <p className="text-[11px] text-foreground/45">Connecting to</p>
+        <p className="text-[0.6875rem] text-foreground/45">Connecting to</p>
         <p className="truncate text-sm text-foreground">{serverUrl}</p>
       </div>
 
@@ -321,7 +321,7 @@ function SignInStep({
                 Waiting for you to finish signing in…
               </p>
               {host && (
-                <p className="mt-0.5 truncate font-mono text-[11px] text-foreground/45">
+                <p className="mt-0.5 truncate font-mono text-[0.6875rem] text-foreground/45">
                   at {host}
                 </p>
               )}
@@ -334,7 +334,7 @@ function SignInStep({
             </p>
           )}
 
-          <p className="text-[11px] text-foreground/45">
+          <p className="text-[0.6875rem] text-foreground/45">
             A window has opened for your server's login page. Single sign-on providers
             like Authentik are supported. Finish there and this continues on its own.
           </p>
@@ -355,7 +355,7 @@ function SignInStep({
           <Button variant="primary" size="lg" onClick={() => void start()}>
             Sign in
           </Button>
-          <p className="text-[11px] text-foreground/45">
+          <p className="text-[0.6875rem] text-foreground/45">
             Your server decides how you sign in: a single sign-on provider if it has one,
             otherwise a username and password.
           </p>
@@ -377,7 +377,7 @@ function SignInStep({
             </Button>
             {clearing.error && <Alert>{clearing.error}</Alert>}
             {cleared && (
-              <p className="text-[11px] text-success-600">
+              <p className="text-[0.6875rem] text-success-600">
                 Cleared. The next sign in starts from scratch.
               </p>
             )}
@@ -449,7 +449,7 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
           Browse…
         </Button>
       </div>
-      <p className="text-[11px] text-foreground/45">
+      <p className="text-[0.6875rem] text-foreground/45">
         Downloads and installed games live here. Change it later in Settings.
       </p>
 
@@ -462,7 +462,7 @@ function LibraryStep({ onDone, onBack }: { onDone: () => void; onBack: () => voi
         value={device}
         onChange={(e) => setDevice(e.target.value)}
       />
-      <p className="text-[11px] text-foreground/45">
+      <p className="text-[0.6875rem] text-foreground/45">
         Shown beside saves synced from this PC, so you can tell your machines apart.
       </p>
 

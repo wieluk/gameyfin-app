@@ -4,7 +4,8 @@
 
 Press **Play**. Gameyfin watches the whole game while it runs, including games that start
 through a launcher that closes at once, and records your playtime. If a game quits within a
-few seconds, Gameyfin reads its output and tells you why in plain words where it can.
+few seconds, Gameyfin reads its output and tells you why in plain words where it can, on the
+game's card in **Library** and on its row in **Installed**.
 
 With save sync on, a newer save from another PC is restored before the game starts and your
 save is backed up after it closes. See [Save sync](saves.md).
@@ -17,8 +18,9 @@ Gameyfin runs Windows games the way Steam does. You do not need Steam installed.
 | --- | --- |
 | **Proton (umu)** | Runs the game in Valve's Steam Runtime. UMU-Proton downloads on the first launch. |
 | **GE-Proton** | Optional, with extra media codecs. Download it in **Settings, Compatibility**, then pick it in a game's options. |
+| **Proton-CachyOS** | Optional, and often the first build to carry a fix for a new game. Downloaded and picked the same way. |
 | **Wine** | Gameyfin's own fallback, downloaded when needed: for a 32-bit program on a system without 32-bit libraries, or when Proton cannot start. |
-| **Game fixes** | umu's list of per-title workarounds, matched by Steam AppID when your server knows it, by title otherwise. Updated daily. |
+| **Game fixes** | umu's list of per-title workarounds, matched by Steam AppID when your server knows it, by title otherwise. Updated daily. A game's options can name a fix by hand. |
 
 Gameyfin downloads all of these itself, so nothing needs installing on your system. The
 first launch shows the download's progress on the game, and later launches work offline.
@@ -34,9 +36,9 @@ file system.
 Once a Windows game has run, its options in **Installed** have **Compatibility prefix**,
 with **Wine settings**, **Registry**, **Browse C:**, **Winetricks** and **Delete prefix**.
 Compatibility settings exist on Linux only. A deleted prefix is rebuilt on next launch, but
-anything the game kept inside it is gone, including saves that were not backed up. Prefixes
-of games that are no longer installed are listed under **Settings, Compatibility, Leftover
-prefixes**.
+anything the game kept inside it is gone, including saves that were not backed up.
+Uninstalling a game offers to delete its prefix too. Prefixes kept that way are listed under
+**Settings, Compatibility, Leftover prefixes**.
 
 ### Winetricks
 
@@ -56,7 +58,10 @@ Open a game's options in **Installed**:
 - **Launch options**: flags passed to the game, such as `-windowed`.
 - **Environment variables**: one `KEY=value` per line, the place for fixes copied from
   ProtonDB. `WINEDLLOVERRIDES=dxgi=builtin` turns DXVK off for this game only.
-- **Proton build**: GE-Proton instead of UMU-Proton, once GE-Proton is downloaded.
+- **Proton build**: GE-Proton or Proton-CachyOS instead of UMU-Proton, once downloaded.
+- **Proton fix**: the workaround Proton applies for this title. Automatic uses the game fixes
+  list. **Choose** searches that list, offers the fix for the game's Steam release when your
+  Proton build has one, and takes an id typed by hand.
 - **Wayland** and **WOW64**. Wayland draws the game without XWayland. WOW64 runs 32-bit games
   without 32-bit system libraries, but can break anti-cheat. A variable typed in the box above
   wins over either switch.
@@ -73,7 +78,7 @@ memory (at least 4 GB) by default. Change it in **Settings, Compatibility**.
 
 In a game's options in **Installed**, add it to:
 
-- **Applications menu**
+- **Applications menu** (**Start menu** on Windows)
 - **Desktop**
 - **Steam**, as a non-Steam game, for every Steam account on this PC. Restart Steam to see it.
   Handy for Big Picture and the Steam Deck.
@@ -91,3 +96,7 @@ is only read while the Gameyfin window is in front, so it stays with the game yo
 - **Read connected controllers**: turn controller input on or off.
 - **Switch to the large layout when a controller connects**: bigger text and covers for
   the sofa. Switch back from the controller overlay at any time.
+
+On Linux, a setup program started while a controller is connected can be driven with it:
+Proton's gamepad helper is turned on for the whole wizard. `PROTON_USE_XALIA=0` in the game's
+environment variables turns it off.

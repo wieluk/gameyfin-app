@@ -9,7 +9,7 @@ export function Alert({
   className?: string;
 }) {
   const style = inline
-    ? "text-[11px] leading-relaxed text-danger"
+    ? "text-[0.6875rem] leading-relaxed text-danger"
     : "rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger";
   return (
     <p role="alert" className={`${style} ${className}`}>

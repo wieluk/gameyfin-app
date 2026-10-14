@@ -53,7 +53,7 @@ export function NotificationBell() {
       >
         <Icon name="bell" className="h-3.5 w-3.5" />
         {unread > 0 && (
-          <span className="absolute right-0.5 top-0 h-3.5 min-w-[14px] rounded-full bg-primary px-1 text-center text-[9px] font-semibold leading-[14px] text-white">
+          <span className="absolute right-0.5 top-0 h-3.5 min-w-[0.875rem] rounded-full bg-primary px-1 text-center text-[0.5625rem] font-semibold leading-[0.875rem] text-white">
             {unread > 9 ? "9+" : unread}
           </span>
         )}
@@ -130,10 +130,10 @@ function NotificationPanel({
                   <span className="block truncate text-xs font-medium text-foreground">
                     {item.title}
                   </span>
-                  <span className="mt-0.5 line-clamp-2 block text-[11px] leading-snug text-foreground/60">
+                  <span className="mt-0.5 line-clamp-2 block text-[0.6875rem] leading-snug text-foreground/60">
                     {item.body}
                   </span>
-                  <span className="mt-1 block text-[10px] text-foreground/40">
+                  <span className="mt-1 block text-[0.625rem] text-foreground/40">
                     {formatRelative(item.createdAt)}
                   </span>
                 </span>

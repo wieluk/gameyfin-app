@@ -31,7 +31,7 @@ export function ProtonSection() {
 
   const status = useProtonStatus();
   const proton = status.data;
-  const downloading = busy === "umu-proton" || busy === "ge-proton";
+  const downloading = busy !== null && busy !== "i386";
   useTauriEvent<Transfer>("proton-progress", setProgress, downloading);
 
   async function run(key: ProtonFamily | "i386", work: () => Promise<unknown>) {
@@ -60,7 +60,7 @@ export function ProtonSection() {
       <div className="flex flex-col gap-1.5">
         <BuildRow
           label="UMU-Proton"
-          hint="What every game runs on, unless it picks GE-Proton."
+          hint="What every game runs on, unless it picks another build."
           installed={installedOf("umu-proton")}
           latest={proton?.latestUmu}
           disabled={busy !== null}
@@ -74,6 +74,17 @@ export function ProtonSection() {
           disabled={busy !== null}
           onDownload={() => void run("ge-proton", () => backend.installProton("ge-proton"))}
           onRemove={(name) => void run("ge-proton", () => backend.removeProton(name))}
+        />
+        <BuildRow
+          label="Proton-CachyOS"
+          hint="Optional. Often the first to carry a fix for a new game."
+          installed={installedOf("proton-cachyos")}
+          latest={proton?.latestCachyos}
+          disabled={busy !== null}
+          onDownload={() =>
+            void run("proton-cachyos", () => backend.installProton("proton-cachyos"))
+          }
+          onRemove={(name) => void run("proton-cachyos", () => backend.removeProton(name))}
         />
       </div>
       {downloading && (
@@ -119,7 +130,7 @@ export function ProtonSection() {
           </div>
         </div>
       )}
-      {i386Result && <p className="text-[11px] text-success-600">{i386Result}</p>}
+      {i386Result && <p className="text-[0.6875rem] text-success-600">{i386Result}</p>}
       <SaveError error={action.error} />
       <p className={HINT}>
         Windows games run in Valve&rsquo;s Steam Runtime with Proton, the way Steam runs them.
@@ -147,13 +158,13 @@ function BuildRow({
   onDownload: () => void;
   onRemove?: (name: string) => void;
 }) {
-  // A build's folder can carry an architecture suffix its tag lacks.
-  const outdated = Boolean(installed && latest && !installed.name.startsWith(latest.tag));
+  // A build's folder can carry a prefix or an architecture suffix its tag lacks.
+  const outdated = Boolean(installed && latest && !installed.name.includes(latest.tag));
   return (
     <div className="flex items-center justify-between gap-2 rounded-lg border border-default-200 bg-content2 px-2.5 py-1.5">
       <div className="min-w-0">
         <p className="truncate text-xs text-foreground">{installed?.name ?? label}</p>
-        <p className="text-[11px] text-foreground/45">{hint}</p>
+        <p className="text-[0.6875rem] text-foreground/45">{hint}</p>
       </div>
       <div className="flex shrink-0 gap-1.5">
         {latest && (!installed || outdated) && (
@@ -232,7 +243,10 @@ export function UmuSection() {
         </Button>
       </div>
       <SaveError error={action.error ?? saveError} />
-      <p className={HINT}>A game not in the list runs as it would with fixes off.</p>
+      <p className={HINT}>
+        A game not in the list runs as it would with fixes off. Its options under Installed can
+        name a fix by hand.
+      </p>
     </Section>
   );
 }
@@ -305,7 +319,7 @@ export function PrefixSection() {
   return (
     <Section title="Leftover prefixes" help="prefixes">
       {rows.length === 0 ? (
-        <p className="text-[11px] text-foreground/45">
+        <p className="text-[0.6875rem] text-foreground/45">
           {prefixes.isLoading ? "…" : "None. Every prefix belongs to an installed game."}
         </p>
       ) : (

@@ -55,13 +55,13 @@ export function AboutSection() {
       </div>
 
       {busy && !outcome?.restartNeeded && (
-        <div className="pt-1 text-[11px]">
+        <div className="pt-1 text-[0.6875rem]">
           <UpdateProgressBar progress={progress} />
         </div>
       )}
 
       {outcome && !outcome.restartNeeded && (
-        <p className="text-[11px] text-foreground/60">{outcome.message}</p>
+        <p className="text-[0.6875rem] text-foreground/60">{outcome.message}</p>
       )}
       {error && <Alert inline>{error}</Alert>}
 

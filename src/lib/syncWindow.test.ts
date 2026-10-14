@@ -52,6 +52,11 @@ describe("the save window", () => {
     expect(decide(restored, inSync).kind).toBe("keep");
   });
 
+  it("says when the saves were out of reach", () => {
+    expect(decide(null, at({ kind: "offline" })).kind).toBe("show");
+    expect(decide(null, at({ kind: "offline" }, { moment: "exit" })).kind).toBe("show");
+  });
+
   it("speaks up for an exit upload held back", () => {
     expect(decide(null, at({ kind: "skipped" }, { moment: "exit" })).kind).toBe("show");
     expect(decide(null, at({ kind: "skipped" })).kind).toBe("keep");

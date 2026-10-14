@@ -6,7 +6,7 @@ export type ProtonStatus = {
 /**
  * At most one build per family, newest first.
  */
-installed: Array<InstalledProton>, latestUmu: ProtonRelease | null, latestGe: ProtonRelease | null, launcherProblem: string | null, supports32bit: boolean, 
+installed: Array<InstalledProton>, latestUmu: ProtonRelease | null, latestGe: ProtonRelease | null, latestCachyos: ProtonRelease | null, launcherProblem: string | null, supports32bit: boolean, 
 /**
  * 32-bit OpenGL drivers, without which a 32-bit program that draws with OpenGL cannot open a window.
  */

@@ -90,7 +90,7 @@ export function PathRow({
     <div>
       <p className="text-xs text-foreground/55">{label}</p>
       <div className="mt-1 flex items-start gap-2">
-        <code className="min-w-0 flex-1 break-all rounded-lg border border-default-200 bg-content2 px-3 py-1.5 font-mono text-[11px] text-foreground/70">
+        <code className="min-w-0 flex-1 break-all rounded-lg border border-default-200 bg-content2 px-3 py-1.5 font-mono text-[0.6875rem] text-foreground/70">
           {path ?? "…"}
         </code>
         <Button icon="folder" disabled={!path} onClick={() => path && void backend.openFolder(path)}>
@@ -105,7 +105,7 @@ export function PathRow({
           </Button>
         )}
       </div>
-      <p className="mt-1 text-[11px] text-foreground/45">{hint}</p>
+      <p className="mt-1 text-[0.6875rem] text-foreground/45">{hint}</p>
     </div>
   );
 }

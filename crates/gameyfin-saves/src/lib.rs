@@ -9,7 +9,7 @@ pub mod platform;
 pub mod resolve;
 pub mod runner;
 
-pub use config::{ConfigBuilder, RestoreStrategy};
+pub use config::ConfigBuilder;
 pub use error::{SaveError, SaveResult};
 pub use ludusavi::{BackupFormat, GameQuery, Ludusavi};
 pub use platform::SavePlatform;

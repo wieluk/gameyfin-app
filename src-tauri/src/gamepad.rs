@@ -90,6 +90,7 @@ struct ConnectionEvent {
 pub struct Handle {
     enabled: Arc<AtomicBool>,
     focused: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
     deadzone: Arc<std::sync::RwLock<f32>>,
 }
 
@@ -98,6 +99,7 @@ impl Handle {
         Self {
             enabled: Arc::new(AtomicBool::new(enabled)),
             focused: Arc::new(AtomicBool::new(true)),
+            connected: Arc::new(AtomicBool::new(false)),
             deadzone: Arc::new(std::sync::RwLock::new(deadzone as f32)),
         }
     }
@@ -120,6 +122,15 @@ impl Handle {
 
     fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Whether a controller is attached and being read. Always false while reading is off.
+    pub fn connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
+    }
+
+    fn set_connected(&self, connected: bool) {
+        self.connected.store(connected, Ordering::Relaxed);
     }
 
     fn focused(&self) -> bool {
@@ -295,6 +306,7 @@ fn run(app: AppHandle, handle: Handle) {
         if !handle.enabled() {
             if connected {
                 connected = false;
+                handle.set_connected(false);
                 let _ = app.emit(
                     "gamepad-connection",
                     ConnectionEvent {
@@ -312,6 +324,7 @@ fn run(app: AppHandle, handle: Handle) {
         let Some((_, pad)) = active else {
             if connected {
                 connected = false;
+                handle.set_connected(false);
                 tracing::info!("controller disconnected");
                 let _ = app.emit(
                     "gamepad-connection",
@@ -326,6 +339,7 @@ fn run(app: AppHandle, handle: Handle) {
 
         if !connected {
             connected = true;
+            handle.set_connected(true);
             tracing::info!(name = pad.name(), "controller connected");
             let _ = app.emit(
                 "gamepad-connection",

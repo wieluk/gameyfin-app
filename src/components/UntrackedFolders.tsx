@@ -12,6 +12,40 @@ import { formatBytes } from "@/lib/format";
 import { keys, useEntries } from "@/lib/queries";
 import type { LibraryEntry, LibraryFolder } from "@/types";
 
+/** Where the list sits, so the header can jump to it. */
+const listId = (folder: LibraryFolder) => `untracked-${folder}`;
+
+/**
+ * The count of unlinked folders in the header. The list itself is at the bottom of the view,
+ * below every game, where it is easy never to notice.
+ */
+export function UntrackedJump({ folder }: { folder: LibraryFolder }) {
+  const untracked = useQuery({
+    queryKey: keys.untracked,
+    queryFn: () => backend.listUntrackedFolders(),
+  });
+  const count = (untracked.data ?? []).filter((f) => f.folder === folder).length;
+  if (count === 0) return null;
+
+  function jump() {
+    const list = document.getElementById(listId(folder));
+    list?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Focus too, so a controller lands on the list rather than staying in the header.
+    list?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+  }
+
+  return (
+    <Button
+      icon="folder"
+      className="border-warning/40 text-warning-600"
+      title="Folders here that no game claims. Show them."
+      onClick={jump}
+    >
+      {count} {count === 1 ? "folder" : "folders"} not linked
+    </Button>
+  );
+}
+
 /** Folders in Installations or Downloads that no game claims, at the bottom of that view. */
 export function UntrackedFolders({ folder }: { folder: LibraryFolder }) {
   const queryClient = useQueryClient();
@@ -42,11 +76,11 @@ export function UntrackedFolders({ folder }: { folder: LibraryFolder }) {
     ]);
 
   return (
-    <section className="mt-6">
+    <section id={listId(folder)} className="mt-6 scroll-mt-4">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground/40">
         Not linked to a game
       </h3>
-      <p className="mb-2 mt-1 text-[11px] text-foreground/45">
+      <p className="mb-2 mt-1 text-[0.6875rem] text-foreground/45">
         Folders in {folder === "installations" ? "Installations" : "Downloads"} that Gameyfin
         does not manage. Assign one to a game to manage it here.
       </p>
@@ -60,7 +94,7 @@ export function UntrackedFolders({ folder }: { folder: LibraryFolder }) {
               <p className="truncate text-sm text-foreground" title={row.path}>
                 {row.name}
               </p>
-              <p className="truncate text-[11px] text-foreground/45">
+              <p className="truncate text-[0.6875rem] text-foreground/45">
                 {formatBytes(row.bytes)}
                 {row.gameId !== null ? ", its game is no longer on the server" : ""}
               </p>

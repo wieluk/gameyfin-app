@@ -8,20 +8,25 @@ import { SaveConflictDialog } from "@/components/SaveConflictDialog";
 import { SaveMatchDialog } from "@/components/SaveMatchDialog";
 import { SavePathDialog, loadSavePaths } from "@/components/SavePathDialog";
 import { usePreloaded } from "@/lib/usePreloaded";
-import { SaveVersionList, platformLabel } from "@/components/SaveVersionList";
+import { SaveVersionList } from "@/components/SaveVersionList";
 import { ScanThisPcDialog } from "@/components/ScanThisPcDialog";
-import { Button, IconButton, Switch, ViewHeader } from "@/components/ui";
+import { OverflowMenu } from "@/components/OverflowMenu";
+import { Button, IconButton, TextInput, ViewHeader } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatBytes, formatRelative } from "@/lib/format";
 import {
+  attentionSummary,
+  backsUp,
+  byAttention,
   describe,
   isRestoreReport,
   isSaveState,
   outcomeOf,
+  platformLabel,
   restoredOutcome,
 } from "@/lib/saveState";
-import { keys, useEntries, useInvalidate } from "@/lib/queries";
+import { keys, useAppSettings, useEntries, useInvalidate } from "@/lib/queries";
 import { readStored, writeStored } from "@/lib/storage";
 import { PANEL_BODY } from "@/lib/ui";
 import { useAction } from "@/lib/useAction";
@@ -42,25 +47,51 @@ export function useSaveOverview(scope: SaveScope) {
 const EMPTY: Record<SaveScope, { title: string; text: string }> = {
   installed: {
     title: "No installed games yet",
-    text: "Saves are synced for games installed on this PC. Turn on Show remote saves for games with stored saves, or Show all games for your whole library.",
+    text: "Saves are synced for games installed on this PC. Show With saves for games with stored saves, or All games for your whole library.",
   },
   "with-saves": {
     title: "No saves yet",
-    text: "Nothing is installed here and no saves are stored. Turn on Show all games for your whole library.",
+    text: "Nothing is installed here and no saves are stored. Show All games for your whole library.",
   },
   all: { title: "No games yet", text: "Games appear here once your library has some." },
 };
 
-const SHOW_ALL_SAVES_KEY = "gameyfin.saves.show-all";
-const SHOW_ALL_GAMES_KEY = "gameyfin.saves.show-all-games";
+const SCOPE_KEY = "gameyfin.saves.scope";
+/** The two switches the scope used to be, read once so an existing choice carries over. */
+const OLD_SCOPE_KEYS = ["gameyfin.saves.show-all", "gameyfin.saves.show-all-games"] as const;
+
+const SCOPES: [SaveScope, string][] = [
+  ["installed", "Installed"],
+  ["with-saves", "With saves"],
+  ["all", "All games"],
+];
+
+function storedScope(): SaveScope {
+  const [allSaves, allGames] = OLD_SCOPE_KEYS.map((key) => readStored(key, false));
+  return readStored<SaveScope>(
+    SCOPE_KEY,
+    allGames ? "all" : allSaves ? "with-saves" : "installed",
+  );
+}
+
+/** Where saves go, in the words the intro uses. */
+const KEPT: Record<string, string> = {
+  server: "on every PC signed in to the same server",
+  folder: "on every PC that uses the same saves folder",
+  webdav: "on every PC that uses the same WebDAV share",
+};
 
 export function SavesView() {
   const invalidate = useInvalidate();
-  const [showAllSaves, setShowAllSaves] = useState(() => readStored(SHOW_ALL_SAVES_KEY, false));
-  const [showAllGames, setShowAllGames] = useState(() => readStored(SHOW_ALL_GAMES_KEY, false));
-  const scope: SaveScope = showAllGames ? "all" : showAllSaves ? "with-saves" : "installed";
+  const settings = useAppSettings();
+  const [scope, setScope] = useState<SaveScope>(storedScope);
+  const [query, setQuery] = useState("");
   const overview = useSaveOverview(scope);
-  const rows = overview.data ?? [];
+  const all = overview.data ?? [];
+  const needle = query.trim().toLowerCase();
+  const rows = byAttention(
+    needle ? all.filter((row) => row.title.toLowerCase().includes(needle)) : all,
+  );
 
   // A set, not one id: one game finishing must not re-enable every other row's buttons.
   const [busy, setBusy] = useState<ReadonlySet<number>>(new Set());
@@ -73,6 +104,11 @@ export function SavesView() {
   const [folderError, setFolderError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [confirmBackupAll, setConfirmBackupAll] = useState(false);
+  // Which game "Back up all" is on, shown in its dialog while it works through the list.
+  const [backingUp, setBackingUp] = useState<{ done: number; total: number; title: string } | null>(
+    null,
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const deleteAll = useAction();
   const queryClient = useQueryClient();
@@ -122,7 +158,10 @@ export function SavesView() {
   // What the last press did, per game: without it a success and a failure look the same.
   const [outcome, setOutcome] = useState<Record<number, { text: string; ok: boolean }>>({});
 
-  async function run(gameId: number, action: () => Promise<SaveSyncState | unknown>) {
+  async function run(
+    gameId: number,
+    action: () => Promise<SaveSyncState | unknown>,
+  ): Promise<boolean> {
     setBusy((current) => new Set(current).add(gameId));
     setOutcome((current) => {
       const { [gameId]: _gone, ...rest } = current;
@@ -130,17 +169,21 @@ export function SavesView() {
     });
     try {
       const next = await action();
-      if (isRestoreReport(next)) {
-        setOutcome((current) => ({ ...current, [gameId]: restoredOutcome(next) }));
-      } else if (isSaveState(next)) {
-        setOutcome((current) => ({ ...current, [gameId]: outcomeOf(next) }));
+      let result: { text: string; ok: boolean } | null = null;
+      if (isRestoreReport(next)) result = restoredOutcome(next);
+      else if (isSaveState(next)) result = outcomeOf(next);
+      if (result) {
+        const shown = result;
+        setOutcome((current) => ({ ...current, [gameId]: shown }));
       }
       refresh();
+      return result?.ok ?? true;
     } catch (error) {
       setOutcome((current) => ({
         ...current,
         [gameId]: { text: messageOf(error), ok: false },
       }));
+      return false;
     } finally {
       setBusy((current) => {
         const next = new Set(current);
@@ -150,14 +193,32 @@ export function SavesView() {
     }
   }
 
-  function chooseAllSaves(checked: boolean) {
-    setShowAllSaves(checked);
-    writeStored(SHOW_ALL_SAVES_KEY, checked);
+  function chooseScope(next: SaveScope) {
+    setScope(next);
+    writeStored(SCOPE_KEY, next);
   }
 
-  function chooseAllGames(checked: boolean) {
-    setShowAllGames(checked);
-    writeStored(SHOW_ALL_GAMES_KEY, checked);
+  // Every installed game, not only the rows a search leaves showing.
+  const backupTargets = all.filter(backsUp);
+
+  /** One game after another, as each backup runs the save helper over the whole game. */
+  async function backupAll() {
+    const failed: string[] = [];
+    for (const [index, row] of backupTargets.entries()) {
+      setBackingUp({ done: index, total: backupTargets.length, title: row.title });
+      if (!(await run(row.gameId, () => backend.backupSaves(row.gameId, false)))) {
+        failed.push(row.title);
+      }
+    }
+    setBackingUp(null);
+    setConfirmBackupAll(false);
+    const done = backupTargets.length - failed.length;
+    setNotice(
+      `Backed up ${done} ${done === 1 ? "game" : "games"}.` +
+        (failed.length === 0
+          ? ""
+          : ` Not finished: ${failed.join(", ")}. ${failed.length === 1 ? "Its row says" : "Their rows say"} why.`),
+    );
   }
 
   const conflictRow = rows.find((row) => row.gameId === conflictGameId);
@@ -171,51 +232,66 @@ export function SavesView() {
         help="saves"
         actions={
           <>
-            <Switch
-              label="Show remote saves"
-              // Every game includes every game with saves, so this one follows along.
-              checked={showAllSaves || showAllGames}
-              disabled={showAllGames}
-              onChange={chooseAllSaves}
+            <TextInput
+              icon="search"
+              placeholder="Search saves"
+              aria-label="Search saves"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-44"
             />
-            <Switch label="Show all games" checked={showAllGames} onChange={chooseAllGames} />
+            <ScopePicker value={scope} onChange={chooseScope} />
             <Button onClick={() => setScanning(true)}>Find saves on this PC</Button>
-            <Button
-              icon="folder"
-              title="Open the saves folder"
-              onClick={() => void openSavesFolder()}
-            >
-              Open folder
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                setNotice(null);
-                setConfirmDeleteAll(true);
-              }}
-            >
-              Delete all saves
-            </Button>
+            <OverflowMenu
+              label="More save actions"
+              items={[
+                {
+                  label: "Back up all…",
+                  disabled: backupTargets.length === 0,
+                  onSelect: () => {
+                    setNotice(null);
+                    setConfirmBackupAll(true);
+                  },
+                },
+                { label: "Open backups folder", onSelect: () => void openSavesFolder() },
+                {
+                  label: "Delete all saves…",
+                  destructive: true,
+                  onSelect: () => {
+                    setNotice(null);
+                    setConfirmDeleteAll(true);
+                  },
+                },
+              ]}
+            />
           </>
         }
       />
 
       <div className={`${PANEL_BODY} flex flex-col`}>
-        <p className="mb-5 text-xs text-foreground/60">
-          Your saves are backed up after you play and restored before you start, on every PC
-          signed in to the same server.
+        <p className="mb-3 text-xs text-foreground/60">
+          Your saves are backed up after you play and restored before you start,{" "}
+          {KEPT[settings.data?.saveBackend ?? "server"] ?? KEPT.server}.
           {scope === "with-saves" && " Games with stored saves are listed too, installed here or not."}
           {scope === "all" && " Every game in your library is listed, installed here or not."}
         </p>
 
+        {all.length > 0 && (
+          <p className="mb-4 text-xs font-medium text-foreground/80">
+            {needle
+              ? `${rows.length} of ${all.length} games match "${query.trim()}".`
+              : attentionSummary(all)}
+          </p>
+        )}
+
         {notice && (
-          <p role="status" className="mb-3 text-[11px] text-success-600">
+          <p role="status" className="mb-3 text-[0.6875rem] text-success-600">
             {notice}
           </p>
         )}
 
         {folderError && (
-          <p role="alert" className="mb-3 text-[11px] text-warning-600">
+          <p role="alert" className="mb-3 text-[0.6875rem] text-warning-600">
             {folderError}
           </p>
         )}
@@ -226,9 +302,14 @@ export function SavesView() {
           </div>
         ) : overview.error ? (
           <Alert>{messageOf(overview.error)}</Alert>
-        ) : rows.length === 0 ? (
+        ) : all.length === 0 ? (
           <Empty icon="cloud" title={EMPTY[scope].title}>
             {EMPTY[scope].text}
+          </Empty>
+        ) : rows.length === 0 ? (
+          <Empty icon="search" title={`Nothing matches "${query.trim()}"`}>
+            Only titles are searched.
+            {scope !== "all" && " Show All games to search your whole library."}
           </Empty>
         ) : (
           <div className="flex flex-col gap-2">
@@ -241,9 +322,6 @@ export function SavesView() {
                 onBackup={() => run(row.gameId, () => backend.backupSaves(row.gameId, false))}
                 onRestore={() => run(row.gameId, () => backend.restoreSaves(row.gameId))}
                 onResolve={() => setConflictGameId(row.gameId)}
-                onEnableCrossOs={() =>
-                  run(row.gameId, () => backend.setSaveCrossOs(row.gameId, true))
-                }
                 onIdentify={() => setIdentifyGameId(row.gameId)}
                 onEditPaths={() => void paths.open(row.gameId)}
                 expanded={expanded === row.gameId}
@@ -293,6 +371,47 @@ export function SavesView() {
           onClose={() => setScanning(false)}
           onDone={refresh}
         />
+      )}
+
+      {confirmBackupAll && (
+        <Modal
+          label="Back up all saves"
+          role="alertdialog"
+          size="sm"
+          onDismiss={() => {
+            if (!backingUp) setConfirmBackupAll(false);
+          }}
+        >
+          <ModalHeader
+            title={
+              backingUp
+                ? "Backing up saves"
+                : `Back up ${backupTargets.length} ${backupTargets.length === 1 ? "game" : "games"}?`
+            }
+            description={
+              backingUp
+                ? `Backing up ${backingUp.title}, ${backingUp.done + 1} of ${backingUp.total}…`
+                : "Every installed game whose saves Gameyfin has found is backed up, one after another. A save that has not changed is not uploaded again, and a game with a newer save elsewhere is left for you to decide."
+            }
+          />
+          <ModalFooter>
+            <Button
+              variant="ghost"
+              disabled={backingUp !== null}
+              onClick={() => setConfirmBackupAll(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              icon="cloud"
+              disabled={backingUp !== null}
+              onClick={() => void backupAll()}
+            >
+              {backingUp ? "Backing up…" : "Back up all"}
+            </Button>
+          </ModalFooter>
+        </Modal>
       )}
 
       {confirmDeleteAll && (
@@ -352,7 +471,6 @@ function SaveRow({
   onBackup,
   onRestore,
   onResolve,
-  onEnableCrossOs,
   onIdentify,
   onEditPaths,
   outcome,
@@ -368,7 +486,6 @@ function SaveRow({
   onBackup: () => void;
   onRestore: () => void;
   onResolve: () => void;
-  onEnableCrossOs: () => void;
   onIdentify: () => void;
   onEditPaths: () => void;
   expanded: boolean;
@@ -395,14 +512,14 @@ function SaveRow({
           <p className="flex items-baseline gap-2 truncate text-sm font-medium">
             {row.title}
             {!row.installed && (
-              <span className="shrink-0 text-[11px] font-normal text-foreground/40">
+              <span className="shrink-0 text-[0.6875rem] font-normal text-foreground/40">
                 not installed here
               </span>
             )}
           </p>
           <p className={`truncate text-xs ${summary.tone}`}>{summary.text}</p>
           {row.versions > 0 && (
-            <p className="truncate text-[11px] text-foreground/40">
+            <p className="truncate text-[0.6875rem] text-foreground/40">
               {row.versions} {row.versions === 1 ? "version" : "versions"}
               {row.newestAt ? `, newest ${formatRelative(row.newestAt)}` : ""}
               {row.newestDevice ? ` from ${row.newestDevice}` : ""}
@@ -412,7 +529,7 @@ function SaveRow({
           {outcome && (
             <p
               role="status"
-              className={`mt-0.5 text-[11px] leading-relaxed ${
+              className={`mt-0.5 text-[0.6875rem] leading-relaxed ${
                 outcome.ok ? "text-success-600" : "text-warning-600"
               }`}
             >
@@ -425,8 +542,11 @@ function SaveRow({
           {state.kind === "conflict" && (
             <Action label="Resolve" onClick={onResolve} busy={busy} primary />
           )}
-          {state.kind === "platform-mismatch" && state.crossOsAvailable && (
-            <Action label="Try anyway" onClick={onEnableCrossOs} busy={busy} />
+          {state.kind === "platform-mismatch" && (
+            <>
+              {row.installed && <Action label="Back up" onClick={onBackup} busy={busy} />}
+              <Action label="Set folders" onClick={onEditPaths} busy={busy} primary />
+            </>
           )}
           {state.kind === "remote-newer" && row.installed && (
             <Action label="Restore" onClick={onRestore} busy={busy} primary />
@@ -436,6 +556,10 @@ function SaveRow({
           )}
           {state.kind === "in-sync" && row.installed && (
             <Action label="Back up" onClick={onBackup} busy={busy} />
+          )}
+          {/* Not forced, so a retry stops at a conflict instead of overwriting a newer save. */}
+          {state.kind === "failed" && row.installed && (
+            <Action label="Try again" onClick={onBackup} busy={busy} />
           )}
           {state.kind === "unmatched" && (
             <>
@@ -452,7 +576,7 @@ function SaveRow({
           )}
           {!row.installed && row.versions > 0 && (
             <span
-              className="self-center text-[11px] text-foreground/40"
+              className="self-center text-[0.6875rem] text-foreground/40"
               title="A save is restored into the game's own folders, which only exist once it is installed."
             >
               Install to restore
@@ -474,12 +598,12 @@ function SaveRow({
           </div>
 
           {state.kind === "platform-mismatch" && (
-            <p className="text-[11px] leading-relaxed text-warning-600">
+            <p className="text-[0.6875rem] leading-relaxed text-warning-600">
               Saved on {platformLabel(state.remote) || state.remote}, and this PC plays it as{" "}
-              {platformLabel(state.local) || state.local}.
-              {state.crossOsAvailable
-                ? " Try anyway translates the paths between the two. It is best effort, and it does not carry registry settings."
-                : " Set the save folders by hand to say where they belong here."}
+              {platformLabel(state.local) || state.local}, which keeps its saves elsewhere. To
+              carry saves between the two, use Set folders on each PC to give the save folder
+              the same stored name, then turn on Use saves from other systems. Registry settings
+              are not carried.
             </p>
           )}
 
@@ -525,4 +649,31 @@ export function countNeedingAttention(rows?: SaveOverviewRow[]): number {
   return rows.filter(
     (row) => row.state.kind === "conflict" || row.state.kind === "platform-mismatch",
   ).length;
+}
+
+/** Which games the list shows: one choice of three, not two switches that depend on each other. */
+function ScopePicker({ value, onChange }: { value: SaveScope; onChange: (scope: SaveScope) => void }) {
+  return (
+    <div
+      role="group"
+      aria-label="Show"
+      className="flex shrink-0 items-center gap-0.5 rounded-lg border border-default-200 p-0.5"
+    >
+      {SCOPES.map(([scope, label]) => (
+        <button
+          key={scope}
+          type="button"
+          aria-pressed={value === scope}
+          onClick={() => onChange(scope)}
+          className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+            value === scope
+              ? "bg-primary/15 font-medium text-primary"
+              : "text-foreground/60 hover:bg-default-100"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 }

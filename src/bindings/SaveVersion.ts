@@ -4,4 +4,9 @@ export type SaveVersion = {
 /**
  * Opaque store-issued id: a database id on the server, a filename in a folder or WebDAV store.
  */
-id: string, gameId: number, gameTitle: string | null, sizeBytes: number, contentHash: string, platform: string, installationId: string | null, deviceName: string | null, ludusaviTitle: string | null, locked: boolean, createdAt: string | null, };
+id: string, gameId: number, gameTitle: string | null, sizeBytes: number, contentHash: string, platform: string, installationId: string | null, deviceName: string | null, ludusaviTitle: string | null, locked: boolean, createdAt: string | null, 
+/**
+ * The version that was newest when this one was written. Only a folder or WebDAV store
+ * records it: with no compare-and-swap there, it is how two PCs uploading at once is told.
+ */
+baseSaveId?: string | null, };

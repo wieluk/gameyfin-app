@@ -40,6 +40,8 @@ export function primaryAction(state: GameState): PrimaryAction {
       return { label: "Install", icon: "installed", disabled: false, run: noop };
     case "downloading":
       return { label: "Downloading…", icon: "download", disabled: true, run: async () => {} };
+    case "paused":
+      return { label: "Resume", icon: "download", disabled: false, run: backend.startDownload };
     case "extracting":
       return { label: "Extracting…", icon: "installed", disabled: true, run: async () => {} };
     case "installing":
@@ -133,6 +135,7 @@ export function isInDownloads(entry: LibraryEntry): boolean {
   if (entry.state.kind === "failed") return entry.state.stage !== "launch";
   return [
     "downloading",
+    "paused",
     "downloaded",
     "extracting",
     "extracted",

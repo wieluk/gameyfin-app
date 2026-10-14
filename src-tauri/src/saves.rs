@@ -8,11 +8,11 @@ use std::time::Duration;
 
 use gameyfin_api::saves::{SaveVersion, UploadOutcome};
 use gameyfin_core::save_store::{FolderStore, SaveStore, ServerStore, WebDavStore};
-use gameyfin_core::save_sync::{self, LocalSaveState, SaveSync, SaveSyncState};
+use gameyfin_core::save_sync::{self, LocalSaveState, SaveSync, SaveSyncState, ThisPc};
 use gameyfin_core::{ConflictChoice, InstallLayout};
 use gameyfin_saves::config::{Redirect, RedirectKind};
 use gameyfin_saves::{
-    BackupFormat, ConfigBuilder, GameIdentity, Ludusavi, RestoreStrategy, SavePlatform, TitleMatch,
+    BackupFormat, ConfigBuilder, GameIdentity, Ludusavi, SavePlatform, TitleMatch,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -55,7 +55,8 @@ struct GameContext {
     install_dir: PathBuf,
     prefix_dir: PathBuf,
     record_saves: LocalSaveState,
-    strategy: RestoreStrategy,
+    /// The user mapped the folders and takes saves from any system.
+    any_platform: bool,
     redirects: Vec<Redirect>,
     /// Whether this game runs as a Windows program here. `None` when nothing on disk says.
     runs_as_windows: Option<bool>,
@@ -69,6 +70,23 @@ impl GameContext {
             // mismatch it has no way to be sure about.
             None => SavePlatform::Unknown,
         }
+    }
+
+    fn here<'a>(&self, settings: &'a Settings) -> ThisPc<'a> {
+        ThisPc {
+            platform: self.platform(),
+            installation_id: settings.installation_id.as_deref(),
+            any_platform: self.any_platform,
+        }
+    }
+
+    /// Whether the game keeps saves in a prefix that exists. On Windows, and for a native game, the
+    /// prefix is absent or irrelevant, and an empty root is one more place to scan.
+    fn prefix_ready(&self) -> bool {
+        self.saves_in_prefix()
+            && gameyfin_core::prefix::wine_root(&self.prefix_dir)
+                .join("drive_c")
+                .is_dir()
     }
 
     /// Whether this game's saves live inside a Wine prefix rather than in the Linux home.
@@ -119,7 +137,6 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
         .unwrap_or_else(|| layout.install_dir(game_id, &game.title));
     let prefix_dir = layout.prefix_dir(game_id);
     let runs_as_windows = runs_as_windows(&record, &install_dir, &prefix_dir);
-    let strategy = effective_strategy(record.save_restore_strategy.into(), runs_as_windows);
 
     Ok(GameContext {
         game_id,
@@ -129,7 +146,7 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
         install_dir,
         prefix_dir,
         record_saves: record.saves.clone(),
-        strategy,
+        any_platform: record.save_restore_strategy == SaveRestoreStrategy::CrossOs,
         redirects: record
             .save_redirects
             .iter()
@@ -144,14 +161,216 @@ async fn context(state: &AppState, game_id: i64) -> CommandResult<GameContext> {
     })
 }
 
-/// Never cross-OS for a game in a prefix: it drops the portable mapping, so a save stored under
-/// `/gameyfin/home` restores to nowhere.
-fn effective_strategy(stored: RestoreStrategy, runs_as_windows: Option<bool>) -> RestoreStrategy {
-    if !cfg!(windows) && runs_as_windows == Some(true) {
-        RestoreStrategy::Portable
-    } else {
-        stored
+/// This PC's folders behind each synthetic root, in the order Ludusavi tries them. A Proton game's
+/// travelling home is the prefix's, so its save crosses to Windows; the machine's own follows.
+fn portable_roots(context: &GameContext) -> Vec<(PathBuf, String)> {
+    use gameyfin_saves::config::{DOCUMENTS_TARGET, HOME_TARGET, HOST_HOME_TARGET, INSTALL_TARGET};
+
+    let mut roots = vec![(real(&context.install_dir), INSTALL_TARGET.to_string())];
+    let prefix_home = context
+        .prefix_ready()
+        .then(|| gameyfin_core::prefix::prefix_home(&context.prefix_dir))
+        .flatten();
+    match (prefix_home, home()) {
+        (Some(prefix_home), host_home) => {
+            // Ahead of both homes: Ludusavi reports where a link leads, which is the Linux home.
+            for (name, target) in linked_folders(&prefix_home) {
+                roots.push((target, format!("{HOME_TARGET}/{name}")));
+            }
+            roots.push((real(&prefix_home), HOME_TARGET.to_string()));
+            if let Some(host_home) = host_home {
+                roots.push((real(&host_home), HOST_HOME_TARGET.to_string()));
+            }
+        }
+        (None, Some(host_home)) => {
+            // Ahead of the home, being inside it or not: a moved one would otherwise travel by
+            // its own path, and land in a folder a prefix's game never reads.
+            if let Some(documents) = documents_folder()
+                .map(|documents| real(&documents))
+                .filter(|documents| *documents != real(&host_home.join("Documents")))
+            {
+                roots.push((documents, DOCUMENTS_TARGET.to_string()));
+            }
+            roots.push((real(&host_home), HOME_TARGET.to_string()));
+        }
+        (None, None) => {}
     }
+    roots
+}
+
+/// Folders of a prefix's home that plain Wine links into the Linux home, such as Documents, with
+/// where each leads. Proton makes real folders, so its prefixes have none.
+fn linked_folders(prefix_home: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(prefix_home) else {
+        return Vec::new();
+    };
+    let mut linked: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_symlink()))
+        .filter_map(|entry| {
+            let target = std::fs::canonicalize(entry.path()).ok()?;
+            target
+                .is_dir()
+                .then(|| (entry.file_name().to_string_lossy().into_owned(), target))
+        })
+        .collect();
+    linked.sort();
+    linked
+}
+
+/// Where a restore puts files kept in a Linux home on a PC that has none for this game, as when
+/// a Proton save reaches Windows. Set aside rather than failing the restore over files it never reads.
+fn unplaced_dir(context: &GameContext) -> PathBuf {
+    context
+        .saves_root
+        .join("unplaced")
+        .join(context.game_id.to_string())
+}
+
+/// Where Windows keeps Documents, which OneDrive or the user can move out of the profile. Games
+/// ask Windows for it, so a save there has to travel as the profile's Documents.
+#[cfg(windows)]
+fn documents_folder() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{
+        FOLDERID_Documents, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
+    };
+
+    let mut raw: windows_sys::core::PWSTR = std::ptr::null_mut();
+    // SAFETY: every pointer is valid for the call, and the string it hands back is freed once below.
+    let result = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_Documents,
+            KF_FLAG_DEFAULT as u32,
+            std::ptr::null_mut(),
+            &mut raw,
+        )
+    };
+    let path = (result == 0 && !raw.is_null()).then(|| {
+        // SAFETY: a successful call returns a NUL-terminated UTF-16 string.
+        let wide = unsafe {
+            let len = (0..).take_while(|&i| *raw.add(i) != 0).count();
+            std::slice::from_raw_parts(raw, len)
+        };
+        PathBuf::from(std::ffi::OsString::from_wide(wide))
+    });
+    // SAFETY: allocated by the shell for the caller to free, and freeing null is allowed.
+    unsafe { CoTaskMemFree(raw as *const core::ffi::c_void) };
+    path
+}
+
+/// Only Windows moves Documents: a Linux game in a prefix uses the prefix's own.
+#[cfg(not(windows))]
+fn documents_folder() -> Option<PathBuf> {
+    None
+}
+
+/// `path` with the first root it sits under swapped for that root's partner, or `None` when it sits
+/// under none. Separators are compared as `/`, and case is ignored on Windows.
+fn rebase<'a>(path: &str, pairs: impl IntoIterator<Item = (String, &'a str)>) -> Option<String> {
+    let path = path.replace('\\', "/");
+    for (from, to) in pairs {
+        let from = from.replace('\\', "/");
+        let from = from.trim_end_matches('/');
+        let Some(head) = path.get(..from.len()) else {
+            continue;
+        };
+        let same = if cfg!(windows) {
+            head.eq_ignore_ascii_case(from)
+        } else {
+            head == from
+        };
+        let rest = &path[from.len()..];
+        if same && (rest.is_empty() || rest.starts_with('/')) {
+            return Some(format!("{}{rest}", to.trim_end_matches('/')));
+        }
+    }
+    None
+}
+
+/// Beside Ludusavi's backup in the archive, which ignores it: what this PC was told by hand, so
+/// another PC need not be told again.
+const CARRIED_FILE: &str = "gameyfin.json";
+
+#[derive(Debug, Default, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CarriedFixes {
+    /// Hand-set save folders, under the synthetic roots where they sit under one.
+    #[serde(default)]
+    custom_paths: Vec<String>,
+}
+
+/// Writes this PC's hand-set folders into the staging directory, in the form every PC can read.
+async fn write_carried(context: &GameContext) {
+    let file = context.staging.join(CARRIED_FILE);
+    if context.record_saves.custom_paths.is_empty() {
+        let _ = tokio::fs::remove_file(&file).await;
+        return;
+    }
+    let roots: Vec<(String, String)> = portable_roots(context)
+        .into_iter()
+        .map(|(path, target)| (path.to_string_lossy().into_owned(), target))
+        .collect();
+    let carried = CarriedFixes {
+        custom_paths: context
+            .record_saves
+            .custom_paths
+            .iter()
+            .map(|path| {
+                let pairs = roots.iter().map(|(from, to)| (from.clone(), to.as_str()));
+                rebase(path, pairs).unwrap_or_else(|| path.clone())
+            })
+            .collect(),
+    };
+    if let Ok(text) = serde_json::to_string_pretty(&carried) {
+        if let Err(e) = tokio::fs::write(&file, text).await {
+            tracing::warn!(error = %e, "could not record the hand-set save folders");
+        }
+    }
+}
+
+/// The hand-set folders a downloaded save carries, as paths on this PC. A path under no synthetic
+/// root is kept only if it exists here.
+fn read_carried(context: &GameContext) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(context.staging.join(CARRIED_FILE)) else {
+        return Vec::new();
+    };
+    let Ok(carried) = serde_json::from_str::<CarriedFixes>(&text) else {
+        return Vec::new();
+    };
+    let roots = portable_roots(context);
+    let back: Vec<(String, &str)> = roots
+        .iter()
+        .map(|(path, target)| (target.clone(), path.to_str().unwrap_or_default()))
+        .collect();
+    carried
+        .custom_paths
+        .into_iter()
+        .filter_map(|path| match rebase(&path, back.iter().cloned()) {
+            Some(here) if cfg!(windows) => Some(here.replace('/', "\\")),
+            Some(here) => Some(here),
+            None => Path::new(&path).exists().then_some(path),
+        })
+        .collect()
+}
+
+/// Takes the folders another PC was told by hand, when this one was told none.
+async fn adopt_carried(state: &AppState, context: &GameContext) {
+    if !context.record_saves.custom_paths.is_empty() {
+        return;
+    }
+    let carried = read_carried(context);
+    if carried.is_empty() {
+        return;
+    }
+    tracing::info!(game_id = context.game_id, folders = ?carried, "using save folders set on another PC");
+    state
+        .library()
+        .update_record(context.game_id, move |record| {
+            record.saves.custom_paths = carried
+        })
+        .await;
 }
 
 /// The path as the filesystem resolves it: Ludusavi reports real paths, so a redirect through a
@@ -199,7 +418,6 @@ async fn ludusavi_for(
     let settings = state.settings();
 
     let mut builder = ConfigBuilder::new(&context.staging)
-        .strategy(context.strategy)
         .manual_redirects(
             context
                 .redirects
@@ -212,43 +430,27 @@ async fn ludusavi_for(
                 })
                 .collect::<Vec<_>>(),
         )
-        .portable_install_dir(&real(&context.install_dir))
         // Under the game's own title, which is also what a hand-set path registers it as.
         .custom_save_paths(
             context.title.clone(),
             context.record_saves.custom_paths.clone(),
         );
-
-    // Only where the game actually keeps saves: on Windows, and for a native game, the
-    // prefix is either absent or irrelevant, and an empty root is one more place to scan.
-    let in_prefix = context.saves_in_prefix()
-        && gameyfin_core::prefix::wine_root(&context.prefix_dir)
-            .join("drive_c")
-            .is_dir();
-    if in_prefix {
+    if context.prefix_ready() {
         builder = builder.wine_prefix(&real(&context.prefix_dir));
     }
-
-    // A Proton game's travelling home is the prefix's, so a save crosses to Windows. The machine's
-    // own home is registered after it, only as itself.
-    let prefix_home = in_prefix
-        .then(|| gameyfin_core::prefix::prefix_home(&context.prefix_dir))
-        .flatten();
-    match (prefix_home, home()) {
-        (Some(prefix_home), host_home) => {
-            builder = builder.portable_home(&real(&prefix_home));
-            if let Some(host_home) = host_home {
-                builder = builder.portable_host_home(&real(&host_home));
-            }
-        }
-        (None, Some(host_home)) => builder = builder.portable_home(&real(&host_home)),
-        (None, None) => {}
+    let roots = portable_roots(context);
+    let host_home_mapped = roots
+        .iter()
+        .any(|(_, target)| target == gameyfin_saves::config::HOST_HOME_TARGET);
+    for (source, target) in roots {
+        builder = builder.portable(&source, target);
     }
-    // Cross-OS translation needs one preferred prefix, which only a custom entry can carry.
-    if context.strategy == RestoreStrategy::CrossOs {
-        builder = builder.preferred_wine_prefix(&context.title, &real(&context.prefix_dir));
+    if !host_home_mapped {
+        builder = builder.restore_redirect(
+            gameyfin_saves::config::HOST_HOME_TARGET,
+            &unplaced_dir(context),
+        );
     }
-
     let config_dir = ludusavi_config_dir(&app_config);
     builder
         .write(&config_dir)
@@ -281,8 +483,8 @@ impl Resolution {
     }
 }
 
-/// Identifies a game, running the search at most once and remembering the answer: it costs
-/// four subprocesses, and an unrecognised game would repeat that on every refresh.
+/// Identifies a game, running the search once per version of the game database and remembering
+/// the answer: it costs four subprocesses, and an unrecognised game would repeat that on every refresh.
 async fn resolve_saves(
     app: &AppHandle,
     state: &AppState,
@@ -295,15 +497,63 @@ async fn resolve_saves(
     if !context.record_saves.custom_paths.is_empty() {
         return Ok(Resolution::Title(context.title.clone()));
     }
-    if context.record_saves.match_attempted {
+    let searched_this_database = context.record_saves.match_manifest.is_some()
+        && context.record_saves.match_manifest == manifest_stamp(state);
+    let resolution = if context.record_saves.match_attempted && searched_this_database {
         let cached = context.record_saves.match_candidates.clone();
-        return Ok(if cached.is_empty() {
+        if cached.is_empty() {
             Resolution::Unknown
         } else {
             Resolution::Candidates(cached)
-        });
+        }
+    } else {
+        identify(app, state, context).await?
+    };
+    if let Resolution::Title(_) = resolution {
+        return Ok(resolution);
     }
 
+    // Identified on another PC, by hand or by a newer database: that answer travels with the save.
+    let Some(title) = stored_title(state, context.game_id).await else {
+        return Ok(resolution);
+    };
+    tracing::info!(
+        game_id = context.game_id,
+        title,
+        "using the title another PC matched"
+    );
+    let remembered = title.clone();
+    state
+        .library()
+        .update_record(context.game_id, move |record| {
+            record.saves.ludusavi_title = Some(remembered);
+            record.saves.match_candidates.clear();
+        })
+        .await;
+    Ok(Resolution::Title(title))
+}
+
+/// The title the newest stored version that names one was filed under.
+async fn stored_title(state: &AppState, game_id: i64) -> Option<String> {
+    let settings = state.settings();
+    if !settings.save_sync_enabled {
+        return None;
+    }
+    let store = store_for(state, &settings).await.ok()?;
+    store
+        .list(game_id)
+        .await
+        .ok()?
+        .into_iter()
+        .find_map(|version| version.ludusavi_title)
+}
+
+/// Runs the database search and remembers the answer.
+async fn identify(
+    app: &AppHandle,
+    state: &AppState,
+    context: &GameContext,
+) -> CommandResult<Resolution> {
     let ludusavi = ludusavi_for(app, state, context).await?;
     let identity = GameIdentity {
         title: context.title.clone(),
@@ -333,15 +583,24 @@ async fn resolve_saves(
         candidates = candidates.len(),
         "identified game"
     );
+    // Read after the search, which may have updated the database itself.
+    let manifest = manifest_stamp(state);
     state
         .library()
         .update_record(context.game_id, move |record| {
             record.saves.ludusavi_title = title;
             record.saves.match_candidates = candidates;
             record.saves.match_attempted = true;
+            record.saves.match_manifest = manifest;
         })
         .await;
     Ok(resolution)
+}
+
+/// When the game database was last written. Ludusavi leaves the file alone when nothing changed.
+fn manifest_stamp(state: &AppState) -> Option<String> {
+    gameyfin_core::save_tool::manifest_info(&ludusavi_config_dir(&state.config_dir()))
+        .and_then(|info| info.updated_at)
 }
 
 /// The store the user chose. Explicit rather than inferred, so it is clear which is in use.
@@ -501,7 +760,8 @@ enum Standing {
     Open {
         context: Box<GameContext>,
         title: String,
-        remote: Option<SaveVersion>,
+        /// Every stored version, newest first.
+        versions: Vec<SaveVersion>,
     },
 }
 
@@ -517,8 +777,8 @@ async fn standing(app: &AppHandle, state: &AppState, game_id: i64) -> CommandRes
     };
 
     let sync = sync_for(state, &context, &settings).await?;
-    let remote = match sync.newest_remote(game_id).await {
-        Ok(remote) => remote,
+    let versions = match sync.versions(game_id).await {
+        Ok(versions) => versions,
         // Both mean the server cannot store saves; the UI advises differently for each.
         Err(gameyfin_api::ApiError::SaveSyncDisabled) => {
             return Ok(Standing::Settled(SaveSyncState::Disabled))
@@ -531,7 +791,7 @@ async fn standing(app: &AppHandle, state: &AppState, game_id: i64) -> CommandRes
     Ok(Standing::Open {
         context: Box::new(context),
         title,
-        remote,
+        versions,
     })
 }
 
@@ -550,19 +810,19 @@ pub async fn state_of(
     state: &AppState,
     game_id: i64,
 ) -> CommandResult<SaveSyncState> {
-    let (context, remote) = match standing(app, state, game_id).await? {
+    let (context, versions) = match standing(app, state, game_id).await? {
         Standing::Settled(settled) => return Ok(settled),
         Standing::Open {
-            context, remote, ..
-        } => (context, remote),
+            context, versions, ..
+        } => (context, versions),
     };
     let local_changed = recorded_change(&context).await;
+    let settings = state.settings();
     Ok(save_sync::decide(
         &context.record_saves,
-        remote.as_ref(),
+        &versions,
         local_changed,
-        context.platform(),
-        state.settings().installation_id.as_deref(),
+        &context.here(&settings),
     ))
 }
 
@@ -608,7 +868,7 @@ async fn scan_local(
 }
 
 /// What a launch goes on: the state judged by the save files actually on disk, what those
-/// files are, the newest stored version, and what a first start should do about it.
+/// files are, the newest stored version that restores here, and what a first start should do.
 struct LaunchView {
     state: SaveSyncState,
     local: Option<LocalFiles>,
@@ -621,7 +881,7 @@ async fn state_at_launch(
     state: &AppState,
     game_id: i64,
 ) -> CommandResult<LaunchView> {
-    let (context, title, remote) = match standing(app, state, game_id).await? {
+    let (context, title, versions) = match standing(app, state, game_id).await? {
         Standing::Settled(settled) => {
             return Ok(LaunchView {
                 state: settled,
@@ -633,9 +893,12 @@ async fn state_at_launch(
         Standing::Open {
             context,
             title,
-            remote,
-        } => (context, title, remote),
+            versions,
+        } => (context, title, versions),
     };
+    let settings = state.settings();
+    let here = context.here(&settings);
+    let newest = save_sync::newest_usable(&versions, &here).cloned();
 
     // The files, not the record of the last backup, which can be wrong.
     let local = match scan_local(app, state, &context, &title).await {
@@ -649,21 +912,24 @@ async fn state_at_launch(
         Some(local) => local.changed,
         None => recorded_change(&context).await,
     };
-    let judged = save_sync::decide(
-        &context.record_saves,
-        remote.as_ref(),
-        local_changed,
-        context.platform(),
-        state.settings().installation_id.as_deref(),
-    );
-    let judged = match &local {
-        Some(local) => save_sync::missing_here(judged, remote.as_ref(), local.present),
-        None => judged,
+    let judged = save_sync::decide(&context.record_saves, &versions, local_changed, &here);
+    let judged = match (judged, &local) {
+        (judged, Some(local)) => {
+            match save_sync::missing_here(judged, newest.as_ref(), local.present) {
+                // When the files last changed, which the record of the last backup is not.
+                SaveSyncState::Conflict { local_at, remote } => SaveSyncState::Conflict {
+                    local_at: local.newest_at.clone().or(local_at),
+                    remote,
+                },
+                judged => judged,
+            }
+        }
+        (judged, None) => judged,
     };
 
-    // A PC that never synced has nothing to compare against, so a first start asks which
-    // stored save to use. Which of them restore here is worked out when asking.
-    let first_start = match &remote {
+    // A PC that never synced has nothing to compare against, so a first start settles which
+    // stored save to use.
+    let first_start = match &newest {
         Some(newest) if save_sync::never_synced(&context.record_saves) => {
             Some(save_sync::first_start(&context.record_saves, &newest.id))
         }
@@ -672,7 +938,7 @@ async fn state_at_launch(
     Ok(LaunchView {
         state: judged,
         local,
-        newest: remote,
+        newest,
         first_start,
     })
 }
@@ -705,9 +971,11 @@ pub enum SaveSyncPhase {
         state: SaveSyncState,
     },
     Skipped,
+    /// The store could not be reached. Nothing waits on the user: an upload is retried later.
+    Offline,
     /// The user chose this PC's save over the newest stored version, so nothing was restored.
     KeptLocal,
-    /// The first-start prompt took over, so this window has nothing more to say.
+    /// A prompt about which save to use took over, so this window has nothing more to say.
     Asking,
     /// The stored save was put back. Where it went is said, so the user can find it.
     Restored {
@@ -728,6 +996,7 @@ impl SaveSyncPhase {
             self,
             SaveSyncPhase::Done { .. }
                 | SaveSyncPhase::Skipped
+                | SaveSyncPhase::Offline
                 | SaveSyncPhase::KeptLocal
                 | SaveSyncPhase::Asking
                 | SaveSyncPhase::Restored { .. }
@@ -981,10 +1250,9 @@ pub async fn save_overview(
         rows.push(SaveOverviewRow {
             state: save_sync::decide(
                 &context.record_saves,
-                newest,
+                &versions,
                 local_changed,
-                context.platform(),
-                settings.installation_id.as_deref(),
+                &context.here(&settings),
             ),
             versions: versions.len() as u32,
             newest_at: newest.and_then(|v| v.created_at.clone()),
@@ -1018,9 +1286,20 @@ pub async fn save_state(
 pub async fn list_save_versions(
     state: State<'_, AppState>,
     game_id: i64,
-) -> CommandResult<Vec<SaveVersion>> {
+) -> CommandResult<Vec<OfferedSave>> {
     let settings = state.settings();
-    Ok(store_for(&state, &settings).await?.list(game_id).await?)
+    let context = context(&state, game_id).await?;
+    let here = context.here(&settings);
+    Ok(store_for(&state, &settings)
+        .await?
+        .list(game_id)
+        .await?
+        .into_iter()
+        .map(|version| OfferedSave {
+            restorable: save_sync::restorable_here(&version, &here),
+            version,
+        })
+        .collect())
 }
 
 /// Deletes stored versions for good, as the server's own saves page does.
@@ -1150,16 +1429,23 @@ async fn do_backup(
     if let Some(watch) = watch {
         watch.committed(SaveSyncPhase::Uploading);
     }
+    write_carried(&context).await;
     let sync = sync_for(state, &context, &settings).await?;
+    let here = context.here(&settings);
+    let versions = sync.versions(game_id).await?;
+    let base = context.record_saves.last_synced_save_id.clone();
+    // Saves from a system that does not restore here are that system's line, not a conflict.
+    let force = force || save_sync::passes_other_systems(&versions, base.as_deref(), &here);
     let outcome = sync
-        .upload(
-            game_id,
-            context.record_saves.last_synced_save_id.clone(),
-            context.platform(),
-            Some(title),
-            force,
-        )
+        .upload(game_id, base, context.platform(), Some(title), force)
         .await?;
+    // The store answered, so nothing is left to retry, whatever it said.
+    if context.record_saves.upload_pending {
+        state
+            .library()
+            .update_record(game_id, |r| r.saves.upload_pending = false)
+            .await;
+    }
     let hash = staged_hash(&context).await;
 
     let next = match outcome {
@@ -1175,14 +1461,35 @@ async fn do_backup(
                 last_synced_at: context.record_saves.last_backup_at.clone(),
             }
         }
-        UploadOutcome::Conflict { remote, .. } => SaveSyncState::Conflict {
-            local_at: Some(crate::ipc::now_iso8601()),
-            remote,
-        },
+        // Judged against what restores here, so "keep the other save" never offers one that cannot.
+        UploadOutcome::Conflict { remote, .. } => {
+            let remote_platform = remote.platform.parse().unwrap_or(SavePlatform::Unknown);
+            let usable = if save_sync::restorable_here(&remote, &here) {
+                Some(remote)
+            } else {
+                save_sync::newest_usable(&versions, &here)
+                    .cloned()
+                    .map(Box::new)
+            };
+            match usable {
+                Some(remote) => SaveSyncState::Conflict {
+                    local_at: Some(crate::ipc::now_iso8601()),
+                    remote,
+                },
+                None => SaveSyncState::PlatformMismatch {
+                    local: context.platform(),
+                    remote: remote_platform,
+                },
+            }
+        }
     };
     emit_state(app, game_id, &next);
     Ok(next)
 }
+
+const NOT_FROM_HERE: &str = "That save was made on another system and does not restore onto this \
+     PC by itself. Use Set folders to map its folders on each PC, then turn on Use saves from \
+     other systems.";
 
 /// What a restore did: "in sync" alone does not say the save was just put back, or where.
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
@@ -1239,23 +1546,32 @@ async fn do_restore(
     let sync = sync_for(state, &context, &settings).await?;
 
     let versions = sync.versions(game_id).await?;
+    let here = context.here(&settings);
     // An older version restored by hand counts as based on the newest, or the next launch
     // would restore the newest right over it.
-    let newest_id = versions.first().map(|v| v.id.clone());
+    let newest_id = save_sync::newest_usable(&versions, &here).map(|v| v.id.clone());
     let version = match save_id {
         Some(id) => versions
             .into_iter()
             .find(|v| v.id == id)
             .ok_or_else(|| CommandError::msg("That save version is gone."))?,
-        None => versions
-            .into_iter()
-            .next()
-            .ok_or_else(|| CommandError::msg("There is no save on the server yet."))?,
+        None => match save_sync::newest_usable(&versions, &here) {
+            Some(version) => version.clone(),
+            None if versions.is_empty() => {
+                return Err(CommandError::msg("There is no stored save yet."))
+            }
+            None => return Err(CommandError::msg(NOT_FROM_HERE)),
+        },
     };
+    // Its files would land where this game does not look, and the restore would call it a success.
+    if !save_sync::restorable_here(&version, &here) {
+        return Err(CommandError::msg(NOT_FROM_HERE));
+    }
     if let Some(watch) = watch {
         watch.step(SaveSyncPhase::Downloading);
     }
     sync.fetch(game_id, &version.id).await?;
+    adopt_carried(state, &context).await;
 
     // The last moment stopping costs nothing: the archive is downloaded but no file of the
     // game's has been touched.
@@ -1269,6 +1585,8 @@ async fn do_restore(
     if let Some(watch) = watch {
         watch.committed(SaveSyncPhase::Restoring);
     }
+    let unplaced = unplaced_dir(&context);
+    let _ = tokio::fs::remove_dir_all(&unplaced).await;
     let ludusavi = ludusavi_for(app, state, &context).await?;
     let restored = ludusavi
         .restore(&title, &context.staging)
@@ -1297,11 +1615,26 @@ async fn do_restore(
         )));
     }
 
-    let placed: Vec<&str> = restored
+    let (set_aside, placed): (Vec<&str>, Vec<&str>) = restored
         .games
         .values()
         .flat_map(|game| game.placed())
-        .collect();
+        .partition(|path| Path::new(path).starts_with(&unplaced));
+    if !set_aside.is_empty() {
+        tracing::info!(
+            game_id,
+            files = set_aside.len(),
+            folder = %unplaced.display(),
+            "set aside files kept in another PC's Linux home"
+        );
+        if placed.is_empty() {
+            return Err(CommandError::msg(
+                "The save could not be put back: all of its files were kept in another PC's \
+                 Linux home, which this game does not use here. Set its folders under Saves, \
+                 then restore it again.",
+            ));
+        }
+    }
     let report = RestoreReport {
         state: SaveSyncState::InSync {
             last_synced_at: version.created_at.clone(),
@@ -1333,14 +1666,27 @@ pub async fn resolve_save_conflict(
     choice: ConflictChoice,
 ) -> CommandResult<SaveSyncState> {
     match choice {
-        // Keeping both is what the store does anyway: the remote version stays in the history.
-        ConflictChoice::KeepLocal | ConflictChoice::KeepBoth => {
+        ConflictChoice::KeepLocal => do_backup(&app, &state, game_id, true, None).await,
+        // The other save is locked first, so cleaning up old versions can never take it.
+        ConflictChoice::KeepBoth => {
+            lock_newest_usable(&state, game_id).await?;
             do_backup(&app, &state, game_id, true, None).await
         }
         ConflictChoice::KeepRemote => do_restore(&app, &state, game_id, None, None)
             .await
             .map(|report| report.state),
     }
+}
+
+async fn lock_newest_usable(state: &AppState, game_id: i64) -> CommandResult<()> {
+    let settings = state.settings();
+    let context = context(state, game_id).await?;
+    let store = store_for(state, &settings).await?;
+    let versions = store.list(game_id).await?;
+    if let Some(other) = save_sync::newest_usable(&versions, &context.here(&settings)) {
+        store.set_locked(game_id, &other.id, true).await?;
+    }
+    Ok(())
 }
 
 /// Searches the manifest, for a game listed under a name nobody would predict.
@@ -1422,23 +1768,6 @@ pub async fn set_save_mapping(
                 record.saves.match_attempted = false;
                 record.saves.match_candidates.clear();
             }
-        })
-        .await;
-    state_of(&app, &state, game_id).await
-}
-
-/// Its own command, so changing the mapping cannot erase hand-entered paths.
-#[tauri::command]
-pub async fn set_save_cross_os(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    game_id: i64,
-    cross_os: bool,
-) -> CommandResult<SaveSyncState> {
-    state
-        .library()
-        .update_record(game_id, move |record| {
-            record.save_restore_strategy = cross_os.into();
         })
         .await;
     state_of(&app, &state, game_id).await
@@ -2090,17 +2419,14 @@ async fn pull_offer(
 ) -> CommandResult<Option<SavePullOffer>> {
     let settings = state.settings();
     let context = context(state, game_id).await?;
+    let here = context.here(&settings);
     let versions: Vec<OfferedSave> = store_for(state, &settings)
         .await?
         .list(game_id)
         .await?
         .into_iter()
         .map(|version| OfferedSave {
-            restorable: save_sync::restorable_here(
-                &version,
-                context.platform(),
-                settings.installation_id.as_deref(),
-            ),
+            restorable: save_sync::restorable_here(&version, &here),
             version,
         })
         .collect();
@@ -2115,6 +2441,38 @@ async fn pull_offer(
         local_saves: local.is_none_or(|local| local.present),
         local_at: local.and_then(|local| local.newest_at.clone()),
     }))
+}
+
+/// Both PCs moved since they last synced, put to the user where the sync ran into it. At launch
+/// the dialog starts the game once answered.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SaveConflictPrompt {
+    pub game_id: i64,
+    pub title: String,
+    pub moment: SyncMoment,
+    pub local_at: Option<String>,
+    pub remote: SaveVersion,
+}
+
+/// Hands a conflict to the dialog, closing the progress window first: two at once is one too many.
+fn ask_about_conflict(app: &AppHandle, watch: &SyncWatch, state: &SaveSyncState) -> bool {
+    let SaveSyncState::Conflict { local_at, remote } = state else {
+        return false;
+    };
+    watch.finish(SaveSyncPhase::Asking);
+    let _ = app.emit(
+        "save-conflict",
+        SaveConflictPrompt {
+            game_id: watch.game_id,
+            title: watch.title.clone(),
+            moment: watch.moment,
+            local_at: local_at.clone(),
+            remote: (**remote).clone(),
+        },
+    );
+    true
 }
 
 /// What [`before_launch`] decided the launch should do next.
@@ -2149,6 +2507,11 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
 
     let view = match state_at_launch(app, state, game_id).await {
         Ok(view) => view,
+        Err(e) if unreachable(&e) => {
+            tracing::info!(game_id, error = %e, "saves are out of reach; playing with this PC's");
+            watch.finish(SaveSyncPhase::Offline);
+            return LaunchGate::Proceed;
+        }
         Err(e) => {
             tracing::warn!(game_id, error = %e, "could not check saves before launch");
             watch.finish(SaveSyncPhase::Failed {
@@ -2158,7 +2521,10 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
         }
     };
 
+    // A first start with no save files here has nothing to lose, so it restores unasked.
+    let empty_here = view.local.as_ref().is_some_and(|local| !local.present);
     match (view.first_start, view.newest.as_ref()) {
+        (Some(save_sync::FirstStart::Ask), Some(_)) if empty_here => {}
         (Some(save_sync::FirstStart::KeepLocal), _) => {
             tracing::info!(
                 game_id,
@@ -2167,7 +2533,25 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
             watch.finish(SaveSyncPhase::KeptLocal);
             return LaunchGate::Proceed;
         }
-        (Some(save_sync::FirstStart::Ask), Some(_)) => {
+        (Some(save_sync::FirstStart::Ask), Some(newest)) => {
+            match adopt_if_identical(app, state, game_id, newest).await {
+                Ok(true) => {
+                    tracing::info!(
+                        game_id,
+                        "this PC already has the stored save; nothing to ask"
+                    );
+                    watch.finish(SaveSyncPhase::Done {
+                        state: SaveSyncState::InSync {
+                            last_synced_at: newest.created_at.clone(),
+                        },
+                    });
+                    return LaunchGate::Proceed;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(game_id, error = %e, "could not compare this PC's save with the stored one")
+                }
+            }
             match pull_offer(state, game_id, &title, view.local.as_ref()).await {
                 Ok(Some(offer)) => {
                     tracing::info!(
@@ -2199,6 +2583,13 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
         }
         _ => match &view.state {
             SaveSyncState::RemoteNewer { .. } => {}
+            // Playing on would only move this PC further from the other, so it is settled first.
+            conflict @ SaveSyncState::Conflict { .. } => {
+                tracing::info!(game_id, "both PCs played since the last sync; asking first");
+                emit_state(app, game_id, conflict);
+                ask_about_conflict(app, &watch, conflict);
+                return LaunchGate::AwaitingSaveDecision;
+            }
             other => {
                 if save_sync::needs_attention(other) {
                     tracing::info!(game_id, "save needs a decision before it can be restored");
@@ -2253,8 +2644,54 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
     LaunchGate::Proceed
 }
 
+/// Takes the stored version as synced when this PC's save files are exactly its own, as when the
+/// same save reached both machines another way. Ludusavi compares them file by file.
+async fn adopt_if_identical(
+    app: &AppHandle,
+    state: &AppState,
+    game_id: i64,
+    version: &SaveVersion,
+) -> CommandResult<bool> {
+    let settings = state.settings();
+    let context = context(state, game_id).await?;
+    let Ok(title) = resolve_saves(app, state, &context).await?.require_title() else {
+        return Ok(false);
+    };
+    sync_for(state, &context, &settings)
+        .await?
+        .fetch(game_id, &version.id)
+        .await?;
+    let ludusavi = ludusavi_for(app, state, &context).await?;
+    let preview = ludusavi
+        .restore_preview(&title, &context.staging)
+        .await
+        .context("could not compare the saves")?;
+    drop(ludusavi);
+    let same = !preview.games.is_empty() && preview.games.values().all(|g| g.already_restored());
+    if same {
+        let hash = staged_hash(&context).await;
+        record_sync(
+            state,
+            game_id,
+            Some(version.id.clone()),
+            hash,
+            context.platform(),
+        )
+        .await;
+        emit_state(
+            app,
+            game_id,
+            &SaveSyncState::InSync {
+                last_synced_at: version.created_at.clone(),
+            },
+        );
+    }
+    Ok(same)
+}
+
 /// Records the answer to the first-start offer: the version to restore, or none to keep what
-/// this PC has. Declining covers the newest version only, so a newer save asks again.
+/// this PC has. Keeping it builds on the newest version, so the next upload goes on top of that
+/// one, which stays in the history, instead of stopping at a conflict the user already settled.
 #[tauri::command]
 pub async fn answer_save_pull_offer(
     app: AppHandle,
@@ -2292,17 +2729,22 @@ pub async fn answer_save_pull_offer(
         return Ok(());
     }
     let settings = state.settings();
-    let newest = store_for(&state, &settings)
-        .await?
-        .list(game_id)
-        .await?
-        .into_iter()
-        .next()
-        .map(|version| version.id);
+    let context = context(&state, game_id).await?;
+    let versions = store_for(&state, &settings).await?.list(game_id).await?;
+    let newest =
+        save_sync::newest_usable(&versions, &context.here(&settings)).map(|v| v.id.clone());
     state
         .library()
-        .update_record(game_id, move |r| r.saves.pull_offer_declined = newest)
+        .update_record(game_id, move |r| {
+            r.saves.last_synced_save_id = newest.clone();
+            r.saves.pull_offer_declined = newest;
+        })
         .await;
+    // Up now, so the save kept is stored before anything is played on it. A failure is not the
+    // answer's: the upload after playing tries again.
+    if let Err(e) = do_backup(&app, &state, game_id, false, None).await {
+        tracing::warn!(game_id, error = %e, "could not back up the save kept on this PC");
+    }
     crate::state::lock(&state.answered_offers()).insert(game_id, std::time::Instant::now());
     Ok(())
 }
@@ -2353,7 +2795,17 @@ pub async fn after_exit(app: &AppHandle, state: &AppState, game_id: i64) {
             if save_sync::needs_attention(&next) {
                 tracing::info!(game_id, "save upload needs a decision");
             }
-            watch.finish(SaveSyncPhase::Done { state: next });
+            if !ask_about_conflict(app, &watch, &next) {
+                watch.finish(SaveSyncPhase::Done { state: next });
+            }
+        }
+        Err(e) if unreachable(&e) => {
+            tracing::info!(game_id, error = %e, "saves are out of reach; the upload waits");
+            state
+                .library()
+                .update_record(game_id, |r| r.saves.upload_pending = true)
+                .await;
+            watch.finish(SaveSyncPhase::Offline);
         }
         Err(e) => {
             tracing::warn!(game_id, error = %e, "could not back up the save after playing");
@@ -2361,6 +2813,59 @@ pub async fn after_exit(app: &AppHandle, state: &AppState, game_id: i64) {
                 message: e.to_string(),
             });
         }
+    }
+}
+
+/// Whether nobody answered, which a retry fixes, as opposed to an answer the user has to read.
+fn unreachable(error: &CommandError) -> bool {
+    match error {
+        CommandError::NotConnected => true,
+        CommandError::Api(e) => e.is_unreachable(),
+        CommandError::Message(_) => false,
+    }
+}
+
+/// How long after starting the first retry waits, so it does not crowd the window opening.
+const RETRY_FIRST: Duration = Duration::from_secs(60);
+const RETRY_EVERY: Duration = Duration::from_secs(10 * 60);
+
+/// Uploads what playing offline left behind, until the store answers. Unforced, so a save from
+/// another PC in the meantime still stops at a conflict.
+pub async fn retry_pending_uploads(app: AppHandle) {
+    tokio::time::sleep(RETRY_FIRST).await;
+    loop {
+        let state = app.state::<AppState>();
+        let settings = state.settings();
+        if settings.save_sync_enabled && settings.sync_saves_on_exit {
+            for game_id in state.library().pending_uploads() {
+                // Mid-session saves are not finished; the exit uploads them anyway.
+                if state.processes.get(game_id).is_some() {
+                    continue;
+                }
+                match do_backup(&app, &state, game_id, false, None).await {
+                    Ok(next) => {
+                        tracing::info!(game_id, ?next, "uploaded a save left from playing offline")
+                    }
+                    // Still out of reach: the rest would only fail the same way.
+                    Err(e) if unreachable(&e) => break,
+                    Err(e) => {
+                        tracing::warn!(game_id, error = %e, "a waiting upload failed; not retrying it");
+                        state
+                            .library()
+                            .update_record(game_id, |r| r.saves.upload_pending = false)
+                            .await;
+                        emit_state(
+                            &app,
+                            game_id,
+                            &SaveSyncState::Failed {
+                                message: e.to_string(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(RETRY_EVERY).await;
     }
 }
 
@@ -2495,6 +3000,59 @@ mod tests {
     }
 
     #[test]
+    fn a_wine_prefix_folder_linked_into_the_linux_home_is_found() {
+        let dir = scratch("linked");
+        let prefix_home = dir.join("pfx/drive_c/users/alice");
+        std::fs::create_dir_all(&prefix_home).unwrap();
+        std::fs::create_dir_all(dir.join("home/Documents")).unwrap();
+        std::fs::create_dir_all(prefix_home.join("AppData")).unwrap();
+        std::os::unix::fs::symlink(dir.join("home/Documents"), prefix_home.join("Documents"))
+            .unwrap();
+
+        let linked = linked_folders(&prefix_home);
+        assert_eq!(
+            vec![("Documents".to_string(), real(&dir.join("home/Documents")))],
+            linked,
+            "a real folder is not a link"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_hand_set_folder_travels_under_its_synthetic_root() {
+        let roots = || {
+            [
+                ("/games/Celeste".to_string(), "/gameyfin/install"),
+                ("/pfx/drive_c/users/steamuser".to_string(), "/gameyfin/home"),
+                ("/home/alice".to_string(), "/gameyfin/host-home"),
+            ]
+        };
+        assert_eq!(
+            Some("/gameyfin/home/Documents/My Games/Celeste".to_string()),
+            rebase(
+                "/pfx/drive_c/users/steamuser/Documents/My Games/Celeste",
+                roots()
+            )
+        );
+        assert_eq!(
+            Some("/gameyfin/install/saves".to_string()),
+            rebase("/games/Celeste/saves", roots())
+        );
+        // A neighbour that merely starts with the same letters is not inside the root.
+        assert_eq!(None, rebase("/home/alicia/saves", roots()));
+
+        // And back onto another PC's folders.
+        let deck = [(
+            "/gameyfin/home".to_string(),
+            "/deck/pfx/drive_c/users/steamuser",
+        )];
+        assert_eq!(
+            Some("/deck/pfx/drive_c/users/steamuser/Documents/My Games/Celeste".to_string()),
+            rebase("/gameyfin/home/Documents/My Games/Celeste", deck)
+        );
+    }
+
+    #[test]
     fn a_symlinked_path_is_written_as_the_path_it_resolves_to() {
         // On ostree `/home` is `/var/home`, so a redirect written through the link never matches.
         let dir = scratch("real");
@@ -2505,17 +3063,5 @@ mod tests {
         // Not there yet: kept as written rather than dropped.
         assert!(real(&dir.join("nowhere")) == dir.join("nowhere"));
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_game_run_in_a_prefix_always_travels_by_the_portable_mapping() {
-        // Cross-OS drops that mapping, so a save stored under /gameyfin/home would restore to nowhere.
-        assert!(
-            effective_strategy(RestoreStrategy::CrossOs, Some(true)) == RestoreStrategy::Portable
-        );
-        // A native build keeps the choice: bridging it to Windows is what cross-OS is for.
-        assert!(
-            effective_strategy(RestoreStrategy::CrossOs, Some(false)) == RestoreStrategy::CrossOs
-        );
     }
 }

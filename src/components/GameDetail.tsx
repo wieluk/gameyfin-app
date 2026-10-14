@@ -103,7 +103,8 @@ function Header({ entry, onClose }: { entry: LibraryEntry; onClose: () => void }
   const art = entry.headerUrl ?? entry.coverUrl ?? null;
 
   return (
-    <div className="relative h-52 shrink-0 bg-default-200">
+    // Without art the band only holds the title, so it shrinks to fit it.
+    <div className={`relative shrink-0 bg-default-200 ${art ? "h-52" : "h-20"}`}>
       {art && <img src={art} alt="" className="h-full w-full object-cover" />}
       <div className="absolute inset-0 bg-gradient-to-t from-content1 via-content1/70 to-transparent" />
 
@@ -176,7 +177,7 @@ function Tags({ game, onFilter }: { game: LibraryEntry["game"]; onFilter: () => 
             setAdvanced(true);
             onFilter();
           }}
-          className="rounded-full bg-default-100 px-2.5 py-0.5 text-[11px] text-foreground/65 transition-colors hover:bg-primary/15 hover:text-primary"
+          className="rounded-full bg-default-100 px-2.5 py-0.5 text-[0.6875rem] text-foreground/65 transition-colors hover:bg-primary/15 hover:text-primary"
         >
           {value}
         </button>
@@ -220,7 +221,7 @@ function Photos({ urls, title }: { urls: string[]; title: string }) {
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
-        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-foreground/40">
+        <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wide text-foreground/40">
           Photos
           <span className="ml-2 font-normal normal-case tracking-normal text-foreground/30">
             {urls.length}

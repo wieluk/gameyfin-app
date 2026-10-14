@@ -1,3 +1,4 @@
+import { Alert } from "@/components/Alert";
 import { Button } from "@/components/ui";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { Modal } from "./Modal";
@@ -12,6 +13,8 @@ export function SaveConflictDialog({
   localAt,
   remote,
   busy,
+  error,
+  cancelLabel = "Decide later",
   onChoose,
   onCancel,
 }: {
@@ -19,6 +22,8 @@ export function SaveConflictDialog({
   localAt?: string | null;
   remote: SaveVersion;
   busy: boolean;
+  error?: string | null;
+  cancelLabel?: string;
   onChoose: (choice: ConflictChoice) => void;
   onCancel: () => void;
 }) {
@@ -31,7 +36,8 @@ export function SaveConflictDialog({
         </h2>
         <p className="text-xs leading-relaxed text-foreground/60">
           This PC and another machine both played since the last sync. Choose which one to
-          keep. Keeping both uploads this PC's save and leaves the other in your history.
+          play on. Keep both plays on this PC's save and keeps the other for good, so you can
+          restore it later.
         </p>
 
         <div className="mt-4 grid grid-cols-2 gap-3">
@@ -43,11 +49,12 @@ export function SaveConflictDialog({
             platform={remote.platform}
           />
         </div>
+        {error && <Alert className="mt-3">{error}</Alert>}
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-default-200/60 px-5 py-3">
         <Button variant="ghost" onClick={onCancel} disabled={busy}>
-          Decide later
+          {cancelLabel}
         </Button>
         <Button onClick={() => onChoose("keep-remote")} disabled={busy}>
           Keep the cloud save
@@ -77,11 +84,11 @@ function SaveSummary({
   return (
     <div className="rounded-xl border border-default-200/60 bg-content2 px-3 py-2">
       <p className="text-xs font-semibold text-foreground">{heading}</p>
-      <p className="mt-1 text-[11px] text-foreground/60">Saved {formatRelative(when)}</p>
+      <p className="mt-1 text-[0.6875rem] text-foreground/60">Saved {formatRelative(when)}</p>
       {sizeBytes !== undefined && (
-        <p className="text-[11px] text-foreground/60">{formatBytes(sizeBytes)}</p>
+        <p className="text-[0.6875rem] text-foreground/60">{formatBytes(sizeBytes)}</p>
       )}
-      {platform && <p className="text-[11px] text-foreground/40">{platform}</p>}
+      {platform && <p className="text-[0.6875rem] text-foreground/40">{platform}</p>}
     </div>
   );
 }

@@ -21,14 +21,19 @@ export function ViewHeader({
 }) {
   return (
     <>
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b-2 border-default-200 px-6 py-3 dark:border-default-200/60">
-        {title && (
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground/45">
-            {title}
-          </h2>
-        )}
-        {actions && <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>}
-        {children}
+      <div className="flex shrink-0 items-start gap-3 border-b-2 border-default-200 px-6 py-3 dark:border-default-200/60">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
+          {title && (
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground/45">
+              {title}
+            </h2>
+          )}
+          {actions && (
+            <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
+          )}
+          {children}
+        </div>
+        {/* Outside the wrapping row, or a full toolbar pushes it onto a line of its own. */}
         {help && <HelpButton topic={help} />}
       </div>
       {error && <Alert className="mx-6 mt-3">{error}</Alert>}

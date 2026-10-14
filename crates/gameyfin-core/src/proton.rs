@@ -11,7 +11,7 @@ use crate::error::{CoreError, CoreResult};
 /// every listing, so a half-extracted build never looks installed.
 const UNPACKING: &str = ".unpacking";
 
-/// GitHub page size. Both projects release a few times a month, so this reaches months back.
+/// GitHub page size. Each project releases a few times a month, so this reaches months back.
 const FEED_PAGE: usize = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
@@ -22,6 +22,8 @@ pub enum ProtonFamily {
     UmuProton,
     /// GloriousEggroll's build, with more media codecs and game patches.
     GeProton,
+    /// CachyOS' build, which tracks Proton's newest fixes closely.
+    ProtonCachyos,
 }
 
 impl ProtonFamily {
@@ -29,6 +31,7 @@ impl ProtonFamily {
         match self {
             ProtonFamily::UmuProton => "umu-proton",
             ProtonFamily::GeProton => "ge-proton",
+            ProtonFamily::ProtonCachyos => "proton-cachyos",
         }
     }
 
@@ -36,6 +39,7 @@ impl ProtonFamily {
         match self {
             ProtonFamily::UmuProton => "UMU-Proton",
             ProtonFamily::GeProton => "GE-Proton",
+            ProtonFamily::ProtonCachyos => "Proton-CachyOS",
         }
     }
 
@@ -43,6 +47,7 @@ impl ProtonFamily {
         match value {
             "umu-proton" => Some(ProtonFamily::UmuProton),
             "ge-proton" => Some(ProtonFamily::GeProton),
+            "proton-cachyos" => Some(ProtonFamily::ProtonCachyos),
             _ => None,
         }
     }
@@ -55,16 +60,22 @@ impl ProtonFamily {
             ProtonFamily::GeProton => {
                 "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases"
             }
+            ProtonFamily::ProtonCachyos => {
+                "https://api.github.com/repos/CachyOS/proton-cachyos/releases"
+            }
         }
     }
 
     /// The family a build belongs to, from its tag or the directory it unpacks as. The
-    /// umu-proton feed still carries its `ULWGL-Proton` predecessors, which match neither.
+    /// umu-proton feed still carries its `ULWGL-Proton` predecessors, which match none.
     pub fn of_name(name: &str) -> Option<Self> {
         if name.starts_with("UMU-Proton-") {
             Some(ProtonFamily::UmuProton)
         } else if name.starts_with("GE-Proton") {
             Some(ProtonFamily::GeProton)
+        } else if name.starts_with("cachyos-") || name.starts_with("proton-cachyos-") {
+            // The tag is `cachyos-*`, and the build unpacks as `proton-cachyos-*`.
+            Some(ProtonFamily::ProtonCachyos)
         } else {
             None
         }
@@ -72,14 +83,50 @@ impl ProtonFamily {
 
     /// Asset names a release may use, preferred first. GE-Proton added an architecture
     /// suffix once it published aarch64 builds; its older releases are x86_64 without one.
-    fn asset_candidates(self, tag: &str) -> Vec<String> {
+    fn asset_candidates(self, tag: &str, v3: bool) -> Vec<String> {
         match self {
             ProtonFamily::UmuProton => vec![format!("{tag}.tar.gz")],
             ProtonFamily::GeProton => {
                 vec![format!("{tag}-x86_64.tar.gz"), format!("{tag}.tar.gz")]
             }
+            // Only the `slr` builds run in the Steam Runtime container umu starts.
+            ProtonFamily::ProtonCachyos if tag.ends_with("-slr") => {
+                let baseline = format!("proton-{tag}-x86_64.tar.xz");
+                if v3 {
+                    vec![format!("proton-{tag}-x86_64_v3.tar.xz"), baseline]
+                } else {
+                    vec![baseline]
+                }
+            }
+            ProtonFamily::ProtonCachyos => Vec::new(),
         }
     }
+}
+
+/// Whether this CPU runs the `x86_64_v3` builds Proton-CachyOS publishes beside the baseline.
+fn cpu_supports_v3() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        std::is_x86_feature_detected!("avx2")
+            && std::is_x86_feature_detected!("bmi1")
+            && std::is_x86_feature_detected!("bmi2")
+            && std::is_x86_feature_detected!("f16c")
+            && std::is_x86_feature_detected!("fma")
+            && std::is_x86_feature_detected!("lzcnt")
+            && std::is_x86_feature_detected!("movbe")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// An archive's name without its extension, which is also the directory it unpacks as.
+fn archive_stem(asset: &str) -> &str {
+    asset
+        .strip_suffix(".tar.gz")
+        .or_else(|| asset.strip_suffix(".tar.xz"))
+        .unwrap_or(asset)
 }
 
 /// Tags that are not releases, such as umu-proton's betas.
@@ -162,7 +209,8 @@ fn sort_newest_first(builds: &mut [InstalledProton]) {
 /// Digit groups of a build name, so `GE-Proton11-6` sorts above `GE-Proton10-34`. The
 /// architecture suffix is dropped first, or its `86` and `64` would count as versions.
 fn version_key(name: &str) -> Vec<u64> {
-    name.trim_end_matches("-x86_64")
+    name.trim_end_matches("_v3")
+        .trim_end_matches("-x86_64")
         .split(|c: char| !c.is_ascii_digit())
         .filter_map(|part| part.parse().ok())
         .collect()
@@ -183,9 +231,10 @@ pub async fn releases(
         .json()
         .await?;
 
+    let v3 = cpu_supports_v3();
     Ok(feed
         .iter()
-        .filter_map(|entry| release_from(family, entry))
+        .filter_map(|entry| release_from(family, entry, v3))
         .collect())
 }
 
@@ -201,8 +250,13 @@ pub async fn latest_release(
         .ok_or_else(|| CoreError::Other(format!("no {} release was found", family.label())))
 }
 
-/// One feed entry, if it is a release of this family with an x86_64 build.
-fn release_from(family: ProtonFamily, entry: &serde_json::Value) -> Option<ProtonRelease> {
+/// One feed entry, if it is a release of this family with an x86_64 build. `v3` allows the
+/// build for newer CPUs where a family publishes one.
+fn release_from(
+    family: ProtonFamily,
+    entry: &serde_json::Value,
+    v3: bool,
+) -> Option<ProtonRelease> {
     if entry.get("prerelease").and_then(serde_json::Value::as_bool) == Some(true) {
         return None;
     }
@@ -220,11 +274,11 @@ fn release_from(family: ProtonFamily, entry: &serde_json::Value) -> Option<Proto
 
     // Matched on exact names, so an aarch64-only release is skipped rather than downloaded.
     let (asset_name, asset) = family
-        .asset_candidates(tag)
+        .asset_candidates(tag, v3)
         .into_iter()
         .find_map(|wanted| named(&wanted).map(|asset| (wanted, asset)))?;
 
-    let sums_name = format!("{}.sha512sum", asset_name.trim_end_matches(".tar.gz"));
+    let sums_name = format!("{}.sha512sum", archive_stem(&asset_name));
     let url_of = |a: &serde_json::Value| {
         a.get("browser_download_url")
             .and_then(serde_json::Value::as_str)
@@ -415,6 +469,7 @@ mod tests {
                     "GE-Proton11-6-x86_64.tar.gz",
                 ],
             ),
+            true,
         )
         .unwrap();
         assert_eq!(release.asset, "GE-Proton11-6-x86_64.tar.gz");
@@ -432,6 +487,7 @@ mod tests {
                 "GE-Proton10-34",
                 &["GE-Proton10-34.sha512sum", "GE-Proton10-34.tar.gz"],
             ),
+            true,
         )
         .unwrap();
         assert_eq!(release.asset, "GE-Proton10-34.tar.gz");
@@ -450,24 +506,88 @@ mod tests {
                 "GE-Proton12-1-aarch64.sha512sum",
             ],
         );
-        assert_eq!(release_from(ProtonFamily::GeProton, &aarch64_only), None);
+        assert_eq!(
+            release_from(ProtonFamily::GeProton, &aarch64_only, true),
+            None
+        );
     }
 
     #[test]
     fn the_umu_feed_drops_its_ulwgl_predecessors_and_marks_betas() {
         let ulwgl = entry("ULWGL-Proton-8.0-5-3", &["ULWGL-Proton-8.0-5-3.tar.gz"]);
-        assert_eq!(release_from(ProtonFamily::UmuProton, &ulwgl), None);
+        assert_eq!(release_from(ProtonFamily::UmuProton, &ulwgl, true), None);
 
         let current = entry(
             "UMU-Proton-10.0-4",
             &["UMU-Proton-10.0-4.sha512sum", "UMU-Proton-10.0-4.tar.gz"],
         );
-        assert!(release_from(ProtonFamily::UmuProton, &current).is_some());
+        assert!(release_from(ProtonFamily::UmuProton, &current, true).is_some());
         // A GE tag in the umu feed would be a family mix-up, not a release.
-        assert_eq!(release_from(ProtonFamily::GeProton, &current), None);
+        assert_eq!(release_from(ProtonFamily::GeProton, &current, true), None);
 
         assert!(is_prerelease_tag("UMU-Proton-9.0-beta16-2"));
         assert!(!is_prerelease_tag("UMU-Proton-9.0-4e"));
+    }
+
+    #[test]
+    fn a_cachyos_release_takes_the_v3_build_only_where_the_cpu_runs_it() {
+        let tag = "cachyos-11.0-20261005-slr";
+        let release = entry(
+            tag,
+            &[
+                "proton-cachyos-11.0-20261005-slr-arm64.tar.xz",
+                "proton-cachyos-11.0-20261005-slr-x86_64.sha512sum",
+                "proton-cachyos-11.0-20261005-slr-x86_64.tar.xz",
+                "proton-cachyos-11.0-20261005-slr-x86_64_v3.sha512sum",
+                "proton-cachyos-11.0-20261005-slr-x86_64_v3.tar.xz",
+            ],
+        );
+        let newer = release_from(ProtonFamily::ProtonCachyos, &release, true).unwrap();
+        assert_eq!(
+            newer.asset,
+            "proton-cachyos-11.0-20261005-slr-x86_64_v3.tar.xz"
+        );
+        assert!(newer
+            .sums_url
+            .unwrap()
+            .ends_with("proton-cachyos-11.0-20261005-slr-x86_64_v3.sha512sum"));
+
+        let baseline = release_from(ProtonFamily::ProtonCachyos, &release, false).unwrap();
+        assert_eq!(
+            baseline.asset,
+            "proton-cachyos-11.0-20261005-slr-x86_64.tar.xz"
+        );
+        // A build made for the host, not the container, is not one umu can run.
+        let native = entry(
+            "cachyos-11.0-20261005",
+            &["proton-cachyos-11.0-20261005-x86_64.tar.xz"],
+        );
+        assert_eq!(
+            release_from(ProtonFamily::ProtonCachyos, &native, true),
+            None
+        );
+    }
+
+    #[test]
+    fn a_cachyos_build_is_known_by_its_tag_and_by_its_folder() {
+        for name in [
+            "cachyos-11.0-20261005-slr",
+            "proton-cachyos-11.0-20261005-slr-x86_64_v3",
+        ] {
+            assert_eq!(
+                ProtonFamily::of_name(name),
+                Some(ProtonFamily::ProtonCachyos),
+                "{name}"
+            );
+        }
+        assert!(
+            version_key("proton-cachyos-11.0-20261005-slr-x86_64_v3")
+                > version_key("proton-cachyos-11.0-20260703-slr-x86_64")
+        );
+        assert_eq!(
+            version_key("proton-cachyos-11.0-20261005-slr-x86_64_v3"),
+            [11, 0, 20261005]
+        );
     }
 
     #[test]

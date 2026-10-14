@@ -31,7 +31,11 @@ downloadProvider: string | null, notifyTransfers: boolean,
 /**
  * Separate so failures stay audible with the routine chatter off.
  */
-notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, startMinimized: boolean, 
+notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, 
+/**
+ * Hides the window on a login start only. Starting Gameyfin by hand always shows it.
+ */
+autostartHidden: boolean, 
 /**
  * Raises the window when a game quits.
  */

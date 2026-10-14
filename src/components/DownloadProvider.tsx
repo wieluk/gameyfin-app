@@ -49,7 +49,7 @@ export function DownloadProvider({ onError }: { onError: (message: string | null
         ))}
       </Select>
       {selected.needsTorrentClient && (
-        <span className="text-[11px] text-warning-600">
+        <span className="text-[0.6875rem] text-warning-600">
           Gives a .torrent, which Gameyfin cannot download from yet.
         </span>
       )}

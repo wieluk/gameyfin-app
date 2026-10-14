@@ -106,15 +106,19 @@ pub fn streamable_kind(head: &[u8]) -> Option<ArchiveKind> {
     }
 }
 
-/// Unpacks a download as it arrives, for a kind [`streamable_kind`] accepted.
+/// Unpacks a download as it arrives, for a kind [`streamable_kind`] accepted. Only a zip moves
+/// `mark` on, so only a zip can resume part way.
 pub fn unpack_stream<R: Read>(
     kind: ArchiveKind,
     reader: R,
     destination: &Path,
     cancel: &crate::download::Cancel,
+    mark: &crate::zip_stream::ResumeMark,
 ) -> CoreResult<u64> {
     match kind {
-        ArchiveKind::Zip => crate::zip_stream::extract_stream(reader, destination, cancel),
+        ArchiveKind::Zip => {
+            crate::zip_stream::extract_stream_from(reader, destination, cancel, mark)
+        }
         ArchiveKind::Tar(compression) => unpack_tar(reader, destination, compression, |_| {
             if cancel.is_cancelled() {
                 Err(CoreError::Cancelled)

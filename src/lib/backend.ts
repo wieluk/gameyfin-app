@@ -6,6 +6,7 @@
 import type { AppNotification } from "@/bindings/AppNotification";
 import type { ConflictChoice } from "@/bindings/ConflictChoice";
 import type { ConnectionStatus } from "@/bindings/ConnectionStatus";
+import type { FixMatch } from "@/bindings/FixMatch";
 import type { GameOptions } from "@/bindings/GameOptions";
 import type { GameOptionsPatch } from "@/bindings/GameOptionsPatch";
 import type { InstalledProton } from "@/bindings/InstalledProton";
@@ -20,6 +21,7 @@ import type { LoginPoll } from "@/bindings/LoginPoll";
 import type { ManifestInfo } from "@/bindings/ManifestInfo";
 import type { MemoryInfo } from "@/bindings/MemoryInfo";
 import type { MigrationSummary } from "@/bindings/MigrationSummary";
+import type { OfferedSave } from "@/bindings/OfferedSave";
 import type { PrefixEntry } from "@/bindings/PrefixEntry";
 import type { PrefixTool } from "@/bindings/PrefixTool";
 import type { ProtonFamily } from "@/bindings/ProtonFamily";
@@ -35,7 +37,6 @@ import type { SavePathSettings } from "@/bindings/SavePathSettings";
 import type { SaveScope } from "@/bindings/SaveScope";
 import type { SaveSyncState } from "@/bindings/SaveSyncState";
 import type { SaveToolStatus } from "@/bindings/SaveToolStatus";
-import type { SaveVersion } from "@/bindings/SaveVersion";
 import type { ServerProbe } from "@/bindings/ServerProbe";
 import type { SetupProgram } from "@/bindings/SetupProgram";
 import type { SettingsPatch } from "@/bindings/SettingsPatch";
@@ -72,6 +73,7 @@ export const backend = {
   /** `root` must be one of the configured games folders; omitted means the default. */
   startDownload: (gameId: number, root?: string) =>
     invoke<void>("start_download", { gameId, root: root ?? null }),
+  pauseDownload: (gameId: number) => invoke<void>("pause_download", { gameId }),
   cancelDownload: (gameId: number) => invoke<void>("cancel_download", { gameId }),
   installOptions: (gameId: number) => invoke<InstallPlan>("install_options", { gameId }),
   install: (gameId: number, method?: string, deleteArchive?: boolean, deleteDownload?: boolean) =>
@@ -84,11 +86,17 @@ export const backend = {
   rescanLibrary: () => invoke<number>("rescan_library"),
   locateInstall: (gameId: number, path: string) => invoke<void>("locate_install", { gameId, path }),
   /** `uninstaller` overrides detection, for a game whose uninstaller is oddly named. */
-  uninstall: (gameId: number, runUninstaller?: boolean, uninstaller?: string | null) =>
+  uninstall: (
+    gameId: number,
+    runUninstaller?: boolean,
+    uninstaller?: string | null,
+    deletePrefix?: boolean,
+  ) =>
     invoke<void>("uninstall_game", {
       gameId,
       runUninstaller: runUninstaller ?? true,
       uninstaller: uninstaller ?? null,
+      deletePrefix: deletePrefix ?? false,
     }),
   findUninstaller: (gameId: number) => invoke<string | null>("find_game_uninstaller", { gameId }),
   deleteStaging: (gameId: number) => invoke<void>("delete_staging", { gameId }),
@@ -192,12 +200,15 @@ export const backend = {
     invoke<string>("run_winetricks", { gameId, verbs }),
   umuStatus: (gameId?: number) => invoke<UmuStatus>("umu_status", { gameId: gameId ?? null }),
   refreshUmuDatabase: () => invoke<number>("refresh_umu_database"),
+  /** Rows of the umu list matching a title or an id. */
+  searchGameFixes: (query: string) => invoke<FixMatch[]>("search_game_fixes", { query }),
 
   /** Where one game's saves stand, without changing anything. */
   saveState: (gameId: number) => invoke<SaveSyncState>("save_state", { gameId }),
   /** Every game's save status in one call. Never runs the backup helper. */
   saveOverview: (scope: SaveScope) => invoke<SaveOverviewRow[]>("save_overview", { scope }),
-  listSaveVersions: (gameId: number) => invoke<SaveVersion[]>("list_save_versions", { gameId }),
+  /** Every stored version, newest first, each saying whether it restores on this PC. */
+  listSaveVersions: (gameId: number) => invoke<OfferedSave[]>("list_save_versions", { gameId }),
   /** Back up and upload. `force` accepts a stale base, keeping the losing version. */
   backupSaves: (gameId: number, force: boolean) =>
     invoke<SaveSyncState>("backup_saves", { gameId, force }),
@@ -231,9 +242,6 @@ export const backend = {
   scanThisPc: () => invoke<SaveFind[]>("scan_this_pc"),
   /** Stops the automatic sync a game is waiting on, if it has not passed the point of no return. */
   skipSaveSync: (gameId: number) => invoke<void>("skip_save_sync", { gameId }),
-  /** Turn Windows/Linux path translation on for one game, leaving its paths alone. */
-  setSaveCrossOs: (gameId: number, crossOs: boolean) =>
-    invoke<SaveSyncState>("set_save_cross_os", { gameId, crossOs }),
   setSaveMapping: (
     gameId: number,
     crossOs: boolean,

@@ -19,11 +19,14 @@ Press **Download** on a game. With more than one games folder, you choose where 
 see the free space on each.
 
 - Zip and tar downloads are unpacked while they arrive, so a game needs only its own size in
-  free space. 7z, rar and other archives are unpacked as soon as the download finishes. An
-  interrupted download starts over.
+  free space. 7z, rar and other archives are unpacked as soon as the download finishes.
+- **Pause** keeps what has arrived and **Resume** carries on from there, also after quitting
+  the app. A failed download resumes the same way with **Retry download**. This needs a
+  server that can resume downloads; with one that cannot, the download starts over.
 - A setup program or disc image is saved as it is and waits for **Install**.
 - **Speed limit**: set one on the Downloads page. It is off by default.
-- **Cancel** stops a download; **Delete download** removes a finished one.
+- **Cancel** stops a download and deletes what has arrived; **Delete download** removes a
+  finished one.
 - Progress shows on the taskbar or dock icon, and a notification tells you when a game is
   ready.
 
@@ -36,11 +39,12 @@ see the free space on each.
   silently. A game with patches or DLC installs the game, then the patches, then the DLC.
   It waits for you when no setup is clearly the game, or the game's setup has no silent mode.
   Setups without a silent mode are left for you in **Installed**.
-  - **Delete the download after installing**: the starting choice in the install dialog, off
-    while a setup program is left out.
-  - **Inno Setup options** (default `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) and
-    **NSIS options** (default `/S`). Empty restores the default.
-  - **Never offer these executables**.
+- **Delete the download after installing**: the starting choice in the install dialog, off
+  while a setup program is left out.
+- **Inno Setup options** (default `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) and
+  **NSIS options** (default `/S`), used by automatic installs and by **Install silently**.
+  Empty restores the default.
+- **Never offer these executables**.
 
 ## Installing
 
@@ -51,6 +55,10 @@ Gameyfin looks at what was downloaded and handles it:
 | **Archive** (zip, 7z, rar, tar) | Unpacked into `Gameyfin/Installations`. Encrypted archives use the password from **Settings, Library, Automation**. On Linux, rar needs `unar` installed. |
 | **Setup program** | Run for you, on Linux inside the game's prefix. Common installer types are told where to install, so the game ends up where Gameyfin can find it. The row shows how much it has written. |
 | **Game files** | Moved into place as they are. |
+
+When you install by hand, the dialog shows each way to install as its own card with its own
+button, such as running the setup programs or moving the files into place. They are
+alternatives, so pick one. **Recommended** marks the one to choose when unsure.
 
 **Setup options** are flags passed to the setup program and remembered for the game.
 A silent flag such as `/VERYSILENT` lets it install without asking questions.
@@ -99,6 +107,9 @@ setup options. See
 **Uninstall** looks for the game's own uninstaller and runs it, or lets you choose one.
 Without one, only the game's files are removed. Uninstalling does not delete your stored saves.
 
+On Linux, a Windows game's [prefix](playing.md#prefixes) is kept unless you tick **Also delete
+the compatibility prefix**. Saves the game kept inside it go too, unless they were backed up.
+
 ## Games folders
 
 **Settings, Library, Games folders** lists every folder Gameyfin uses, with free space.
@@ -110,4 +121,5 @@ Gameyfin.
 
 Folders Gameyfin does not manage, such as a game copied in by hand or one the server no longer
 has, are listed at the bottom of **Installed** and **Downloads** under **Not linked to a game**.
+When there are any, a button next to **Open folder** says how many and jumps to the list.
 **Assign to a game** renames the folder after a game and adopts it. **Delete** removes it.

@@ -42,6 +42,8 @@ pub struct GameRecord {
     pub launch_environment: String,
     pub proton_build: Option<String>,
     pub launch_toggles: gameyfin_core::environment::LaunchToggles,
+    /// A Proton fix chosen by hand, in place of the one the umu database finds.
+    pub game_fix: Option<gameyfin_core::umu::GameFix>,
     /// Winetricks verbs the last failed start pointed at, offered ticked until installed.
     pub suggested_winetricks: Vec<String>,
     /// A setup program Windows refused without elevation, so the retry runs that exact file.
@@ -50,14 +52,31 @@ pub struct GameRecord {
     pub save_restore_strategy: SaveRestoreStrategy,
     /// Hand-entered `(source, target)` path mappings.
     pub save_redirects: Vec<(String, String)>,
+    /// A download stopped part way, by a pause, a failure or quitting, kept so it can resume.
+    pub partial_download: Option<PartialDownload>,
 }
 
-/// Mirrors `gameyfin_saves::RestoreStrategy` with a wire form independent of that crate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartialDownload {
+    /// Remembered so a resume lands beside the partial file whatever the folder settings say now.
+    pub destination: PathBuf,
+    /// Set when it was unpacking as it arrived, so a resume unpacks too.
+    pub unpack_into: Option<PathBuf>,
+    pub received_bytes: u64,
+    pub total_bytes: u64,
+    /// The server can continue it; otherwise a resume starts over.
+    pub resumable: bool,
+}
+
+/// Whether saves made on another system restore onto this game here. Kept under its old wire
+/// name so a choice made before carries over.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SaveRestoreStrategy {
     #[default]
     Portable,
+    /// The user mapped the folders and accepts saves from any system.
     CrossOs,
 }
 
@@ -67,15 +86,6 @@ impl From<bool> for SaveRestoreStrategy {
             Self::CrossOs
         } else {
             Self::Portable
-        }
-    }
-}
-
-impl From<SaveRestoreStrategy> for gameyfin_saves::RestoreStrategy {
-    fn from(value: SaveRestoreStrategy) -> Self {
-        match value {
-            SaveRestoreStrategy::Portable => Self::Portable,
-            SaveRestoreStrategy::CrossOs => Self::CrossOs,
         }
     }
 }
@@ -131,6 +141,7 @@ pub enum Activity {
         received_bytes: u64,
         total_bytes: u64,
         bytes_per_second: f64,
+        resumable: bool,
     },
     Extracting {
         percent: f64,
@@ -263,6 +274,13 @@ pub enum GameState {
         received_bytes: u64,
         total_bytes: u64,
         bytes_per_second: f64,
+        /// A pause keeps what arrived; without it a resume starts over.
+        resumable: bool,
+    },
+    Paused {
+        received_bytes: u64,
+        total_bytes: u64,
+        resumable: bool,
     },
     Downloaded {
         archive_path: String,
@@ -385,6 +403,15 @@ impl LibraryState {
             .collect()
     }
 
+    /// Games whose backup after playing is still waiting for the store.
+    pub fn pending_uploads(&self) -> Vec<i64> {
+        read(&self.records)
+            .iter()
+            .filter(|(_, record)| record.saves.upload_pending)
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// Forgets every game's last synced version, for a store that never held those ids.
     pub async fn forget_synced_save_ids(&self) {
         for record in write(&self.records).values_mut() {
@@ -502,10 +529,12 @@ impl LibraryState {
                 received_bytes,
                 total_bytes,
                 bytes_per_second,
+                resumable,
             } => GameState::Downloading {
                 received_bytes,
                 total_bytes,
                 bytes_per_second,
+                resumable,
             },
             Activity::Extracting { percent } => GameState::Extracting { percent },
             Activity::Installing { progress, step } => GameState::Installing { progress, step },
@@ -621,6 +650,13 @@ fn resting_state(record: GameRecord) -> GameState {
     if record.is_installed() {
         return installed_state(record, None);
     }
+    if let Some(partial) = record.partial_download {
+        return GameState::Paused {
+            received_bytes: partial.received_bytes,
+            total_bytes: partial.total_bytes,
+            resumable: partial.resumable,
+        };
+    }
     if let Some(dir) = record.existing_staging() {
         return GameState::Extracted {
             path: display(&dir),
@@ -714,6 +750,7 @@ mod tests {
             received_bytes,
             total_bytes,
             bytes_per_second: 0.0,
+            resumable: true,
         }
     }
 
@@ -784,6 +821,33 @@ mod tests {
         state.set_activity(4, downloading(1, 9));
         assert!(matches!(state.state_of(4), GameState::Downloading { .. }));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_partial_download_rests_as_paused_until_it_resumes() {
+        let state = LibraryState::default();
+        state
+            .update_record(1, |r| {
+                r.partial_download = Some(PartialDownload {
+                    destination: PathBuf::from("/library/Gameyfin/Downloads/(1) A/A"),
+                    unpack_into: None,
+                    received_bytes: 4,
+                    total_bytes: 9,
+                    resumable: true,
+                })
+            })
+            .await;
+        assert!(matches!(
+            state.state_of(1),
+            GameState::Paused {
+                received_bytes: 4,
+                total_bytes: 9,
+                resumable: true
+            }
+        ));
+
+        state.set_activity(1, downloading(5, 9));
+        assert!(matches!(state.state_of(1), GameState::Downloading { .. }));
     }
 
     #[tokio::test]
