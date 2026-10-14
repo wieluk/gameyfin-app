@@ -227,7 +227,7 @@ function DownloadRow({
                 state.kind === "downloading"
                   ? "bg-primary"
                   : state.kind === "paused"
-                    ? "bg-default-400"
+                    ? "bg-foreground/40"
                     : "bg-warning"
               } ${progressPercent(entry) === undefined ? "animate-pulse" : ""}`}
               style={{ width: `${progressPercent(entry) ?? 100}%` }}
