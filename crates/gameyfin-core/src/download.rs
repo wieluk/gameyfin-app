@@ -57,6 +57,59 @@ pub fn plan_start(
     }
 }
 
+/// What a stopped download left behind, and so where the next attempt continues from.
+struct Leftover {
+    checkpoint: Option<Checkpoint>,
+    /// Set when a zip unpacked part way can continue from the entry it stopped in.
+    unpack_point: Option<UnpackPoint>,
+    resume_from: u64,
+}
+
+async fn leftover(destination: &Path, unpack_into: Option<&Path>) -> Leftover {
+    let partial_len = tokio::fs::metadata(destination)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let mut checkpoint = Checkpoint::load(destination).await;
+    let folder_kept = match unpack_into {
+        Some(dir) => tokio::fs::try_exists(dir).await.unwrap_or(false),
+        None => false,
+    };
+    // A zip unpacked part way continues from the entry it stopped in, if it can be told unchanged.
+    let unpack_point = checkpoint
+        .as_ref()
+        .filter(|cp| folder_kept && cp.etag.is_some())
+        .and_then(|cp| cp.unpack);
+    let resume_from = match unpack_point {
+        Some(point) => point.next_entry_at,
+        None => {
+            // The file is written before its sidecar, so it can be ahead after a crash.
+            let file_checkpoint = checkpoint
+                .as_mut()
+                .filter(|cp| cp.unpack.is_none())
+                .map(|cp| {
+                    cp.reconcile(partial_len);
+                    &*cp
+                });
+            plan_start(
+                file_checkpoint,
+                file_checkpoint.and_then(|c| c.etag.as_deref()),
+                partial_len,
+            )
+        }
+    };
+    Leftover {
+        checkpoint,
+        unpack_point,
+        resume_from,
+    }
+}
+
+/// Where a stopped download will continue from, worked out as the next attempt will.
+pub async fn resume_point(destination: &Path, unpack_into: Option<&Path>) -> u64 {
+    leftover(destination, unpack_into).await.resume_from
+}
+
 /// Verify a `206` continues from where we asked: a server may answer with a different
 /// range, and appending it blindly would corrupt the file.
 pub fn content_range_starts_at(header: &str, expected_start: u64) -> bool {
@@ -430,36 +483,11 @@ impl Downloader {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let partial_len = tokio::fs::metadata(destination)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-        let mut checkpoint = Checkpoint::load(destination).await;
-        let folder_kept = match unpack_into {
-            Some(dir) => tokio::fs::try_exists(dir).await.unwrap_or(false),
-            None => false,
-        };
-        // A zip unpacked part way continues from the entry it stopped in, if it can be told unchanged.
-        let unpack_point = checkpoint
-            .as_ref()
-            .filter(|cp| folder_kept && cp.etag.is_some())
-            .and_then(|cp| cp.unpack);
-        let file_checkpoint = checkpoint.as_mut().filter(|cp| cp.unpack.is_none());
-        let resume_from = match unpack_point {
-            Some(point) => point.next_entry_at,
-            None => {
-                let file_checkpoint = file_checkpoint.map(|cp| {
-                    cp.reconcile(partial_len);
-                    &*cp
-                });
-                plan_start(
-                    file_checkpoint,
-                    file_checkpoint.and_then(|c| c.etag.as_deref()),
-                    partial_len,
-                )
-            }
-        };
+        let Leftover {
+            checkpoint,
+            unpack_point,
+            resume_from,
+        } = leftover(destination, unpack_into).await;
 
         let mut request = authorize(self.http.get(url));
         if resume_from > 0 {
