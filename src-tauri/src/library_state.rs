@@ -374,17 +374,20 @@ impl LibraryState {
     pub async fn load(&self, config_dir: PathBuf) {
         let mut records: HashMap<i64, GameRecord> =
             crate::persist::read_json_or_default(&config_dir.join(RECORDS_FILE)).await;
-        // Quitting mid-download leaves the record at where it started, so ask the files instead.
+        // Quitting mid-download leaves the record as it was when it started, before the server
+        // said whether it can resume, so ask the files instead.
         let mut moved = false;
         for partial in records
             .values_mut()
             .filter_map(|r| r.partial_download.as_mut())
         {
-            let at =
+            let point =
                 gameyfin_core::resume_point(&partial.destination, partial.unpack_into.as_deref())
                     .await;
-            moved |= at != partial.received_bytes;
-            partial.received_bytes = at;
+            let resumable = point.resumable.unwrap_or(partial.resumable);
+            moved |= point.at != partial.received_bytes || resumable != partial.resumable;
+            partial.received_bytes = point.at;
+            partial.resumable = resumable;
         }
         let _ = self.config_dir.set(config_dir);
         *write(&self.records) = records;
@@ -874,7 +877,7 @@ mod tests {
         let dir = scratch("quit-download");
         let destination = dir.join("A.zip");
         std::fs::write(&destination, [0u8; 40]).unwrap();
-        gameyfin_core::Checkpoint::new(Some(100), None, None)
+        gameyfin_core::Checkpoint::new(Some(100), Some("\"v1\"".into()), None)
             .save(&destination)
             .await
             .unwrap();
@@ -889,7 +892,8 @@ mod tests {
                     unpack_into: None,
                     received_bytes: 0,
                     total_bytes: 100,
-                    resumable: true,
+                    // Recorded at the start, before the server answered.
+                    resumable: false,
                 })
             })
             .await;
@@ -901,7 +905,7 @@ mod tests {
             GameState::Paused {
                 received_bytes: 40,
                 total_bytes: 100,
-                ..
+                resumable: true,
             }
         ));
     }

@@ -106,8 +106,20 @@ async fn leftover(destination: &Path, unpack_into: Option<&Path>) -> Leftover {
 }
 
 /// Where a stopped download will continue from, worked out as the next attempt will.
-pub async fn resume_point(destination: &Path, unpack_into: Option<&Path>) -> u64 {
-    leftover(destination, unpack_into).await.resume_from
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResumePoint {
+    pub at: u64,
+    /// The server vouched for its bytes with an `ETag`, so the next attempt continues.
+    /// `None` when nothing was saved to say.
+    pub resumable: Option<bool>,
+}
+
+pub async fn resume_point(destination: &Path, unpack_into: Option<&Path>) -> ResumePoint {
+    let left = leftover(destination, unpack_into).await;
+    ResumePoint {
+        at: left.resume_from,
+        resumable: left.checkpoint.map(|cp| cp.etag.is_some()),
+    }
 }
 
 /// Verify a `206` continues from where we asked: a server may answer with a different

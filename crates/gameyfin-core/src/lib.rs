@@ -34,7 +34,7 @@ pub mod wine;
 pub mod zip_stream;
 
 pub use checkpoint::Checkpoint;
-pub use download::{resume_point, DownloadOutcome, Downloader, Progress, StartMode};
+pub use download::{resume_point, DownloadOutcome, Downloader, Progress, ResumePoint, StartMode};
 pub use error::{CoreError, CoreResult};
 pub use executable::{
     detect, find_uninstaller, looks_like_uninstaller, looks_like_windows_program, Detection,
