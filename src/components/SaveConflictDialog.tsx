@@ -29,7 +29,7 @@ export function SaveConflictDialog({
 }) {
 
   return (
-    <Modal label={`Save conflict for ${title}`} role="alertdialog" size="lg" onDismiss={onCancel}>
+    <Modal label={`Save conflict for ${title}`} role="alertdialog" size="2xl" onDismiss={onCancel}>
       <div className="px-5 py-4">
         <h2 className="mb-1 text-sm font-semibold text-foreground">
           Two versions of your {title} save

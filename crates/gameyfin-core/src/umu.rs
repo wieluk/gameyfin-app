@@ -73,6 +73,19 @@ impl GameFix {
         })
     }
 
+    /// The fix filed under a Steam AppID, which protonfixes finds whatever the store says.
+    pub fn steam(app_id: u32) -> Self {
+        Self {
+            id: app_id.to_string(),
+            store: NO_STORE.to_string(),
+        }
+    }
+
+    /// Whether this is the generic id, which names no fix.
+    pub fn is_default(&self) -> bool {
+        self.id == DEFAULT_ID
+    }
+
     /// The protonfixes folder this pair is looked up in. Mirrors its `get_module_name`: a
     /// numeric id is a Steam one, and no store means the `umu` folder.
     fn folder(&self) -> &str {
@@ -198,7 +211,8 @@ impl Database {
     }
 
     /// The fix to launch with, the generic one for a game with no entry. `has_fix` picks among
-    /// a game's stores, since a fix is often filed under only some; without one the first wins.
+    /// a game's stores, since a fix is often filed under only some; failing that, a shipped fix
+    /// under the bare Steam AppID, which needs no row; failing that, the first row.
     pub fn resolve(
         &self,
         title: &str,
@@ -214,22 +228,33 @@ impl Database {
             by_id
         };
         let fixes: Vec<GameFix> = rows.iter().map(|row| row.fix()).collect();
-        let chosen = fixes
-            .iter()
-            .position(&has_fix)
-            .or((!fixes.is_empty()).then_some(0));
+        let steam_fix = steam_app_id.map(GameFix::steam);
 
-        match chosen {
-            Some(index) => {
-                // Not louder: a game's options ask this each time they open.
+        // Not louder: a game's options ask this each time they open.
+        if let Some(index) = fixes.iter().position(&has_fix) {
+            tracing::debug!(
+                title,
+                umu_id = %fixes[index].id,
+                store = %fixes[index].store,
+                matched = %rows[index].title,
+                "matched a umu entry with a fix"
+            );
+            return fixes[index].clone();
+        }
+        if let Some(fix) = steam_fix.filter(&has_fix) {
+            tracing::debug!(title, umu_id = %fix.id, "using the fix filed under the Steam AppID");
+            return fix;
+        }
+        match fixes.into_iter().zip(rows).next() {
+            Some((fix, row)) => {
                 tracing::debug!(
                     title,
-                    umu_id = %fixes[index].id,
-                    store = %fixes[index].store,
-                    matched = %rows[index].title,
+                    umu_id = %fix.id,
+                    store = %fix.store,
+                    matched = %row.title,
                     "matched a umu entry"
                 );
-                fixes[index].clone()
+                fix
             }
             None => {
                 tracing::debug!(title, "no umu entry; using the generic id");
@@ -494,6 +519,42 @@ mod tests {
             db.resolve("Horizon Zero Dawn", None, |_| false).store,
             "egs"
         );
+    }
+
+    #[test]
+    fn a_shipped_fix_under_the_steam_app_id_needs_no_row() {
+        // The Witcher 3 has no row, but protonfixes ships `gamefixes-steam/292030.py`.
+        let db = sample();
+        let ships_292030 = |fix: &GameFix| fix.id == "292030";
+        assert_eq!(
+            db.resolve("The Witcher 3: Wild Hunt", Some(292030), ships_292030),
+            GameFix::steam(292030)
+        );
+        // Not shipped, or no AppID to try: the generic id, as before.
+        assert_eq!(
+            id(&db, "The Witcher 3: Wild Hunt", Some(292030)),
+            DEFAULT_ID
+        );
+        assert_eq!(
+            db.resolve("The Witcher 3: Wild Hunt", None, ships_292030),
+            GameFix::default()
+        );
+    }
+
+    #[test]
+    fn the_steam_app_id_fix_ranks_between_rows_with_and_without_one() {
+        let db = Database::new(vec![row("Celeste", "umu-504230", "egs")]);
+        // A row whose fix the build ships wins.
+        let both = |fix: &GameFix| fix.id == "umu-504230" || fix.id == "504230";
+        assert_eq!(db.resolve("Celeste", Some(504230), both).id, "umu-504230");
+        // A row without one loses to a shipped Steam fix.
+        let steam_only = |fix: &GameFix| fix.id == "504230";
+        assert_eq!(
+            db.resolve("Celeste", Some(504230), steam_only),
+            GameFix::steam(504230)
+        );
+        // Neither shipped: the row, as before.
+        assert_eq!(id(&db, "Celeste", Some(504230)), "umu-504230");
     }
 
     #[test]

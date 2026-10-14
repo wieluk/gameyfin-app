@@ -227,7 +227,7 @@ function DownloadRow({
                 state.kind === "downloading"
                   ? "bg-primary"
                   : state.kind === "paused"
-                    ? "bg-default-400"
+                    ? "bg-foreground/40"
                     : "bg-warning"
               } ${progressPercent(entry) === undefined ? "animate-pulse" : ""}`}
               style={{ width: `${progressPercent(entry) ?? 100}%` }}
@@ -367,7 +367,7 @@ function statusText(entry: LibraryEntry): string {
     case "paused":
       return `Paused, ${formatBytes(state.receivedBytes)} of ${formatBytes(state.totalBytes)}`;
     case "downloaded":
-      return `Ready to install (${formatBytes(state.bytes)})`;
+      return `Ready to ${state.extractable ? "extract" : "install"} (${formatBytes(state.bytes)})`;
     case "extracting":
       return "Extracting";
     case "extracted":

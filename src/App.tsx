@@ -11,6 +11,7 @@ import { UpdateBanner } from "@/components/UpdateBanner";
 import { SaveConflictPrompt } from "@/components/SaveConflictPrompt";
 import { SavePullPrompt } from "@/components/SavePullPrompt";
 import { SaveSyncStatus } from "@/components/SaveSyncStatus";
+import { isInstalled } from "@/lib/actions";
 import { isMockBackend } from "@/lib/backend";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import { useGamepad } from "@/lib/useGamepad";
@@ -117,6 +118,20 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   // Saves needing a decision badge their tab too. One request covers the whole library.
   const saves = useSaveOverview("installed");
   const conflicts = countNeedingAttention(saves.data);
+
+  // An install or uninstall changes which games Saves lists, and no event says so.
+  const installedIds = (entries.data ?? [])
+    .filter(isInstalled)
+    .map((e) => e.game.id)
+    .join(",");
+  const seenInstalled = useRef<string | null>(null);
+  useEffect(() => {
+    if (!entries.data) return;
+    if (seenInstalled.current !== null && seenInstalled.current !== installedIds) {
+      void invalidate(keys.saveOverviewAll);
+    }
+    seenInstalled.current = installedIds;
+  }, [entries.data, installedIds, invalidate]);
 
   // `game-state` is patched into the cache, since refetching that often freezes progress bars.
   // `library-changed` is structural, so it does refetch.

@@ -285,6 +285,8 @@ pub enum GameState {
     Downloaded {
         archive_path: String,
         bytes: u64,
+        /// An archive unpacks first; a setup program or game file goes straight to install.
+        extractable: bool,
     },
     Extracting {
         percent: f64,
@@ -370,9 +372,28 @@ impl Drop for Claim {
 
 impl LibraryState {
     pub async fn load(&self, config_dir: PathBuf) {
-        let records = crate::persist::read_json_or_default(&config_dir.join(RECORDS_FILE)).await;
+        let mut records: HashMap<i64, GameRecord> =
+            crate::persist::read_json_or_default(&config_dir.join(RECORDS_FILE)).await;
+        // Quitting mid-download leaves the record as it was when it started, before the server
+        // said whether it can resume, so ask the files instead.
+        let mut moved = false;
+        for partial in records
+            .values_mut()
+            .filter_map(|r| r.partial_download.as_mut())
+        {
+            let point =
+                gameyfin_core::resume_point(&partial.destination, partial.unpack_into.as_deref())
+                    .await;
+            let resumable = point.resumable.unwrap_or(partial.resumable);
+            moved |= point.at != partial.received_bytes || resumable != partial.resumable;
+            partial.received_bytes = point.at;
+            partial.resumable = resumable;
+        }
         let _ = self.config_dir.set(config_dir);
         *write(&self.records) = records;
+        if moved {
+            self.persist().await;
+        }
     }
 
     pub fn record(&self, game_id: i64) -> GameRecord {
@@ -666,6 +687,7 @@ fn resting_state(record: GameRecord) -> GameState {
     }
     match record.existing_archive() {
         Some(archive) => GameState::Downloaded {
+            extractable: gameyfin_core::classify(&archive).is_ok_and(|p| p.is_archive()),
             archive_path: display(&archive),
             bytes: record.archive_bytes,
         },
@@ -851,6 +873,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_restart_shows_where_a_quit_download_will_resume() {
+        let dir = scratch("quit-download");
+        let destination = dir.join("A.zip");
+        std::fs::write(&destination, [0u8; 40]).unwrap();
+        gameyfin_core::Checkpoint::new(Some(100), Some("\"v1\"".into()), None)
+            .save(&destination)
+            .await
+            .unwrap();
+
+        // Quitting kills the task, so the record keeps the position it started from.
+        let before = LibraryState::default();
+        before.load(dir.clone()).await;
+        before
+            .update_record(1, |r| {
+                r.partial_download = Some(PartialDownload {
+                    destination: destination.clone(),
+                    unpack_into: None,
+                    received_bytes: 0,
+                    total_bytes: 100,
+                    // Recorded at the start, before the server answered.
+                    resumable: false,
+                })
+            })
+            .await;
+
+        let after = LibraryState::default();
+        after.load(dir).await;
+        assert!(matches!(
+            after.state_of(1),
+            GameState::Paused {
+                received_bytes: 40,
+                total_bytes: 100,
+                resumable: true,
+            }
+        ));
+    }
+
+    #[tokio::test]
     async fn resting_states_follow_what_is_on_disk() {
         let dir = scratch("resting");
         let state = LibraryState::default();
@@ -861,7 +921,22 @@ mod tests {
         state
             .update_record(1, |r| r.archive_path = Some(archive.clone()))
             .await;
-        assert!(matches!(state.state_of(1), GameState::Downloaded { .. }));
+        // Named .zip but not one, so the file's bytes decide, not its name.
+        assert!(matches!(
+            state.state_of(1),
+            GameState::Downloaded {
+                extractable: false,
+                ..
+            }
+        ));
+        std::fs::write(&archive, b"PK\x03\x04rest").unwrap();
+        assert!(matches!(
+            state.state_of(1),
+            GameState::Downloaded {
+                extractable: true,
+                ..
+            }
+        ));
 
         let staged = dir.join(EXTRACT_DIR);
         std::fs::create_dir_all(&staged).unwrap();

@@ -177,6 +177,15 @@ export function LaunchOptions({ gameId, title }: { gameId: number; title: string
               </Button>
             )}
           </div>
+          {data.fixCheck && (
+            <p
+              className={`text-[0.6875rem] leading-relaxed ${data.fixCheck.shipped ? "text-success-600" : "text-warning-600"}`}
+            >
+              {data.fixCheck.shipped
+                ? `${data.fixCheck.build} ships this fix.`
+                : `${data.fixCheck.build} has no file for this fix, so the game runs without one. Try a newer build.`}
+            </p>
+          )}
         </FormField>
       )}
 

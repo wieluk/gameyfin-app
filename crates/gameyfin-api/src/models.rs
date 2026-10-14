@@ -127,12 +127,18 @@ pub struct Game {
 
 impl Game {
     /// The Steam AppID, when the Steam plugin recorded one. Stock servers hide it from users.
+    /// Keyed by plugin id (`org.gameyfin.plugins.metadata.steam`), so the last part is compared.
     pub fn steam_app_id(&self) -> Option<u32> {
         self.metadata
             .original_ids
             .as_ref()?
             .iter()
-            .find(|(plugin, _)| plugin.eq_ignore_ascii_case("steam"))
+            .find(|(plugin, _)| {
+                plugin
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("steam"))
+            })
             .and_then(|(_, id)| id.parse().ok())
     }
 
@@ -286,8 +292,22 @@ mod tests {
         // Absent on a stock 2.4.0 server, which exposes only fileSize to non-admins.
         for (metadata, expected) in [
             (
-                serde_json::json!({"fileSize": 100, "originalIds": {"steam": "504230", "igdb": "7788"}}),
+                serde_json::json!({"fileSize": 100, "originalIds": {
+                    "org.gameyfin.plugins.metadata.steam": "504230",
+                    "org.gameyfin.plugins.metadata.igdb": "7788"
+                }}),
                 Some(504230),
+            ),
+            (
+                serde_json::json!({"fileSize": 100, "originalIds": {"steam": "504230"}}),
+                Some(504230),
+            ),
+            // SteamGridDB ids are not AppIDs.
+            (
+                serde_json::json!({"fileSize": 100, "originalIds": {
+                    "org.gameyfin.plugins.metadata.steamgriddb": "12345"
+                }}),
+                None,
             ),
             (serde_json::json!({"fileSize": 100}), None),
         ] {

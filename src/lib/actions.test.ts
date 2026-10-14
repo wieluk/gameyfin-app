@@ -10,7 +10,7 @@ describe("isLocal", () => {
   it("counts everything the user could act on without the server", () => {
     expect(isLocal(entry(fixture.installed()))).toBe(true);
     expect(isLocal(entry(fixture.running()))).toBe(true);
-    expect(isLocal(entry({ kind: "downloaded", archivePath: "/a.zip", bytes: 10 }))).toBe(true);
+    expect(isLocal(entry({ kind: "downloaded", archivePath: "/a.zip", bytes: 10, extractable: true }))).toBe(true);
     expect(
       isLocal(entry({ kind: "extracted", path: "/x", setupCandidates: [], archivePresent: true })),
     ).toBe(true);
@@ -108,5 +108,22 @@ describe("a paused download", () => {
     const action = primaryAction(paused.state);
     expect(action.label).toBe("Resume");
     expect(action.disabled).toBe(false);
+  });
+});
+
+describe("a finished download", () => {
+  const downloaded = (extractable: boolean): GameState => ({
+    kind: "downloaded",
+    archivePath: "/a",
+    bytes: 10,
+    extractable,
+  });
+
+  it("offers Extract for an archive, since that is what the chooser does next", () => {
+    expect(primaryAction(downloaded(true)).label).toBe("Extract");
+  });
+
+  it("offers Install for a setup program, which has nothing to unpack", () => {
+    expect(primaryAction(downloaded(false)).label).toBe("Install");
   });
 });

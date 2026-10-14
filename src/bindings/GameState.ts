@@ -10,7 +10,11 @@ export type GameState = { "kind": "not-installed" } | { "kind": "downloading", r
 /**
  * A pause keeps what arrived; without it a resume starts over.
  */
-resumable: boolean, } | { "kind": "paused", receivedBytes: number, totalBytes: number, resumable: boolean, } | { "kind": "downloaded", archivePath: string, bytes: number, } | { "kind": "extracting", percent: number, } | { "kind": "extracted", path: string, setupCandidates: Array<string>, archivePresent: boolean, } | { "kind": "installing", progress?: TransferProgress, step?: string, } | { "kind": "preparing", message: string, progress?: TransferProgress, } | { "kind": "installed", path: string, executable: string | null, setupCandidates: Array<string>, stagingSetups: Array<string>, stagingPresent: boolean, busy: InstalledBusy | null, } | { "kind": "running", since: string, executable: string | null, runtime: string | null, } | { "kind": "failed", message: string, stage: Stage, 
+resumable: boolean, } | { "kind": "paused", receivedBytes: number, totalBytes: number, resumable: boolean, } | { "kind": "downloaded", archivePath: string, bytes: number, 
+/**
+ * An archive unpacks first; a setup program or game file goes straight to install.
+ */
+extractable: boolean, } | { "kind": "extracting", percent: number, } | { "kind": "extracted", path: string, setupCandidates: Array<string>, archivePresent: boolean, } | { "kind": "installing", progress?: TransferProgress, step?: string, } | { "kind": "preparing", message: string, progress?: TransferProgress, } | { "kind": "installed", path: string, executable: string | null, setupCandidates: Array<string>, stagingSetups: Array<string>, stagingPresent: boolean, busy: InstalledBusy | null, } | { "kind": "running", since: string, executable: string | null, runtime: string | null, } | { "kind": "failed", message: string, stage: Stage, 
 /**
  * Kept so a failed launch still offers Play and the executable picker.
  */

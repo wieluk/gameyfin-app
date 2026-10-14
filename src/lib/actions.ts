@@ -32,10 +32,15 @@ export function primaryAction(state: GameState): PrimaryAction {
       return { label: "Play", icon: "play", disabled: false, run: backend.launch };
     case "running":
       return { label: "Running", icon: "play", disabled: true, run: async () => {} };
-    // These need a decision, so the caller opens the chooser (see `needsChooser`). Not
-    // labelled "Extract": what the download holds decides that.
+    // These need a decision, so the caller opens the chooser (see `needsChooser`). Only an
+    // archive is extracted first; a setup program installs straight away.
     case "downloaded":
-      return { label: "Install", icon: "installed", disabled: false, run: noop };
+      return {
+        label: state.extractable ? "Extract" : "Install",
+        icon: "installed",
+        disabled: false,
+        run: noop,
+      };
     case "extracted":
       return { label: "Install", icon: "installed", disabled: false, run: noop };
     case "downloading":
