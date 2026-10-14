@@ -1,3 +1,4 @@
+import { Alert } from "@/components/Alert";
 import { Button } from "@/components/ui";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { Modal } from "./Modal";
@@ -12,6 +13,8 @@ export function SaveConflictDialog({
   localAt,
   remote,
   busy,
+  error,
+  cancelLabel = "Decide later",
   onChoose,
   onCancel,
 }: {
@@ -19,6 +22,8 @@ export function SaveConflictDialog({
   localAt?: string | null;
   remote: SaveVersion;
   busy: boolean;
+  error?: string | null;
+  cancelLabel?: string;
   onChoose: (choice: ConflictChoice) => void;
   onCancel: () => void;
 }) {
@@ -31,7 +36,8 @@ export function SaveConflictDialog({
         </h2>
         <p className="text-xs leading-relaxed text-foreground/60">
           This PC and another machine both played since the last sync. Choose which one to
-          keep. Keeping both uploads this PC's save and leaves the other in your history.
+          play on. Keep both plays on this PC's save and keeps the other for good, so you can
+          restore it later.
         </p>
 
         <div className="mt-4 grid grid-cols-2 gap-3">
@@ -43,11 +49,12 @@ export function SaveConflictDialog({
             platform={remote.platform}
           />
         </div>
+        {error && <Alert className="mt-3">{error}</Alert>}
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-default-200/60 px-5 py-3">
         <Button variant="ghost" onClick={onCancel} disabled={busy}>
-          Decide later
+          {cancelLabel}
         </Button>
         <Button onClick={() => onChoose("keep-remote")} disabled={busy}>
           Keep the cloud save

@@ -13,7 +13,7 @@ export type Decision =
   | { kind: "close" };
 
 export function isFinal(progress: SaveSyncProgress): boolean {
-  return ["done", "skipped", "kept-local", "restored", "failed", "asking"].includes(
+  return ["done", "skipped", "offline", "kept-local", "restored", "failed", "asking"].includes(
     progress.phase.kind,
   );
 }
@@ -24,6 +24,8 @@ export function isInformative(progress: SaveSyncProgress): boolean {
   switch (phase.kind) {
     case "failed":
     case "restored":
+    // Said once, so a save that did not travel is no surprise on the other PC.
+    case "offline":
       return true;
     // An exit upload held back means a decision waits under Saves.
     case "skipped":

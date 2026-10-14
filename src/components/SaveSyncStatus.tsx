@@ -15,8 +15,8 @@ import type { SaveSyncProgress } from "@/bindings/SaveSyncProgress";
 
 /** How long a finished sync stays on screen before it takes itself away. */
 const LINGER_MS = 1600;
-/** Longer after a restore, which names a folder worth having time to read. */
-const RESTORED_LINGER_MS = 6000;
+/** Longer for a restore, which names a folder, or for anything else worth a full sentence. */
+const LONG_LINGER_MS = 6000;
 
 type Timer = ReturnType<typeof setTimeout>;
 
@@ -41,7 +41,7 @@ export function SaveSyncStatus() {
     setProgress(next);
     if (!next || !isFinal(next) || next.phase.kind === "failed") return;
     // A failure stays until it is read; everything else has said what it needed to.
-    const linger = next.phase.kind === "restored" ? RESTORED_LINGER_MS : LINGER_MS;
+    const linger = ["restored", "offline"].includes(next.phase.kind) ? LONG_LINGER_MS : LINGER_MS;
     closing.current = setTimeout(() => display(null), linger);
   }
 
@@ -198,6 +198,10 @@ function phaseText(progress: SaveSyncProgress): string {
         : "Not uploaded. This session started without the newer save, so choose which one to keep under Saves.";
     case "restored":
       return restoredText(phase);
+    case "offline":
+      return progress.moment === "launch"
+        ? "Could not reach where your saves are kept, so the game starts with the save on this PC."
+        : "Could not reach where your saves are kept. Your save uploads once it can.";
     case "kept-local":
       return "Keeping this PC's save, as you chose for the newest one on the server.";
     case "asking":

@@ -8,6 +8,7 @@ import { ResizeHandles } from "@/components/ResizeHandles";
 import { Sidebar } from "@/components/Sidebar";
 import { TitleBar } from "@/components/TitleBar";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { SaveConflictPrompt } from "@/components/SaveConflictPrompt";
 import { SavePullPrompt } from "@/components/SavePullPrompt";
 import { SaveSyncStatus } from "@/components/SaveSyncStatus";
 import { isMockBackend } from "@/lib/backend";
@@ -131,6 +132,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <div className="flex min-h-0 flex-1">
       <SavePullPrompt />
+      <SaveConflictPrompt />
       <SaveSyncStatus />
       <Sidebar downloadCount={pending} conflictCount={conflicts} />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">

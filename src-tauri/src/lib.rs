@@ -184,6 +184,8 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     if settings.save_sync_enabled {
         tauri::async_runtime::spawn(saves::ensure_manifest(app.clone()));
     }
+    // Runs whatever the setting is now, since sync can be switched on later.
+    tauri::async_runtime::spawn(saves::retry_pending_uploads(app.clone()));
 
     // Only a login start hides: one by hand, or the restart after an update, must show the window.
     // Hiding needs somewhere to be hidden to, which only the tray provides.
@@ -356,7 +358,6 @@ pub fn run() {
             saves::save_locations,
             saves::scan_this_pc,
             saves::skip_save_sync,
-            saves::set_save_cross_os,
             saves::set_save_mapping,
             saves::migrate_saves,
             saves::save_tool_status,

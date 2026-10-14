@@ -21,6 +21,7 @@ import type { LoginPoll } from "@/bindings/LoginPoll";
 import type { ManifestInfo } from "@/bindings/ManifestInfo";
 import type { MemoryInfo } from "@/bindings/MemoryInfo";
 import type { MigrationSummary } from "@/bindings/MigrationSummary";
+import type { OfferedSave } from "@/bindings/OfferedSave";
 import type { PrefixEntry } from "@/bindings/PrefixEntry";
 import type { PrefixTool } from "@/bindings/PrefixTool";
 import type { ProtonFamily } from "@/bindings/ProtonFamily";
@@ -36,7 +37,6 @@ import type { SavePathSettings } from "@/bindings/SavePathSettings";
 import type { SaveScope } from "@/bindings/SaveScope";
 import type { SaveSyncState } from "@/bindings/SaveSyncState";
 import type { SaveToolStatus } from "@/bindings/SaveToolStatus";
-import type { SaveVersion } from "@/bindings/SaveVersion";
 import type { ServerProbe } from "@/bindings/ServerProbe";
 import type { SetupProgram } from "@/bindings/SetupProgram";
 import type { SettingsPatch } from "@/bindings/SettingsPatch";
@@ -206,7 +206,8 @@ export const backend = {
   saveState: (gameId: number) => invoke<SaveSyncState>("save_state", { gameId }),
   /** Every game's save status in one call. Never runs the backup helper. */
   saveOverview: (scope: SaveScope) => invoke<SaveOverviewRow[]>("save_overview", { scope }),
-  listSaveVersions: (gameId: number) => invoke<SaveVersion[]>("list_save_versions", { gameId }),
+  /** Every stored version, newest first, each saying whether it restores on this PC. */
+  listSaveVersions: (gameId: number) => invoke<OfferedSave[]>("list_save_versions", { gameId }),
   /** Back up and upload. `force` accepts a stale base, keeping the losing version. */
   backupSaves: (gameId: number, force: boolean) =>
     invoke<SaveSyncState>("backup_saves", { gameId, force }),
@@ -240,9 +241,6 @@ export const backend = {
   scanThisPc: () => invoke<SaveFind[]>("scan_this_pc"),
   /** Stops the automatic sync a game is waiting on, if it has not passed the point of no return. */
   skipSaveSync: (gameId: number) => invoke<void>("skip_save_sync", { gameId }),
-  /** Turn Windows/Linux path translation on for one game, leaving its paths alone. */
-  setSaveCrossOs: (gameId: number, crossOs: boolean) =>
-    invoke<SaveSyncState>("set_save_cross_os", { gameId, crossOs }),
   setSaveMapping: (
     gameId: number,
     crossOs: boolean,

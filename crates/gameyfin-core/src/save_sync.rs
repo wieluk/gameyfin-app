@@ -22,6 +22,10 @@ pub struct LocalSaveState {
     /// Near misses from that search, kept so the user can be offered them without
     /// searching again.
     pub match_candidates: Vec<String>,
+    /// When the game database that search ran against was written. A newer one searches again,
+    /// since it may know the game by now.
+    #[serde(default)]
+    pub match_manifest: Option<String>,
     /// Save folders the user named by hand, for a game the database does not cover or
     /// covers incompletely. Registered with Ludusavi as a custom game.
     #[serde(default)]
@@ -37,6 +41,9 @@ pub struct LocalSaveState {
     /// newer save arriving later is offered again.
     #[serde(default)]
     pub pull_offer_declined: Option<String>,
+    /// A backup after playing that could not reach the store, retried until it does.
+    #[serde(default)]
+    pub upload_pending: bool,
 }
 
 /// Whether this machine has never synced this game, so save files on disk may predate sync
@@ -48,8 +55,8 @@ pub fn never_synced(local: &LocalSaveState) -> bool {
 /// What a first launch on this PC does with a save already in the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirstStart {
-    /// The stored saves are offered even with none here: the game may have been played on
-    /// this PC before Gameyfin saw it, so only the user knows which save is the right one.
+    /// Settled at launch: restored unasked with no save files here, taken as synced when they
+    /// match the stored save, and otherwise asked, since the game may predate Gameyfin here.
     Ask,
     /// The user already chose this PC's save over this exact version.
     KeepLocal,
@@ -190,13 +197,11 @@ pub enum SaveSyncState {
         local_at: Option<String>,
         remote: Box<SaveVersion>,
     },
-    /// The newest remote version was taken on a platform this one cannot restore directly.
+    /// Only saves from a system that does not map onto this one are stored, and this PC has
+    /// nothing of its own to upload. Folders mapped by hand bridge the two.
     PlatformMismatch {
         local: SavePlatform,
         remote: SavePlatform,
-        /// Whether Ludusavi's Wine translation could bridge it, as opposed to needing a
-        /// hand-written mapping.
-        cross_os_available: bool,
     },
     Failed {
         message: String,
@@ -211,44 +216,42 @@ pub enum ConflictChoice {
     KeepLocal,
     /// Restore the remote version, discarding the local backup.
     KeepRemote,
-    /// Upload, and keep both. Identical to KeepLocal on the server, named for what the
-    /// user is choosing rather than for what the request does.
+    /// Upload, and lock the other version so pruning never takes it.
     KeepBoth,
 }
 
-/// Decides what a game's saves need. `local_changed` comes from the caller's hashing, so
-/// this stays a pure function. `this_installation` identifies this machine's uploads.
+/// What this PC makes of a game's saves, which decides which stored versions it can use.
+#[derive(Debug, Clone, Copy)]
+pub struct ThisPc<'a> {
+    pub platform: SavePlatform,
+    /// Marks this machine's own uploads.
+    pub installation_id: Option<&'a str>,
+    /// The user mapped the folders by hand and takes saves from any system.
+    pub any_platform: bool,
+}
+
+/// Decides what a game's saves need, against the newest version that restores here: a save from a
+/// system that does not map onto this one is that system's line. `local_changed` is the caller's.
 pub fn decide(
     local: &LocalSaveState,
-    remote_newest: Option<&SaveVersion>,
+    versions: &[SaveVersion],
     local_changed: bool,
-    this_platform: SavePlatform,
-    this_installation: Option<&str>,
+    here: &ThisPc,
 ) -> SaveSyncState {
-    let Some(remote) = remote_newest else {
-        return if local.last_backup_hash.is_some() {
-            SaveSyncState::LocalNewer {
+    let has_own = local.last_backup_hash.is_some() || local_changed;
+    let Some(remote) = newest_usable(versions, here) else {
+        return match versions.first() {
+            // Said only while this PC has nothing to upload: its own save outranks the news.
+            Some(other) if !has_own => SaveSyncState::PlatformMismatch {
+                local: here.platform,
+                remote: platform_of(other),
+            },
+            _ if local.last_backup_hash.is_some() => SaveSyncState::LocalNewer {
                 local_at: local.last_backup_at.clone(),
-            }
-        } else {
-            SaveSyncState::NeverSynced
+            },
+            _ => SaveSyncState::NeverSynced,
         };
     };
-
-    let remote_platform = remote
-        .platform
-        .parse::<SavePlatform>()
-        .unwrap_or(SavePlatform::Unknown);
-
-    // A save that cannot be restored here is worth saying so about before anything else,
-    // otherwise the UI would offer a restore that would scatter files into wrong paths.
-    if !restorable_here(remote, this_platform, this_installation) {
-        return SaveSyncState::PlatformMismatch {
-            local: this_platform,
-            remote: remote_platform,
-            cross_os_available: bridgeable_by_wine_translation(remote_platform, this_platform),
-        };
-    }
 
     let remote_is_ours = local.last_synced_save_id.as_deref() == Some(remote.id.as_str());
 
@@ -259,38 +262,77 @@ pub fn decide(
         (true, true) => SaveSyncState::LocalNewer {
             local_at: local.last_backup_at.clone(),
         },
-        (false, false) => SaveSyncState::RemoteNewer {
-            remote_at: remote.created_at.clone(),
-            device: remote.device_name.clone(),
-        },
-        (false, true) => SaveSyncState::Conflict {
+        // Restoring a save written without ever seeing ours would drop ours from this PC.
+        (false, false) if !forked(versions, remote, local.last_synced_save_id.as_deref()) => {
+            SaveSyncState::RemoteNewer {
+                remote_at: remote.created_at.clone(),
+                device: remote.device_name.clone(),
+            }
+        }
+        (false, _) => SaveSyncState::Conflict {
             local_at: local.last_backup_at.clone(),
             remote: Box::new(remote.clone()),
         },
     }
 }
 
-/// Whether Ludusavi's Wine translation could bridge these two: it maps Windows paths onto a
-/// prefix, so exactly one side has to be native Windows.
-fn bridgeable_by_wine_translation(a: SavePlatform, b: SavePlatform) -> bool {
-    use SavePlatform::*;
-    matches!((a, b), (Windows, Linux) | (Linux, Windows))
+/// Whether `newest` was written without seeing `ours`, both on top of one earlier version. A
+/// replicated folder allows that when two PCs upload before it catches up. Unknown counts as no.
+fn forked(versions: &[SaveVersion], newest: &SaveVersion, ours: Option<&str>) -> bool {
+    let Some(ours) = ours else { return false };
+    let Some(our_base) = versions
+        .iter()
+        .find(|v| v.id == ours)
+        .and_then(|v| v.base_save_id.as_deref())
+    else {
+        return false;
+    };
+    let mut at = newest;
+    // Bounded by the list, so a cycle in hand-edited sidecars cannot hang a refresh.
+    for _ in 0..versions.len() {
+        if at.id == ours {
+            return false;
+        }
+        match at.base_save_id.as_deref() {
+            Some(base) if base == our_base => return true,
+            Some(base) => match versions.iter().find(|v| v.id == base) {
+                Some(next) => at = next,
+                None => return false,
+            },
+            None => return false,
+        }
+    }
+    false
+}
+
+fn platform_of(version: &SaveVersion) -> SavePlatform {
+    version
+        .platform
+        .parse::<SavePlatform>()
+        .unwrap_or(SavePlatform::Unknown)
 }
 
 /// Whether a stored version restores into the right places on this PC. Our own upload always
 /// does, whatever an older client tagged it: it came from these very paths.
-pub fn restorable_here(
-    remote: &SaveVersion,
-    this_platform: SavePlatform,
-    this_installation: Option<&str>,
-) -> bool {
+pub fn restorable_here(remote: &SaveVersion, here: &ThisPc) -> bool {
     let ours =
-        this_installation.is_some() && remote.installation_id.as_deref() == this_installation;
-    ours || remote
-        .platform
-        .parse::<SavePlatform>()
-        .unwrap_or(SavePlatform::Unknown)
-        .interchangeable_with(this_platform)
+        here.installation_id.is_some() && remote.installation_id.as_deref() == here.installation_id;
+    here.any_platform || ours || platform_of(remote).interchangeable_with(here.platform)
+}
+
+/// The newest stored version this PC can restore. Every store lists newest first.
+pub fn newest_usable<'a>(versions: &'a [SaveVersion], here: &ThisPc) -> Option<&'a SaveVersion> {
+    versions
+        .iter()
+        .find(|version| restorable_here(version, here))
+}
+
+/// Whether an upload built on `base` may go past the newest stored version: only when all that
+/// is newer comes from a system that does not restore here, so nothing this PC could use is buried.
+pub fn passes_other_systems(versions: &[SaveVersion], base: Option<&str>, here: &ThisPc) -> bool {
+    let usable = newest_usable(versions, here).map(|v| v.id.as_str());
+    let newest = versions.first().map(|v| v.id.as_str());
+    usable == base && newest != base
 }
 
 /// Whether a state needs the user to decide before anything can happen.
@@ -547,7 +589,13 @@ mod tests {
             ludusavi_title: Some("Celeste".into()),
             locked: false,
             created_at: Some("2026-01-01T00:00:00Z".into()),
+            base_save_id: None,
         }
+    }
+
+    fn on_top_of(mut version: SaveVersion, base: i64) -> SaveVersion {
+        version.base_save_id = Some(base.to_string());
+        version
     }
 
     #[test]
@@ -567,11 +615,21 @@ mod tests {
             custom_paths: Vec::new(),
             match_attempted: true,
             match_candidates: Vec::new(),
+            match_manifest: None,
             last_synced_save_id: Some(id.to_string()),
             last_backup_hash: Some("abc".into()),
             last_backup_at: Some("2026-01-01T00:00:00Z".into()),
             platform: Some(SavePlatform::Windows),
             pull_offer_declined: None,
+            upload_pending: false,
+        }
+    }
+
+    fn on(platform: SavePlatform) -> ThisPc<'static> {
+        ThisPc {
+            platform,
+            installation_id: None,
+            any_platform: false,
         }
     }
 
@@ -579,53 +637,37 @@ mod tests {
     fn nothing_anywhere_is_never_synced() {
         let state = decide(
             &LocalSaveState::default(),
-            None,
+            &[],
             false,
-            SavePlatform::Windows,
-            None,
+            &on(SavePlatform::Windows),
         );
         assert_eq!(SaveSyncState::NeverSynced, state);
     }
 
     #[test]
     fn a_local_backup_with_no_remote_is_ready_to_upload() {
-        let state = decide(&synced_to(1), None, false, SavePlatform::Windows, None);
+        let state = decide(&synced_to(1), &[], false, &on(SavePlatform::Windows));
         assert!(matches!(state, SaveSyncState::LocalNewer { .. }));
     }
 
     #[test]
     fn matching_ids_and_no_local_change_is_in_sync() {
-        let state = decide(
-            &synced_to(5),
-            Some(&remote(5, "WINDOWS")),
-            false,
-            SavePlatform::Windows,
-            None,
-        );
+        let versions = [remote(5, "WINDOWS")];
+        let state = decide(&synced_to(5), &versions, false, &on(SavePlatform::Windows));
         assert!(matches!(state, SaveSyncState::InSync { .. }));
     }
 
     #[test]
     fn playing_since_the_last_sync_makes_the_local_copy_newer() {
-        let state = decide(
-            &synced_to(5),
-            Some(&remote(5, "WINDOWS")),
-            true,
-            SavePlatform::Windows,
-            None,
-        );
+        let versions = [remote(5, "WINDOWS")];
+        let state = decide(&synced_to(5), &versions, true, &on(SavePlatform::Windows));
         assert!(matches!(state, SaveSyncState::LocalNewer { .. }));
     }
 
     #[test]
     fn another_machine_uploading_makes_the_remote_newer() {
-        let state = decide(
-            &synced_to(5),
-            Some(&remote(9, "WINDOWS")),
-            false,
-            SavePlatform::Windows,
-            None,
-        );
+        let versions = [remote(9, "WINDOWS"), remote(5, "WINDOWS")];
+        let state = decide(&synced_to(5), &versions, false, &on(SavePlatform::Windows));
         match state {
             SaveSyncState::RemoteNewer { device, .. } => {
                 assert_eq!(Some("desktop".into()), device)
@@ -636,13 +678,8 @@ mod tests {
 
     #[test]
     fn both_sides_moving_is_a_conflict_rather_than_a_silent_overwrite() {
-        let state = decide(
-            &synced_to(5),
-            Some(&remote(9, "WINDOWS")),
-            true,
-            SavePlatform::Windows,
-            None,
-        );
+        let versions = [remote(9, "WINDOWS"), remote(5, "WINDOWS")];
+        let state = decide(&synced_to(5), &versions, true, &on(SavePlatform::Windows));
         match state {
             SaveSyncState::Conflict { remote, .. } => assert_eq!("9", remote.id),
             other => panic!("expected a conflict, got {other:?}"),
@@ -650,49 +687,81 @@ mod tests {
     }
 
     #[test]
+    fn a_save_built_on_ours_is_simply_newer() {
+        let versions = [
+            on_top_of(remote(9, "WINDOWS"), 7),
+            on_top_of(remote(7, "WINDOWS"), 5),
+            on_top_of(remote(5, "WINDOWS"), 1),
+        ];
+        let state = decide(&synced_to(5), &versions, false, &on(SavePlatform::Windows));
+        assert!(matches!(state, SaveSyncState::RemoteNewer { .. }));
+    }
+
+    #[test]
+    fn two_pcs_uploading_on_one_base_is_a_conflict() {
+        // This PC uploaded 5 and another PC uploaded 9, both on 1, before the folder synced.
+        let versions = [
+            on_top_of(remote(9, "WINDOWS"), 1),
+            on_top_of(remote(5, "WINDOWS"), 1),
+            remote(1, "WINDOWS"),
+        ];
+        let state = decide(&synced_to(5), &versions, false, &on(SavePlatform::Windows));
+        assert!(matches!(state, SaveSyncState::Conflict { .. }));
+    }
+
+    #[test]
+    fn a_version_without_a_recorded_base_is_trusted() {
+        // Server versions and ones from before bases were recorded say nothing either way.
+        let versions = [remote(9, "WINDOWS"), on_top_of(remote(5, "WINDOWS"), 1)];
+        let state = decide(&synced_to(5), &versions, false, &on(SavePlatform::Windows));
+        assert!(matches!(state, SaveSyncState::RemoteNewer { .. }));
+    }
+
+    #[test]
     fn a_proton_save_restores_onto_windows() {
-        let state = decide(
-            &synced_to(5),
-            Some(&remote(5, "PROTON")),
-            false,
-            SavePlatform::Windows,
-            None,
-        );
+        let versions = [remote(5, "PROTON")];
+        let state = decide(&synced_to(5), &versions, false, &on(SavePlatform::Windows));
         assert!(matches!(state, SaveSyncState::InSync { .. }));
     }
 
     #[test]
-    fn a_windows_save_does_not_restore_onto_native_linux() {
+    fn a_save_from_another_system_alone_is_reported_on_a_pc_with_nothing_to_upload() {
+        let versions = [remote(5, "WINDOWS")];
         let state = decide(
-            &synced_to(5),
-            Some(&remote(5, "WINDOWS")),
+            &LocalSaveState::default(),
+            &versions,
             false,
-            SavePlatform::Linux,
-            None,
+            &on(SavePlatform::Linux),
         );
-        match state {
-            SaveSyncState::PlatformMismatch {
-                cross_os_available, ..
-            } => assert!(cross_os_available),
-            other => panic!("expected a platform mismatch, got {other:?}"),
-        }
+        assert!(matches!(state, SaveSyncState::PlatformMismatch { .. }));
     }
 
     #[test]
-    fn a_mismatch_wine_translation_cannot_bridge_is_reported_as_such() {
+    fn a_save_from_another_system_does_not_stop_this_pcs_own_line() {
+        // A native Linux PC that uploaded 5 is in sync with it, whatever Windows uploaded since.
+        let versions = [remote(9, "WINDOWS"), remote(5, "LINUX")];
+        let state = decide(&synced_to(5), &versions, false, &on(SavePlatform::Linux));
+        assert!(matches!(state, SaveSyncState::InSync { .. }));
+
+        // And with progress of its own and nothing of its system stored, it has something to upload.
         let state = decide(
-            &synced_to(5),
-            Some(&remote(5, "MACOS")),
-            false,
-            SavePlatform::Linux,
-            None,
+            &synced_to(1),
+            &versions[..1],
+            true,
+            &on(SavePlatform::Linux),
         );
-        match state {
-            SaveSyncState::PlatformMismatch {
-                cross_os_available, ..
-            } => assert!(!cross_os_available),
-            other => panic!("expected a platform mismatch, got {other:?}"),
-        }
+        assert!(matches!(state, SaveSyncState::LocalNewer { .. }));
+    }
+
+    #[test]
+    fn mapped_folders_take_saves_from_any_system() {
+        let versions = [remote(9, "WINDOWS"), remote(5, "LINUX")];
+        let here = ThisPc {
+            any_platform: true,
+            ..on(SavePlatform::Linux)
+        };
+        let state = decide(&synced_to(5), &versions, false, &here);
+        assert!(matches!(state, SaveSyncState::RemoteNewer { .. }));
     }
 
     #[test]
@@ -701,14 +770,12 @@ mod tests {
         // that wrote them keeps using them.
         let mut mine = remote(5, "LINUX");
         mine.installation_id = Some("this-pc".into());
+        let here = ThisPc {
+            installation_id: Some("this-pc"),
+            ..on(SavePlatform::Proton)
+        };
 
-        let state = decide(
-            &synced_to(5),
-            Some(&mine),
-            false,
-            SavePlatform::Proton,
-            Some("this-pc"),
-        );
+        let state = decide(&synced_to(5), &[mine], false, &here);
         assert!(matches!(state, SaveSyncState::InSync { .. }));
     }
 
@@ -716,41 +783,31 @@ mod tests {
     fn another_machines_upload_is_still_judged_on_its_platform() {
         let mut theirs = remote(5, "LINUX");
         theirs.installation_id = Some("laptop".into());
-
-        let state = decide(
-            &synced_to(5),
-            Some(&theirs),
-            false,
-            SavePlatform::Proton,
-            Some("this-pc"),
-        );
-        assert!(matches!(state, SaveSyncState::PlatformMismatch { .. }));
-    }
-
-    #[test]
-    fn a_platform_mismatch_outranks_a_conflict() {
-        // Offering "keep remote" would restore Windows paths onto Linux, so the mismatch
-        // has to be settled first.
-        let state = decide(
-            &synced_to(5),
-            Some(&remote(9, "WINDOWS")),
-            true,
-            SavePlatform::Linux,
-            None,
-        );
-        assert!(matches!(state, SaveSyncState::PlatformMismatch { .. }));
+        let here = ThisPc {
+            installation_id: Some("this-pc"),
+            ..on(SavePlatform::Proton)
+        };
+        assert!(!restorable_here(&theirs, &here));
     }
 
     #[test]
     fn an_untagged_remote_version_is_not_blocked() {
-        let state = decide(
-            &synced_to(5),
-            Some(&remote(5, "")),
-            false,
-            SavePlatform::Linux,
-            None,
-        );
+        let versions = [remote(5, "")];
+        let state = decide(&synced_to(5), &versions, false, &on(SavePlatform::Linux));
         assert!(matches!(state, SaveSyncState::InSync { .. }));
+    }
+
+    #[test]
+    fn an_upload_passes_only_saves_this_pc_could_not_use() {
+        let here = on(SavePlatform::Linux);
+        let versions = [remote(9, "WINDOWS"), remote(5, "LINUX")];
+        assert!(passes_other_systems(&versions, Some("5"), &here));
+        // Built on something older than this system's newest: a real conflict.
+        assert!(!passes_other_systems(&versions, Some("3"), &here));
+        // Nothing newer at all: no need to force.
+        assert!(!passes_other_systems(&versions[1..], Some("5"), &here));
+        // Only the other system has saves, and this PC never uploaded.
+        assert!(passes_other_systems(&versions[..1], None, &here));
     }
 
     #[test]
@@ -762,7 +819,6 @@ mod tests {
         assert!(needs_attention(&SaveSyncState::PlatformMismatch {
             local: SavePlatform::Linux,
             remote: SavePlatform::Windows,
-            cross_os_available: true,
         }));
         assert!(!needs_attention(&SaveSyncState::InSync {
             last_synced_at: None
@@ -875,8 +931,8 @@ mod first_start_tests {
     use super::*;
 
     #[test]
-    fn a_first_start_asks_even_with_nothing_local() {
-        // The game may have been played here before Gameyfin saw it.
+    fn a_first_start_is_settled_at_launch_even_with_nothing_local() {
+        // The launch looks at the files: none restores unasked, a match is adopted.
         assert_eq!(
             FirstStart::Ask,
             first_start(&LocalSaveState::default(), "9")
@@ -901,23 +957,16 @@ mod first_start_tests {
             "platform": "LINUX", "installationId": "desk"
         }))
         .unwrap();
-        assert!(!restorable_here(
-            &version,
-            SavePlatform::Windows,
-            Some("laptop")
-        ));
-        assert!(restorable_here(
-            &version,
-            SavePlatform::Windows,
-            Some("desk")
-        ));
+        let on = |installation_id| ThisPc {
+            platform: SavePlatform::Windows,
+            installation_id,
+            any_platform: false,
+        };
+        assert!(!restorable_here(&version, &on(Some("laptop"))));
+        assert!(restorable_here(&version, &on(Some("desk"))));
 
         version.platform = "WINDOWS".into();
-        assert!(restorable_here(
-            &version,
-            SavePlatform::Windows,
-            Some("laptop")
-        ));
+        assert!(restorable_here(&version, &on(Some("laptop"))));
     }
 
     #[test]

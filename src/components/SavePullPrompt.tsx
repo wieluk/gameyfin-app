@@ -1,19 +1,19 @@
 import { useState } from "react";
 
 import { Alert } from "@/components/Alert";
-import { platformLabel } from "@/components/SaveVersionList";
 import { Button, Radio } from "@/components/ui";
 import { backend } from "@/lib/backend";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { keys, useInvalidate } from "@/lib/queries";
+import { platformLabel } from "@/lib/saveState";
 import { useAction } from "@/lib/useAction";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 import type { SavePullOffer } from "@/bindings/SavePullOffer";
 import { Modal, ModalFooter, ModalHeader } from "./Modal";
 
 /**
- * Asks, on a game's first start on this PC, which stored save to play with. Always asked: the
- * game may have been played here before Gameyfin saw it. The dialog starts the game itself.
+ * Asks, on a game's first start on this PC, which stored save to play with. Only asked when this
+ * PC has save files that differ from the stored one. The dialog starts the game itself.
  */
 export function SavePullPrompt() {
   const invalidate = useInvalidate();

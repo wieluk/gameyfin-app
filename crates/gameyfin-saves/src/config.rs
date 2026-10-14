@@ -9,14 +9,16 @@ use crate::error::SaveResult;
 
 /// Synthetic redirect targets. Arbitrary but fixed, they only have to be identical
 /// across machines, and distinctive enough never to collide with a real path.
-const HOME_TARGET: &str = "/gameyfin/home";
+pub const HOME_TARGET: &str = "/gameyfin/home";
 /// What every synthetic target starts with. A restored path still under it was never
 /// mapped back onto a real folder.
 pub const SYNTHETIC_ROOT: &str = "/gameyfin/";
 /// The Linux home of a machine running a Windows game, which is not the home that game
 /// writes its saves into. Its own target, so the two never collapse onto each other.
-const HOST_HOME_TARGET: &str = "/gameyfin/host-home";
-const INSTALL_TARGET: &str = "/gameyfin/install";
+pub const HOST_HOME_TARGET: &str = "/gameyfin/host-home";
+pub const INSTALL_TARGET: &str = "/gameyfin/install";
+/// Documents inside the travelling home, given its own redirect wherever it lives elsewhere.
+pub const DOCUMENTS_TARGET: &str = "/gameyfin/home/Documents";
 
 /// A location Ludusavi should scan, and how to interpret its layout.
 #[derive(Debug, Clone, Serialize)]
@@ -64,8 +66,6 @@ pub struct CustomGame {
     pub files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub registry: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub wine_prefix: Vec<String>,
     /// `extend` merges with a manifest entry of the same name; `override` replaces it.
     pub integration: CustomGameIntegration,
 }
@@ -111,13 +111,6 @@ struct RestoreSection {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ScanSection {
-    /// Ludusavi's best-effort Windows/Wine path translation. Restore-only, files only.
-    redirect_wine: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct CloudSection {
     /// Ludusavi's own rclone sync is off: the Gameyfin server is the sync target.
     synchronize: bool,
@@ -141,21 +134,7 @@ struct ConfigFile {
     redirects: Vec<Redirect>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     custom_games: Vec<CustomGame>,
-    scan: ScanSection,
     cloud: CloudSection,
-}
-
-/// How a backup from elsewhere maps onto this machine. Exclusive: Ludusavi stops at the first
-/// redirect that changes a path, so the portable home one would disable Wine translation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RestoreStrategy {
-    /// Same operating system, possibly a different account and install directory.
-    /// Synthetic redirects make the paths identical everywhere.
-    #[default]
-    Portable,
-    /// Windows to or from a Wine/Proton prefix. Hands the job to Ludusavi's own
-    /// translation, which needs a preferred prefix and does not carry registry values.
-    CrossOs,
 }
 
 #[derive(Debug, Clone)]
@@ -165,7 +144,6 @@ pub struct ConfigBuilder {
     portable_redirects: Vec<Redirect>,
     manual_redirects: Vec<Redirect>,
     custom_games: Vec<CustomGame>,
-    strategy: RestoreStrategy,
 }
 
 impl ConfigBuilder {
@@ -177,15 +155,7 @@ impl ConfigBuilder {
             portable_redirects: Vec::new(),
             manual_redirects: Vec::new(),
             custom_games: Vec::new(),
-            strategy: RestoreStrategy::default(),
         }
-    }
-
-    /// Selecting [`RestoreStrategy::CrossOs`] drops the portable redirects, which would
-    /// otherwise suppress Ludusavi's Wine translation.
-    pub fn strategy(mut self, strategy: RestoreStrategy) -> Self {
-        self.strategy = strategy;
-        self
     }
 
     pub fn root(mut self, store: RootStore, path: impl Into<String>) -> Self {
@@ -202,38 +172,44 @@ impl ConfigBuilder {
         self.root(RootStore::OtherWine, prefix_dir.to_string_lossy())
     }
 
-    /// Make the user's home portable. For a Windows game this is the home inside the prefix.
-    pub fn portable_home(mut self, home: &Path) -> Self {
+    /// Stores `source` as `target`, both ways. Ludusavi stops at the first matching redirect, so
+    /// the more specific folder goes first.
+    pub fn portable(mut self, source: &Path, target: impl Into<String>) -> Self {
         self.portable_redirects.push(Redirect {
             kind: RedirectKind::Bidirectional,
-            source: home.to_string_lossy().into_owned(),
-            target: HOME_TARGET.to_string(),
+            source: source.to_string_lossy().into_owned(),
+            target: target.into(),
         });
         self
+    }
+
+    /// Restores what was stored as `source` into `target`, without touching backups.
+    pub fn restore_redirect(mut self, source: &str, target: &Path) -> Self {
+        self.portable_redirects.push(Redirect {
+            kind: RedirectKind::Restore,
+            source: source.to_string(),
+            target: target.to_string_lossy().into_owned(),
+        });
+        self
+    }
+
+    /// Make the user's home portable. For a Windows game this is the home inside the prefix.
+    pub fn portable_home(self, home: &Path) -> Self {
+        self.portable(home, HOME_TARGET)
     }
 
     /// The machine's own home, for a Windows game whose portable home is the prefix's. Added after
     /// [`Self::portable_home`], since Ludusavi stops at the first matching redirect.
-    pub fn portable_host_home(mut self, home: &Path) -> Self {
-        self.portable_redirects.push(Redirect {
-            kind: RedirectKind::Bidirectional,
-            source: home.to_string_lossy().into_owned(),
-            target: HOST_HOME_TARGET.to_string(),
-        });
-        self
+    pub fn portable_host_home(self, home: &Path) -> Self {
+        self.portable(home, HOST_HOME_TARGET)
     }
 
-    pub fn portable_install_dir(mut self, install_dir: &Path) -> Self {
-        self.portable_redirects.push(Redirect {
-            kind: RedirectKind::Bidirectional,
-            source: install_dir.to_string_lossy().into_owned(),
-            target: INSTALL_TARGET.to_string(),
-        });
-        self
+    pub fn portable_install_dir(self, install_dir: &Path) -> Self {
+        self.portable(install_dir, INSTALL_TARGET)
     }
 
-    /// Hand-entered path mappings, which survive both strategies: an explicit answer is the
-    /// escape hatch for what Ludusavi cannot work out.
+    /// Hand-entered path mappings, ahead of the portable ones: an explicit answer is the escape
+    /// hatch for what Ludusavi cannot work out.
     pub fn manual_redirects(mut self, redirects: impl IntoIterator<Item = Redirect>) -> Self {
         self.manual_redirects.extend(redirects);
         self
@@ -249,7 +225,6 @@ impl ConfigBuilder {
                     name,
                     files: Vec::new(),
                     registry: Vec::new(),
-                    wine_prefix: Vec::new(),
                     // Never `override`: a game the database already covers must keep
                     // everything it knew and simply gain what is added here.
                     integration: CustomGameIntegration::Extend,
@@ -275,19 +250,11 @@ impl ConfigBuilder {
         self.amend_custom_game(game_name.into(), |game| game.files.extend(paths))
     }
 
-    /// Names the prefix to translate against. [`RestoreStrategy::CrossOs`] does nothing
-    /// without one, and Ludusavi only takes it from a custom game entry.
-    pub fn preferred_wine_prefix(self, game_name: impl Into<String>, prefix: &Path) -> Self {
-        let prefix = prefix.to_string_lossy().into_owned();
-        self.amend_custom_game(game_name.into(), |game| game.wine_prefix.push(prefix))
-    }
-
-    /// The redirects that actually reach the config file, in priority order.
+    /// The redirects that reach the config file, in priority order. The portable ones are never
+    /// dropped: without them a backup records this machine's own paths, which nowhere else has.
     fn effective_redirects(&self) -> Vec<Redirect> {
         let mut redirects = self.manual_redirects.clone();
-        if self.strategy == RestoreStrategy::Portable {
-            redirects.extend(self.portable_redirects.clone());
-        }
+        redirects.extend(self.portable_redirects.clone());
         redirects
     }
 
@@ -314,9 +281,6 @@ impl ConfigBuilder {
             restore: RestoreSection { path: staging },
             redirects: self.effective_redirects(),
             custom_games: self.custom_games.clone(),
-            scan: ScanSection {
-                redirect_wine: self.strategy == RestoreStrategy::CrossOs,
-            },
             cloud: CloudSection { synchronize: false },
         }
     }
@@ -357,23 +321,6 @@ mod tests {
         assert_eq!(1, games[0]["files"].as_sequence().unwrap().len());
         // Never `override`: a game the database covers must keep what it already knew.
         assert_eq!("extend", games[0]["integration"].as_str().unwrap());
-    }
-
-    #[test]
-    fn a_prefix_and_hand_set_folders_share_one_entry() {
-        // Two custom games with the same name is not something Ludusavi promises to merge.
-        let yaml = parse(
-            &ConfigBuilder::new("/staging")
-                .custom_save_paths("Example Game", ["/saves/one".to_string()])
-                .preferred_wine_prefix("Example Game", std::path::Path::new("/prefixes/1"))
-                .to_yaml()
-                .unwrap(),
-        );
-
-        let games = yaml["customGames"].as_sequence().expect("custom games");
-        assert_eq!(1, games.len());
-        assert_eq!(1, games[0]["files"].as_sequence().unwrap().len());
-        assert_eq!(1, games[0]["winePrefix"].as_sequence().unwrap().len());
     }
 
     #[test]
@@ -506,7 +453,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod strategy_tests {
+mod redirect_tests {
     use super::*;
 
     fn yaml(builder: &ConfigBuilder) -> serde_json::Value {
@@ -520,38 +467,33 @@ mod strategy_tests {
     }
 
     #[test]
-    fn the_portable_strategy_emits_the_synthetic_redirects_and_leaves_wine_translation_off() {
+    fn the_synthetic_redirects_are_always_written() {
         let config = yaml(&base());
-
         let redirects = config["redirects"].as_array().unwrap();
         assert_eq!(2, redirects.len());
         assert_eq!("/gameyfin/home", redirects[0]["target"].as_str().unwrap());
-        assert!(!config["scan"]["redirectWine"].as_bool().unwrap());
+        // Ludusavi 0.31 has no such setting, and an unknown key only hides that.
+        assert!(config.get("scan").is_none());
     }
 
     #[test]
-    fn the_cross_os_strategy_drops_the_portable_redirects() {
-        // A user redirect that fires first stops Ludusavi before its own Wine translation,
-        // so leaving these in would silently disable the feature we just turned on.
-        let config = yaml(&base().strategy(RestoreStrategy::CrossOs));
-
-        assert!(config.get("redirects").is_none());
-        assert!(config["scan"]["redirectWine"].as_bool().unwrap());
+    fn a_restore_redirect_leaves_backups_alone() {
+        let config =
+            yaml(&base().restore_redirect(HOST_HOME_TARGET, Path::new("/saves/unplaced/7")));
+        let last = config["redirects"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!("restore", last["kind"].as_str().unwrap());
+        assert_eq!("/gameyfin/host-home", last["source"].as_str().unwrap());
+        assert_eq!("/saves/unplaced/7", last["target"].as_str().unwrap());
     }
 
     #[test]
-    fn manual_redirects_survive_both_strategies() {
-        let manual = Redirect {
-            kind: RedirectKind::Bidirectional,
-            source: "C:/Saves".into(),
-            target: "/home/alice/saves".into(),
-        };
-
-        for strategy in [RestoreStrategy::Portable, RestoreStrategy::CrossOs] {
-            let config = yaml(&base().strategy(strategy).manual_redirects([manual.clone()]));
-            let redirects = config["redirects"].as_array().unwrap();
-            assert_eq!("C:/Saves", redirects[0]["source"].as_str().unwrap());
-        }
+    fn documents_travels_inside_the_home() {
+        assert!(Path::new(DOCUMENTS_TARGET).starts_with(HOME_TARGET));
     }
 
     #[test]
@@ -566,19 +508,5 @@ mod strategy_tests {
         let redirects = config["redirects"].as_array().unwrap();
         assert_eq!("C:/Saves", redirects[0]["source"].as_str().unwrap());
         assert_eq!("/home/alice", redirects[1]["source"].as_str().unwrap());
-    }
-
-    #[test]
-    fn a_preferred_prefix_is_written_as_a_custom_game() {
-        let config = yaml(
-            &base()
-                .strategy(RestoreStrategy::CrossOs)
-                .preferred_wine_prefix("Celeste", Path::new("/prefixes/12")),
-        );
-
-        let games = config["customGames"].as_array().unwrap();
-        assert_eq!("Celeste", games[0]["name"].as_str().unwrap());
-        assert_eq!("/prefixes/12", games[0]["winePrefix"][0].as_str().unwrap());
-        assert_eq!("extend", games[0]["integration"].as_str().unwrap());
     }
 }

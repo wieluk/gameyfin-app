@@ -173,6 +173,15 @@ impl ScanGame {
         })
     }
 
+    /// Whether a restore preview found every file of the backup already in place, byte for byte.
+    pub fn already_restored(&self) -> bool {
+        let files: Vec<&ScannedFile> = self.files.values().filter(|f| !f.ignored).collect();
+        !files.is_empty()
+            && files
+                .iter()
+                .all(|f| !f.failed && f.change == Some(Change::Same))
+    }
+
     /// Paths of the files a restore wrote or a backup read, leaving out failed and ignored ones.
     pub fn placed(&self) -> impl Iterator<Item = &str> {
         self.files
@@ -230,6 +239,24 @@ mod folders_tests {
     fn unrelated_folders_are_each_named() {
         let folders = folders_of(["/a/x.sav", "/b/y.cfg"]);
         assert_eq!(folders, vec!["/a".to_string(), "/b".to_string()]);
+    }
+
+    #[test]
+    fn only_a_backup_already_in_place_file_for_file_counts_as_restored() {
+        let same: ScanGame = serde_json::from_str(
+            r#"{"files":{"/p/a.sav":{"change":"Same"},"/p/b.sav":{"change":"Same","ignored":true}}}"#,
+        )
+        .unwrap();
+        assert!(same.already_restored());
+
+        let one_differs: ScanGame = serde_json::from_str(
+            r#"{"files":{"/p/a.sav":{"change":"Same"},"/p/c.sav":{"change":"New"}}}"#,
+        )
+        .unwrap();
+        assert!(!one_differs.already_restored());
+
+        let empty: ScanGame = serde_json::from_str(r#"{"files":{}}"#).unwrap();
+        assert!(!empty.already_restored());
     }
 
     #[test]

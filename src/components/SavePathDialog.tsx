@@ -268,17 +268,14 @@ export function SavePathDialog({
               </Button>
             </div>
 
-            {/* A prefix game always uses the portable mapping, so the switch would do nothing. */}
-            {locations && !locations.savesInPrefix && (
-              <div className="mt-2">
-                <SwitchField
-                  label="Translate Windows paths"
-                  hint="For a Windows save restored into a native Linux build. Best effort, and registry settings are not carried."
-                  checked={translate}
-                  onChange={setTranslate}
-                />
-              </div>
-            )}
+            <div className="mt-2">
+              <SwitchField
+                label="Use saves from other systems"
+                hint="Restores saves made on Windows or Linux here too. Map the folders above on each PC first, or the files land where this game does not look."
+                checked={translate}
+                onChange={setTranslate}
+              />
+            </div>
           </div>
         )}
       </div>

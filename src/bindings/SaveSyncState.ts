@@ -14,9 +14,4 @@ title: string,
 /**
  * Whether the helper's database had anything to say about that title at all.
  */
-known: boolean, } | { "kind": "in-sync", lastSyncedAt: string | null, } | { "kind": "local-newer", localAt: string | null, } | { "kind": "remote-newer", remoteAt: string | null, device: string | null, } | { "kind": "conflict", localAt: string | null, remote: SaveVersion, } | { "kind": "platform-mismatch", local: SavePlatform, remote: SavePlatform, 
-/**
- * Whether Ludusavi's Wine translation could bridge it, as opposed to needing a
- * hand-written mapping.
- */
-crossOsAvailable: boolean, } | { "kind": "failed", message: string, };
+known: boolean, } | { "kind": "in-sync", lastSyncedAt: string | null, } | { "kind": "local-newer", localAt: string | null, } | { "kind": "remote-newer", remoteAt: string | null, device: string | null, } | { "kind": "conflict", localAt: string | null, remote: SaveVersion, } | { "kind": "platform-mismatch", local: SavePlatform, remote: SavePlatform, } | { "kind": "failed", message: string, };

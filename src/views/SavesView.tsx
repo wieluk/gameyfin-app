@@ -8,7 +8,7 @@ import { SaveConflictDialog } from "@/components/SaveConflictDialog";
 import { SaveMatchDialog } from "@/components/SaveMatchDialog";
 import { SavePathDialog, loadSavePaths } from "@/components/SavePathDialog";
 import { usePreloaded } from "@/lib/usePreloaded";
-import { SaveVersionList, platformLabel } from "@/components/SaveVersionList";
+import { SaveVersionList } from "@/components/SaveVersionList";
 import { ScanThisPcDialog } from "@/components/ScanThisPcDialog";
 import { OverflowMenu } from "@/components/OverflowMenu";
 import { Button, IconButton, TextInput, ViewHeader } from "@/components/ui";
@@ -23,6 +23,7 @@ import {
   isRestoreReport,
   isSaveState,
   outcomeOf,
+  platformLabel,
   restoredOutcome,
 } from "@/lib/saveState";
 import { keys, useAppSettings, useEntries, useInvalidate } from "@/lib/queries";
@@ -321,9 +322,6 @@ export function SavesView() {
                 onBackup={() => run(row.gameId, () => backend.backupSaves(row.gameId, false))}
                 onRestore={() => run(row.gameId, () => backend.restoreSaves(row.gameId))}
                 onResolve={() => setConflictGameId(row.gameId)}
-                onEnableCrossOs={() =>
-                  run(row.gameId, () => backend.setSaveCrossOs(row.gameId, true))
-                }
                 onIdentify={() => setIdentifyGameId(row.gameId)}
                 onEditPaths={() => void paths.open(row.gameId)}
                 expanded={expanded === row.gameId}
@@ -473,7 +471,6 @@ function SaveRow({
   onBackup,
   onRestore,
   onResolve,
-  onEnableCrossOs,
   onIdentify,
   onEditPaths,
   outcome,
@@ -489,7 +486,6 @@ function SaveRow({
   onBackup: () => void;
   onRestore: () => void;
   onResolve: () => void;
-  onEnableCrossOs: () => void;
   onIdentify: () => void;
   onEditPaths: () => void;
   expanded: boolean;
@@ -546,8 +542,11 @@ function SaveRow({
           {state.kind === "conflict" && (
             <Action label="Resolve" onClick={onResolve} busy={busy} primary />
           )}
-          {state.kind === "platform-mismatch" && state.crossOsAvailable && (
-            <Action label="Try anyway" onClick={onEnableCrossOs} busy={busy} />
+          {state.kind === "platform-mismatch" && (
+            <>
+              {row.installed && <Action label="Back up" onClick={onBackup} busy={busy} />}
+              <Action label="Set folders" onClick={onEditPaths} busy={busy} primary />
+            </>
           )}
           {state.kind === "remote-newer" && row.installed && (
             <Action label="Restore" onClick={onRestore} busy={busy} primary />
@@ -601,10 +600,10 @@ function SaveRow({
           {state.kind === "platform-mismatch" && (
             <p className="text-[0.6875rem] leading-relaxed text-warning-600">
               Saved on {platformLabel(state.remote) || state.remote}, and this PC plays it as{" "}
-              {platformLabel(state.local) || state.local}.
-              {state.crossOsAvailable
-                ? " Try anyway translates the paths between the two. It is best effort, and it does not carry registry settings."
-                : " Set the save folders by hand to say where they belong here."}
+              {platformLabel(state.local) || state.local}, which keeps its saves elsewhere. To
+              carry saves between the two, use Set folders on each PC to give the save folder
+              the same stored name, then turn on Use saves from other systems. Registry settings
+              are not carried.
             </p>
           )}
 

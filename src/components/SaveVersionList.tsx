@@ -7,7 +7,7 @@ import { backend } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { keys } from "@/lib/queries";
-import type { SavePlatform } from "@/types";
+import { platformLabel } from "@/lib/saveState";
 
 /** Every stored version of a game's saves, newest first, shared by the game dialog and Saves tab. */
 export function SaveVersionList({
@@ -70,13 +70,17 @@ export function SaveVersionList({
   return (
     <div className="flex flex-col gap-2">
       <ul className="flex flex-col gap-1">
-        {list.map((version) => (
+        {list.map(({ version, restorable }) => (
           <li key={version.id} className="flex items-center gap-2 text-[0.6875rem]">
             <span className="min-w-0 flex-1 truncate text-foreground/70">
               {formatRelative(version.createdAt)}
               {version.deviceName ? ` from ${version.deviceName}` : ""}
             </span>
-            <span className="shrink-0 text-foreground/40">{platformLabel(version.platform)}</span>
+            <span className="shrink-0 text-foreground/40">
+              {restorable
+                ? platformLabel(version.platform)
+                : `${platformLabel(version.platform) || version.platform}, does not restore here`}
+            </span>
             <span className="shrink-0 text-foreground/40">{formatBytes(version.sizeBytes)}</span>
 
             {!deletingAll && confirming?.ids[0] === version.id ? (
@@ -117,8 +121,14 @@ export function SaveVersionList({
                 </Button>
                 <Button
                   size="sm"
-                  disabled={disabled || !canRestore}
-                  title={canRestore ? undefined : "Install this game to restore its save."}
+                  disabled={disabled || !canRestore || !restorable}
+                  title={
+                    !canRestore
+                      ? "Install this game to restore its save."
+                      : restorable
+                        ? undefined
+                        : "Made on another system. Map its folders under Set folders first."
+                  }
                   onClick={() => onRestore(version.id)}
                 >
                   Restore
@@ -167,7 +177,9 @@ export function SaveVersionList({
               size="sm"
               variant="destructive"
               disabled={disabled}
-              onClick={() => setConfirming({ ids: list.map((version) => version.id), all: true })}
+              onClick={() =>
+                setConfirming({ ids: list.map(({ version }) => version.id), all: true })
+              }
             >
               Delete all saves for this game
             </Button>
@@ -176,20 +188,4 @@ export function SaveVersionList({
       )}
     </div>
   );
-}
-
-/** The stored tag is an enum on the wire; nobody says "PROTON" out loud. */
-export function platformLabel(platform: SavePlatform | string): string {
-  switch (platform) {
-    case "WINDOWS":
-      return "Windows";
-    case "LINUX":
-      return "Linux";
-    case "PROTON":
-      return "Windows, on Proton";
-    case "MACOS":
-      return "macOS";
-    default:
-      return "";
-  }
 }

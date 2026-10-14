@@ -36,6 +36,10 @@ pub struct SaveVersion {
     pub locked: bool,
     #[serde(default)]
     pub created_at: Option<String>,
+    /// The version that was newest when this one was written. Only a folder or WebDAV store
+    /// records it: with no compare-and-swap there, it is how two PCs uploading at once is told.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_save_id: Option<String>,
 }
 
 /// What the client claims about an upload. Mirrors the `X-` headers the server reads.

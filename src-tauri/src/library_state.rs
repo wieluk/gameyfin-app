@@ -54,12 +54,14 @@ pub struct GameRecord {
     pub save_redirects: Vec<(String, String)>,
 }
 
-/// Mirrors `gameyfin_saves::RestoreStrategy` with a wire form independent of that crate.
+/// Whether saves made on another system restore onto this game here. Kept under its old wire
+/// name so a choice made before carries over.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SaveRestoreStrategy {
     #[default]
     Portable,
+    /// The user mapped the folders and accepts saves from any system.
     CrossOs,
 }
 
@@ -69,15 +71,6 @@ impl From<bool> for SaveRestoreStrategy {
             Self::CrossOs
         } else {
             Self::Portable
-        }
-    }
-}
-
-impl From<SaveRestoreStrategy> for gameyfin_saves::RestoreStrategy {
-    fn from(value: SaveRestoreStrategy) -> Self {
-        match value {
-            SaveRestoreStrategy::Portable => Self::Portable,
-            SaveRestoreStrategy::CrossOs => Self::CrossOs,
         }
     }
 }
@@ -384,6 +377,15 @@ impl LibraryState {
                 ]
             })
             .flatten()
+            .collect()
+    }
+
+    /// Games whose backup after playing is still waiting for the store.
+    pub fn pending_uploads(&self) -> Vec<i64> {
+        read(&self.records)
+            .iter()
+            .filter(|(_, record)| record.saves.upload_pending)
+            .map(|(id, _)| *id)
             .collect()
     }
 

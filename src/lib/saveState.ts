@@ -71,14 +71,32 @@ export function describe(state?: SaveSyncState): { text: string; tone: string } 
       };
     case "platform-mismatch":
       return {
-        text: state.crossOsAvailable
-          ? `Saved on ${state.remote}, which does not map onto ${state.local} on its own`
-          : `Saved on ${state.remote} and cannot be restored on ${state.local}`,
+        text: `Only saved on ${platformName(state.remote)}, which does not restore onto ${platformName(state.local)} by itself`,
         tone: "text-warning-600",
       };
     case "failed":
       return { text: state.message, tone: "text-danger" };
   }
+}
+
+/** The stored tag is an enum on the wire; nobody says "PROTON" out loud. */
+export function platformLabel(platform: string): string {
+  switch (platform) {
+    case "WINDOWS":
+      return "Windows";
+    case "LINUX":
+      return "Linux";
+    case "PROTON":
+      return "Windows, on Proton";
+    case "MACOS":
+      return "macOS";
+    default:
+      return "";
+  }
+}
+
+function platformName(platform: string): string {
+  return platformLabel(platform) || "another system";
 }
 
 /** What to tell the user right after they pressed a button, as opposed to the row's state. */
@@ -112,6 +130,8 @@ export function outcomeOf(state: SaveSyncState): { text: string; ok: boolean } {
       return { text: "Save sync is turned off on the server.", ok: false };
     case "failed":
       return { text: state.message, ok: false };
+    case "platform-mismatch":
+      return { text: describe(state).text, ok: false };
     default:
       return { text: describe(state).text, ok: true };
   }
@@ -172,6 +192,6 @@ export function attentionSummary(rows: Listed[]): string {
 export function backsUp({ state, installed }: Listed): boolean {
   return (
     installed &&
-    ["in-sync", "local-newer", "never-synced", "failed"].includes(state.kind)
+    ["in-sync", "local-newer", "never-synced", "failed", "platform-mismatch"].includes(state.kind)
   );
 }

@@ -61,12 +61,15 @@ gtk = "0.18"
 gdkwayland-sys = "0.18"
 
 # The settings file holds session cookies, so on Windows its DACL is narrowed to the
-# owner. Unix does the same with a 0600 chmod, which needs no dependency.
+# owner. Unix does the same with a 0600 chmod, which needs no dependency. The shell lookup
+# finds a Documents folder OneDrive has moved, for save sync.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
 ] }
 
 [features]
