@@ -1,9 +1,10 @@
 import { Alert } from "@/components/Alert";
 import { Trailers } from "@/components/Trailers";
 import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { GameSaves } from "./GameSaves";
 import { Icon } from "./Icon";
-import { primaryAction } from "@/lib/actions";
+import { isInstalled, primaryAction } from "@/lib/actions";
 import { formatBytes, formatPlaytime } from "@/lib/format";
 import { useLibraryView, type FacetKey } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
@@ -51,7 +52,7 @@ export function GameDetail({
       onClick={onClose}
     >
       <div
-        className="flex h-[min(92vh,1000px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl"
+        className="flex h-[min(92vh,1000px)] w-full max-w-[84rem] flex-col overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <Header entry={entry} onClose={onClose} />
@@ -99,8 +100,12 @@ export function GameDetail({
   );
 }
 
+const HEADER_BUTTON =
+  "flex h-7 w-7 items-center justify-center rounded-lg bg-black/40 text-white/80 backdrop-blur-sm transition-colors hover:bg-black/60 hover:text-white";
+
 function Header({ entry, onClose }: { entry: LibraryEntry; onClose: () => void }) {
   const art = entry.headerUrl ?? entry.coverUrl ?? null;
+  const navigate = useNavigate();
 
   return (
     // Without art the band only holds the title, so it shrinks to fit it.
@@ -108,14 +113,23 @@ function Header({ entry, onClose }: { entry: LibraryEntry; onClose: () => void }
       {art && <img src={art} alt="" className="h-full w-full object-cover" />}
       <div className="absolute inset-0 bg-gradient-to-t from-content1 via-content1/70 to-transparent" />
 
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={onClose}
-        className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-lg bg-black/40 text-white/80 backdrop-blur-sm transition-colors hover:bg-black/60 hover:text-white"
-      >
-        <Icon name="close" className="h-3.5 w-3.5" />
-      </button>
+      <div className="absolute right-3 top-3 flex gap-1.5">
+        {isInstalled(entry) && (
+          <button
+            type="button"
+            aria-label="Game settings"
+            title="Game settings"
+            // The game's own options live on its Installed row, which opens unfolded for it.
+            onClick={() => navigate(`/installed?game=${entry.game.id}`)}
+            className={HEADER_BUTTON}
+          >
+            <Icon name="settings" className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <button type="button" aria-label="Close" onClick={onClose} className={HEADER_BUTTON}>
+          <Icon name="close" className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       <h2 className="absolute bottom-3 left-6 right-6 truncate text-xl font-semibold text-foreground">
         {entry.game.title}

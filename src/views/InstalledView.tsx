@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert } from "@/components/Alert";
 import { FolderActions } from "@/components/FolderActions";
@@ -26,6 +27,9 @@ import { PANEL_BODY } from "@/lib/ui";
 export function InstalledView() {
   const entries = useEntries();
   const [error, setError] = useState<string | null>(null);
+  // Set by a game's settings button in Library, so that game's row opens unfolded.
+  const [params] = useSearchParams();
+  const focused = Number(params.get("game")) || null;
 
   useRescanOnOpen();
 
@@ -75,7 +79,7 @@ export function InstalledView() {
     <div className={PANEL_BODY}>
       <div className="flex flex-col gap-2">
         {installed.map((entry) => (
-          <InstalledRow key={entry.game.id} entry={entry} />
+          <InstalledRow key={entry.game.id} entry={entry} focused={entry.game.id === focused} />
         ))}
       </div>
       <UntrackedFolders folder="installations" />
@@ -84,8 +88,12 @@ export function InstalledView() {
   );
 }
 
-function InstalledRow({ entry }: { entry: LibraryEntry }) {
-  const [expanded, setExpanded] = useState(false);
+function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolean }) {
+  const [expanded, setExpanded] = useState(focused);
+  const row = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (focused) row.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [focused]);
   const [error, setError] = useState<string | null>(null);
   // The uninstaller is looked for first, so the dialog opens knowing what it will run.
   const uninstallPrompt = usePreloaded((gameId: number) => backend.findUninstaller(gameId));
@@ -151,7 +159,7 @@ function InstalledRow({ entry }: { entry: LibraryEntry }) {
     entry.state.kind === "failed" && entry.state.stage === "launch" ? entry.state.message : null;
 
   return (
-    <article className="rounded-xl border border-default-200 bg-content1">
+    <article ref={row} className="rounded-xl border border-default-200 bg-content1">
       <div className="flex items-center gap-3 p-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
