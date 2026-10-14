@@ -1,12 +1,13 @@
 //! Resumable HTTP downloads. Gameyfin 2.4 ignores `Range`, so only a `206` with a matching
-//! `Content-Range` is trusted as a resume; a `200` restarts rather than corrupting.
+//! `Content-Range` is trusted as a resume; a `200` restarts rather than corrupting. A server
+//! that sends an `ETag` and `Accept-Ranges` can also resume a zip being unpacked as it arrives.
 
 use std::path::{Path, PathBuf};
 
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
-use crate::checkpoint::{Checkpoint, FLUSH_INTERVAL};
+use crate::checkpoint::{Checkpoint, UnpackPoint, FLUSH_INTERVAL};
 use crate::error::{CoreError, CoreResult};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -14,6 +15,8 @@ pub struct Progress {
     pub received_bytes: u64,
     pub total_bytes: Option<u64>,
     pub bytes_per_second: f64,
+    /// The server can continue from where the transfer stops, so a pause loses nothing.
+    pub resumable: bool,
 }
 
 impl Progress {
@@ -240,9 +243,14 @@ impl RateLimit {
 }
 
 /// A cooperative stop signal: the loop flushes and checkpoints on notice, leaving a
-/// consistent partial file rather than one truncated mid-write.
+/// consistent partial file rather than one truncated mid-write. A pause keeps what arrived;
+/// after a cancel the caller discards it.
 #[derive(Debug, Clone, Default)]
-pub struct Cancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
+pub struct Cancel(std::sync::Arc<std::sync::atomic::AtomicU8>);
+
+const RUNNING: u8 = 0;
+const CANCELLED: u8 = 1;
+const PAUSED: u8 = 2;
 
 impl Cancel {
     pub fn new() -> Self {
@@ -250,12 +258,46 @@ impl Cancel {
     }
 
     pub fn cancel(&self) {
-        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.0
+            .store(CANCELLED, std::sync::atomic::Ordering::Relaxed);
     }
 
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    /// Does not soften a cancel already asked for.
+    pub fn pause(&self) {
+        let _ = self.0.compare_exchange(
+            RUNNING,
+            PAUSED,
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
+
+    /// Whether the transfer was asked to stop, by a cancel or a pause.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed) != RUNNING
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed) == PAUSED
+    }
+
+    /// The error a stopped transfer ends with.
+    pub fn stop_error(&self) -> CoreError {
+        if self.is_paused() {
+            CoreError::Paused
+        } else {
+            CoreError::Cancelled
+        }
+    }
+}
+
+/// How often a transfer waiting on a stalled connection looks for a stop.
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+enum Next<T> {
+    Chunk(T),
+    End,
+    Stopped,
 }
 
 /// Paces a transfer to a byte-per-second budget by reading more slowly, letting TCP
@@ -394,29 +436,56 @@ impl Downloader {
             .unwrap_or(0);
 
         let mut checkpoint = Checkpoint::load(destination).await;
-        if let Some(cp) = checkpoint.as_mut() {
-            cp.reconcile(partial_len);
-        }
-
-        let resume_from = plan_start(
-            checkpoint.as_ref(),
-            checkpoint.as_ref().and_then(|c| c.etag.as_deref()),
-            partial_len,
-        );
+        let folder_kept = match unpack_into {
+            Some(dir) => tokio::fs::try_exists(dir).await.unwrap_or(false),
+            None => false,
+        };
+        // A zip unpacked part way continues from the entry it stopped in, if it can be told unchanged.
+        let unpack_point = checkpoint
+            .as_ref()
+            .filter(|cp| folder_kept && cp.etag.is_some())
+            .and_then(|cp| cp.unpack);
+        let file_checkpoint = checkpoint.as_mut().filter(|cp| cp.unpack.is_none());
+        let resume_from = match unpack_point {
+            Some(point) => point.next_entry_at,
+            None => {
+                let file_checkpoint = file_checkpoint.map(|cp| {
+                    cp.reconcile(partial_len);
+                    &*cp
+                });
+                plan_start(
+                    file_checkpoint,
+                    file_checkpoint.and_then(|c| c.etag.as_deref()),
+                    partial_len,
+                )
+            }
+        };
 
         let mut request = authorize(self.http.get(url));
         if resume_from > 0 {
             request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
+            // A changed file comes back whole instead of being continued.
+            if let Some(etag) = checkpoint.as_ref().and_then(|c| c.etag.as_deref()) {
+                request = request.header(reqwest::header::IF_RANGE, etag);
+            }
         }
 
         let response = request.send().await?.error_for_status()?;
         let status = response.status();
         let headers = response.headers().clone();
 
+        // A weak validator cannot vouch for a byte range.
         let etag = headers
             .get(reqwest::header::ETAG)
             .and_then(|v| v.to_str().ok())
+            .filter(|v| !v.starts_with("W/"))
             .map(str::to_string);
+        let accepts_ranges = status == reqwest::StatusCode::PARTIAL_CONTENT
+            || headers
+                .get(reqwest::header::ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.eq_ignore_ascii_case("bytes"));
+        let resumable = etag.is_some() && accepts_ranges;
         let filename = headers
             .get(reqwest::header::CONTENT_DISPOSITION)
             .and_then(|v| v.to_str().ok())
@@ -436,7 +505,7 @@ impl Downloader {
                     (StartMode::RestartedByServer, 0)
                 }
             } else if resume_from > 0 {
-                // Whole file despite the Range header; expected against Gameyfin 2.4, which has no Range support.
+                // Whole file despite the Range header: Gameyfin without Range support, or a changed file.
                 (StartMode::RestartedByServer, 0)
             } else {
                 (StartMode::Fresh, 0)
@@ -444,6 +513,21 @@ impl Downloader {
 
         // `Content-Length` is the remaining bytes, so a resumed transfer adds the offset back for the true total.
         let total_bytes = response.content_length().map(|len| len + written);
+
+        if let (Some(point), Some(dir), StartMode::Resumed) = (unpack_point, unpack_into, mode) {
+            let checkpoint = Checkpoint::new(total_bytes, etag, filename);
+            return self
+                .unpack(
+                    response.bytes_stream(),
+                    destination,
+                    dir,
+                    crate::extract::ArchiveKind::Zip,
+                    checkpoint,
+                    Some(point),
+                    &mut on_progress,
+                )
+                .await;
+        }
 
         let mut stream = response.bytes_stream();
         let mut head = Vec::new();
@@ -467,13 +551,20 @@ impl Downloader {
                 .collect();
             if let Some(kind) = crate::extract::streamable_kind(&first) {
                 let stream = futures_util::stream::iter(head.into_iter().map(Ok)).chain(stream);
+                // Only a zip records where it can resume.
+                let checkpoint = Checkpoint::new(
+                    total_bytes,
+                    etag.filter(|_| resumable && kind == crate::extract::ArchiveKind::Zip),
+                    filename,
+                );
                 return self
                     .unpack(
                         stream,
                         destination,
                         dir,
                         kind,
-                        total_bytes,
+                        checkpoint,
+                        None,
                         &mut on_progress,
                     )
                     .await;
@@ -507,12 +598,15 @@ impl Downloader {
 
         let mut limiter = RateLimiter::shared(self.rate_limit.clone());
 
-        while let Some(chunk) = stream.next().await {
-            // Checked before the chunk so a cancel during a stall is noticed and nothing is half-applied.
-            if self.cancel.is_cancelled() {
-                persist(&mut file, &mut cp, destination, written).await;
-                return Err(CoreError::Cancelled);
-            }
+        loop {
+            let chunk = match self.next_unless_stopped(&mut stream).await {
+                Next::Chunk(chunk) => chunk,
+                Next::End => break,
+                Next::Stopped => {
+                    persist(&mut file, &mut cp, destination, written).await;
+                    return Err(self.cancel.stop_error());
+                }
+            };
 
             // A dropped connection must not lose progress already on disk; the periodic flush can be behind.
             let chunk = match chunk {
@@ -539,6 +633,7 @@ impl Downloader {
                 received_bytes: written,
                 total_bytes,
                 bytes_per_second: rate,
+                resumable,
             });
 
             if let Some(delay) = limiter.delay_after(chunk.len() as u64) {
@@ -577,15 +672,36 @@ impl Downloader {
         }))
     }
 
-    /// Unpacks an archive into `dir` as it downloads. None of it can resume, so a failed or
-    /// cancelled attempt removes the folder rather than leaving half a game.
+    /// The next chunk, polling for a stop meanwhile so a stalled connection still pauses promptly.
+    async fn next_unless_stopped<S: futures_util::Stream + Unpin>(
+        &self,
+        stream: &mut S,
+    ) -> Next<S::Item> {
+        loop {
+            if self.cancel.is_cancelled() {
+                return Next::Stopped;
+            }
+            match tokio::time::timeout(STOP_POLL, stream.next()).await {
+                Ok(Some(item)) => return Next::Chunk(item),
+                Ok(None) => return Next::End,
+                Err(_) => {}
+            }
+        }
+    }
+
+    /// Unpacks an archive into `dir` as it downloads. A zip with an `ETag` in `checkpoint`
+    /// records the entry it is in, so a pause or a dropped connection continues from there.
+    /// Anything else that stops removes the folder rather than leaving half a game, except
+    /// a pause, whose next attempt starts over.
+    #[allow(clippy::too_many_arguments)]
     async fn unpack<S, B, F>(
         &self,
         mut stream: S,
         destination: &Path,
         dir: &Path,
         kind: crate::extract::ArchiveKind,
-        total_bytes: Option<u64>,
+        mut checkpoint: Checkpoint,
+        resume: Option<UnpackPoint>,
         on_progress: &mut F,
     ) -> CoreResult<Outcome>
     where
@@ -593,32 +709,53 @@ impl Downloader {
         B: AsRef<[u8]>,
         F: FnMut(Progress),
     {
-        // Left by an earlier attempt that was saved as a file.
-        let _ = tokio::fs::remove_file(destination).await;
-        let _ = Checkpoint::clear(destination).await;
-        if tokio::fs::try_exists(dir).await.unwrap_or(false) {
-            tokio::fs::remove_dir_all(dir).await?;
+        if resume.is_none() {
+            // Left by an earlier attempt that was saved as a file.
+            let _ = tokio::fs::remove_file(destination).await;
+            let _ = Checkpoint::clear(destination).await;
+            if tokio::fs::try_exists(dir).await.unwrap_or(false) {
+                tokio::fs::remove_dir_all(dir).await?;
+            }
         }
+        let resumable = checkpoint.etag.is_some();
+        let start = resume.unwrap_or_default();
+        let mark = crate::zip_stream::ResumeMark::new(start);
+        let record = |checkpoint: &mut Checkpoint| {
+            let point = mark.get();
+            checkpoint.received_bytes = point.next_entry_at;
+            checkpoint.unpack = Some(point);
+        };
 
         let (chunks, receiver) = tokio::sync::mpsc::channel::<std::io::Result<Vec<u8>>>(16);
         let unpacker = {
-            let (dir, cancel) = (dir.to_path_buf(), self.cancel.clone());
+            let (dir, cancel, mark) = (dir.to_path_buf(), self.cancel.clone(), mark.clone());
             tokio::task::spawn_blocking(move || {
-                crate::extract::unpack_stream(kind, ChunkReader::new(receiver), &dir, &cancel)
+                crate::extract::unpack_stream(
+                    kind,
+                    ChunkReader::new(receiver),
+                    &dir,
+                    &cancel,
+                    &mark,
+                )
             })
         };
 
+        // Recorded before any bytes move, so even an immediate failure can be resumed from.
+        if resumable {
+            record(&mut checkpoint);
+            checkpoint.save(destination).await?;
+        }
+
         let started = std::time::Instant::now();
-        let mut received = 0u64;
+        let mut last_flush = std::time::Instant::now();
+        let mut received = start.next_entry_at;
         let mut limiter = RateLimiter::shared(self.rate_limit.clone());
         let pumped: CoreResult<()> = loop {
-            if self.cancel.is_cancelled() {
-                break Err(CoreError::Cancelled);
-            }
-            let chunk = match stream.next().await {
-                Some(Ok(chunk)) => chunk.as_ref().to_vec(),
-                Some(Err(e)) => break Err(e.into()),
-                None => break Ok(()),
+            let chunk = match self.next_unless_stopped(&mut stream).await {
+                Next::Chunk(Ok(chunk)) => chunk.as_ref().to_vec(),
+                Next::Chunk(Err(e)) => break Err(e.into()),
+                Next::End => break Ok(()),
+                Next::Stopped => break Err(self.cancel.stop_error()),
             };
             let len = chunk.len() as u64;
             // A closed channel means the unpacker stopped, and its own error says why.
@@ -629,15 +766,23 @@ impl Downloader {
             let elapsed = started.elapsed().as_secs_f64();
             on_progress(Progress {
                 received_bytes: received,
-                total_bytes,
+                total_bytes: checkpoint.total_bytes,
                 bytes_per_second: if elapsed > 0.0 {
-                    received as f64 / elapsed
+                    (received - start.next_entry_at) as f64 / elapsed
                 } else {
                     0.0
                 },
+                resumable,
             });
             if let Some(delay) = limiter.delay_after(len) {
                 tokio::time::sleep(delay).await;
+            }
+            if resumable && last_flush.elapsed() >= FLUSH_INTERVAL {
+                record(&mut checkpoint);
+                if let Err(e) = checkpoint.save(destination).await {
+                    break Err(e);
+                }
+                last_flush = std::time::Instant::now();
             }
         };
 
@@ -650,13 +795,35 @@ impl Downloader {
             .map_err(|e| CoreError::Other(format!("unpacking stopped unexpectedly: {e}")))?;
 
         let result = match (pumped, unpacked) {
+            // The unpacker reports a pause as the cancel it saw.
+            (Err(_), _) | (Ok(()), Err(_)) if self.cancel.is_cancelled() => {
+                Err(self.cancel.stop_error())
+            }
             (Err(e), _) | (Ok(()), Err(e)) => Err(e),
             (Ok(()), Ok(bytes)) => Ok(Outcome::Unpacked {
                 dir: dir.to_path_buf(),
                 bytes,
             }),
         };
-        if result.is_err() {
+
+        let keep = match &result {
+            Ok(_) => {
+                Checkpoint::clear(destination).await?;
+                return result;
+            }
+            Err(CoreError::Paused) => true,
+            Err(CoreError::Cancelled | CoreError::CannotStream(_)) => false,
+            Err(_) => resumable,
+        };
+        if keep {
+            if resumable {
+                record(&mut checkpoint);
+                if let Err(e) = checkpoint.save(destination).await {
+                    tracing::warn!("could not record unpack progress for {destination:?}: {e}");
+                }
+            }
+        } else {
+            let _ = Checkpoint::clear(destination).await;
             if let Err(e) = tokio::fs::remove_dir_all(dir).await {
                 tracing::warn!("could not remove the partly unpacked {dir:?}: {e}");
             }

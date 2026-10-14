@@ -19,6 +19,19 @@ pub struct Checkpoint {
     pub etag: Option<String>,
     /// Filename from `Content-Disposition`, so a resume keeps the original name.
     pub filename: Option<String>,
+    /// Set while a zip is unpacked as it arrives, in place of a partial file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unpack: Option<UnpackPoint>,
+}
+
+/// Where a zip being unpacked as it arrives can continue: the start of the entry it was in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnpackPoint {
+    /// Offset into the archive of the next entry's local header.
+    pub next_entry_at: u64,
+    /// Bytes unpacked from the entries before it.
+    pub unpacked_bytes: u64,
 }
 
 impl Checkpoint {
@@ -28,6 +41,7 @@ impl Checkpoint {
             total_bytes,
             etag,
             filename,
+            unpack: None,
         }
     }
 
@@ -159,6 +173,28 @@ mod tests {
 
         Checkpoint::clear(&partial).await.unwrap();
         assert!(Checkpoint::load(&partial).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_unpack_point_round_trips_and_older_sidecars_still_load() {
+        let partial = temp_file("unpack.bin");
+        let mut cp = Checkpoint::new(Some(500), Some("e1".into()), None);
+        cp.unpack = Some(UnpackPoint {
+            next_entry_at: 300,
+            unpacked_bytes: 1200,
+        });
+        cp.save(&partial).await.unwrap();
+        assert_eq!(Checkpoint::load(&partial).await, Some(cp));
+
+        // Written before unpacking could resume.
+        tokio::fs::write(
+            Checkpoint::sidecar_path(&partial),
+            br#"{"receivedBytes":40,"totalBytes":100,"etag":null,"filename":null}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(Checkpoint::load(&partial).await.unwrap().unpack, None);
+        Checkpoint::clear(&partial).await.unwrap();
     }
 
     #[tokio::test]
