@@ -77,7 +77,7 @@ memory (at least 4 GB) by default. Change it in **Settings, Compatibility**.
 
 In a game's options in **Installed**, add it to:
 
-- **Applications menu**
+- **Applications menu** (**Start menu** on Windows)
 - **Desktop**
 - **Steam**, as a non-Steam game, for every Steam account on this PC. Restart Steam to see it.
   Handy for Big Picture and the Steam Deck.

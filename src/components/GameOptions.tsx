@@ -121,7 +121,11 @@ export function LaunchOptions({ gameId, title }: { gameId: number; title: string
       <FormField
         label="Environment variables"
         htmlFor={`launch-env-${gameId}`}
-        hint="One KEY=value per line, set when the game starts. This is where a fix copied from ProtonDB goes."
+        hint={
+          isWindows
+            ? "One KEY=value per line, set when the game starts."
+            : "One KEY=value per line, set when the game starts. This is where a fix copied from ProtonDB goes."
+        }
       >
         <TextArea
           id={`launch-env-${gameId}`}
@@ -131,7 +135,7 @@ export function LaunchOptions({ gameId, title }: { gameId: number; title: string
           onChange={(e) => setEnvironment(e.target.value)}
           onBlur={commitEnvironment}
           spellCheck={false}
-          placeholder="DXVK_HUD=fps"
+          placeholder={isWindows ? "KEY=value" : "DXVK_HUD=fps"}
         />
       </FormField>
 

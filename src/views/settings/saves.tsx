@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Button, FormField, Radio, Select, SwitchField, TextField, TextInput } from "@/components/ui";
 import { backend } from "@/lib/backend";
+import { isWindows } from "@/lib/platform";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { keys, useAppSettings, useInvalidate, useSaveToolStatus } from "@/lib/queries";
 import { useAction } from "@/lib/useAction";
@@ -145,7 +146,9 @@ function FolderFields({ onChanged }: { onChanged?: () => void }) {
       </div>
       {/* The sandbox only reaches the home directory and removable media, the same
           limit the games folder already has. */}
-      <p className={HINT}>In the Flatpak build the folder has to be inside your home directory.</p>
+      {!isWindows && (
+        <p className={HINT}>In the Flatpak build the folder has to be inside your home directory.</p>
+      )}
       <SaveError error={error} />
     </div>
   );

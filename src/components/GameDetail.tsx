@@ -103,7 +103,8 @@ function Header({ entry, onClose }: { entry: LibraryEntry; onClose: () => void }
   const art = entry.headerUrl ?? entry.coverUrl ?? null;
 
   return (
-    <div className="relative h-52 shrink-0 bg-default-200">
+    // Without art the band only holds the title, so it shrinks to fit it.
+    <div className={`relative shrink-0 bg-default-200 ${art ? "h-52" : "h-20"}`}>
       {art && <img src={art} alt="" className="h-full w-full object-cover" />}
       <div className="absolute inset-0 bg-gradient-to-t from-content1 via-content1/70 to-transparent" />
 

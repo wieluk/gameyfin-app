@@ -184,32 +184,29 @@ export function AutomationSection() {
           hint="Install games when their download finishes, running Inno Setup and NSIS installers silently."
           checked={autoInstall}
           onChange={(next) => save({ autoInstall: next })}
-        >
-          <SetupSwitches
-            id="inno-setup-arguments"
-            label="Inno Setup options"
-            hint="Silent install switches for Inno Setup, empty for the default."
-            saved={settings.data?.innoSetupArguments}
-            disabled={!autoInstall}
-            onCommit={(value, clearDraft) => commit({ innoSetupArguments: value }, clearDraft)}
-          />
-          <SetupSwitches
-            id="nsis-arguments"
-            label="NSIS options"
-            hint="Silent install switches for NSIS, empty for the default."
-            saved={settings.data?.nsisArguments}
-            disabled={!autoInstall}
-            onCommit={(value, clearDraft) => commit({ nsisArguments: value }, clearDraft)}
-          />
-        </SwitchField>
+        />
       </div>
 
-      {/* Below the group: these two apply to an install started by hand as well. */}
+      {/* Not under the switch above: these apply to an install started by hand as well. */}
       <SwitchField
         label="Delete the download after installing"
         hint="Remove the download once the game is installed."
         checked={settings.data?.deleteDownloadAfterInstall ?? false}
         onChange={(next) => save({ deleteDownloadAfterInstall: next })}
+      />
+      <SetupSwitches
+        id="inno-setup-arguments"
+        label="Inno Setup options"
+        hint="Silent install switches for Inno Setup, used by automatic installs and by Install silently. Empty for the default."
+        saved={settings.data?.innoSetupArguments}
+        onCommit={(value, clearDraft) => commit({ innoSetupArguments: value }, clearDraft)}
+      />
+      <SetupSwitches
+        id="nsis-arguments"
+        label="NSIS options"
+        hint="Silent install switches for NSIS, used by automatic installs and by Install silently. Empty for the default."
+        saved={settings.data?.nsisArguments}
+        onCommit={(value, clearDraft) => commit({ nsisArguments: value }, clearDraft)}
       />
       <FormField
         label="Never offer these executables"
@@ -241,14 +238,12 @@ function SetupSwitches({
   label,
   hint,
   saved,
-  disabled,
   onCommit,
 }: {
   id: string;
   label: string;
   hint: string;
   saved: string | undefined;
-  disabled: boolean;
   onCommit: (value: string, clearDraft: () => void) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -257,7 +252,6 @@ function SetupSwitches({
       <TextInput
         id={id}
         mono
-        disabled={disabled}
         value={draft ?? saved ?? ""}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => {

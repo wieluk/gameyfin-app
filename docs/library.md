@@ -36,10 +36,11 @@ see the free space on each.
   silently. A game with patches or DLC installs the game, then the patches, then the DLC.
   It waits for you when no setup is clearly the game, or the game's setup has no silent mode.
   Setups without a silent mode are left for you in **Installed**.
-  - **Inno Setup options** (default `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) and
-    **NSIS options** (default `/S`). Empty restores the default.
 - **Delete the download after installing**: the starting choice in the install dialog, off
   while a setup program is left out.
+- **Inno Setup options** (default `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) and
+  **NSIS options** (default `/S`), used by automatic installs and by **Install silently**.
+  Empty restores the default.
 - **Never offer these executables**.
 
 ## Installing
@@ -51,6 +52,10 @@ Gameyfin looks at what was downloaded and handles it:
 | **Archive** (zip, 7z, rar, tar) | Unpacked into `Gameyfin/Installations`. Encrypted archives use the password from **Settings, Library, Automation**. On Linux, rar needs `unar` installed. |
 | **Setup program** | Run for you, on Linux inside the game's prefix. Common installer types are told where to install, so the game ends up where Gameyfin can find it. The row shows how much it has written. |
 | **Game files** | Moved into place as they are. |
+
+When you install by hand, the dialog shows each way to install as its own card with its own
+button, such as running the setup programs or moving the files into place. They are
+alternatives, so pick one. **Recommended** marks the one to choose when unsure.
 
 **Setup options** are flags passed to the setup program and remembered for the game.
 A silent flag such as `/VERYSILENT` lets it install without asking questions.

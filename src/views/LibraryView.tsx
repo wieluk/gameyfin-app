@@ -444,7 +444,9 @@ function EmptyState({ search, hiddenOffline }: { search: string; hiddenOffline: 
   // like the catalogue was lost.
   const offlineNote =
     hiddenOffline > 0
-      ? `${hiddenOffline} ${hiddenOffline === 1 ? "game is" : "games are"} on your server, which is unreachable right now.`
+      ? search
+        ? "Games only on your server are not searched while it is unreachable."
+        : `${hiddenOffline} ${hiddenOffline === 1 ? "game is" : "games are"} on your server, which is unreachable right now.`
       : null;
 
   return (
@@ -457,7 +459,7 @@ function EmptyState({ search, hiddenOffline }: { search: string; hiddenOffline: 
             ? "Nothing is installed on this PC yet"
             : "This library is empty"}
       </p>
-      {offlineNote && !search && <p className="text-xs text-foreground/40">{offlineNote}</p>}
+      {offlineNote && <p className="text-xs text-foreground/40">{offlineNote}</p>}
     </div>
   );
 }
