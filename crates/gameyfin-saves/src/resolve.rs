@@ -38,7 +38,7 @@ impl TitleMatch {
 #[derive(Debug, Clone, Default)]
 pub struct GameIdentity {
     pub title: String,
-    /// From `GameMetadata.originalIds["steam"]`, when the server exposes it.
+    /// From the Steam plugin's entry in `GameMetadata.originalIds`, when the server exposes it.
     pub steam_app_id: Option<u32>,
     pub gog_id: Option<u64>,
 }
