@@ -853,6 +853,16 @@ pub async fn set_game_options(
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct FixCheck {
+    /// The Proton build looked in.
+    pub build: String,
+    /// Without the file, umu runs the game with no fix and says nothing.
+    pub shipped: bool,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct GameOptions {
     pub launch_arguments: String,
     pub installer_arguments: String,
@@ -866,6 +876,8 @@ pub struct GameOptions {
     pub automatic_fix: GameFix,
     /// The fix filed under the game's Steam AppID, when the Proton build ships one.
     pub steam_fix: Option<GameFix>,
+    /// Whether the build this game runs ships the fix it launches with. `None` for no fix or no build.
+    pub fix_check: Option<FixCheck>,
     /// Winetricks verbs the last failed start pointed at.
     pub suggested_winetricks: Vec<String>,
 }
@@ -879,16 +891,21 @@ pub async fn game_options(state: State<'_, AppState>, game_id: i64) -> CommandRe
     })
     .await?;
     // The build this game would run, since each ships its own set of fixes.
-    let proton = gameyfin_core::proton::pick(&proton_builds, record.proton_build.as_deref())
-        .map(|build| build.path);
+    let build = gameyfin_core::proton::pick(&proton_builds, record.proton_build.as_deref());
+    let proton = build.as_ref().map(|build| build.path.clone());
     let automatic_fix = state.automatic_fix(game_id, proton.as_deref()).await;
     let steam_fix = match (state.game(game_id).await, &proton) {
         (Ok(game), Some(build)) => game
             .steam_app_id()
-            .and_then(|id| GameFix::checked(&id.to_string(), gameyfin_core::umu::NO_STORE).ok())
+            .map(GameFix::steam)
             .filter(|fix| fix.shipped_in(build)),
         _ => None,
     };
+    let fix = record.game_fix.as_ref().unwrap_or(&automatic_fix);
+    let fix_check = build.filter(|_| !fix.is_default()).map(|build| FixCheck {
+        shipped: fix.shipped_in(&build.path),
+        build: build.name,
+    });
 
     Ok(GameOptions {
         launch_arguments: record.launch_arguments,
@@ -900,6 +917,7 @@ pub async fn game_options(state: State<'_, AppState>, game_id: i64) -> CommandRe
         game_fix: record.game_fix,
         automatic_fix,
         steam_fix,
+        fix_check,
         suggested_winetricks: record.suggested_winetricks,
     })
 }
