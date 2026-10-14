@@ -154,7 +154,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
   if (state.kind === "downloaded") {
     return (
       <span className="absolute left-2 top-2 rounded-md bg-warning/90 px-2 py-0.5 text-[0.625rem] font-medium text-white shadow">
-        Ready to install
+        Ready to {state.extractable ? "extract" : "install"}
       </span>
     );
   }

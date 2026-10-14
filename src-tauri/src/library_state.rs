@@ -285,6 +285,8 @@ pub enum GameState {
     Downloaded {
         archive_path: String,
         bytes: u64,
+        /// An archive unpacks first; a setup program or game file goes straight to install.
+        extractable: bool,
     },
     Extracting {
         percent: f64,
@@ -666,6 +668,7 @@ fn resting_state(record: GameRecord) -> GameState {
     }
     match record.existing_archive() {
         Some(archive) => GameState::Downloaded {
+            extractable: gameyfin_core::classify(&archive).is_ok_and(|p| p.is_archive()),
             archive_path: display(&archive),
             bytes: record.archive_bytes,
         },
@@ -861,7 +864,22 @@ mod tests {
         state
             .update_record(1, |r| r.archive_path = Some(archive.clone()))
             .await;
-        assert!(matches!(state.state_of(1), GameState::Downloaded { .. }));
+        // Named .zip but not one, so the file's bytes decide, not its name.
+        assert!(matches!(
+            state.state_of(1),
+            GameState::Downloaded {
+                extractable: false,
+                ..
+            }
+        ));
+        std::fs::write(&archive, b"PK\x03\x04rest").unwrap();
+        assert!(matches!(
+            state.state_of(1),
+            GameState::Downloaded {
+                extractable: true,
+                ..
+            }
+        ));
 
         let staged = dir.join(EXTRACT_DIR);
         std::fs::create_dir_all(&staged).unwrap();

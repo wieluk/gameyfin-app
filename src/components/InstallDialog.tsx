@@ -37,7 +37,7 @@ export function InstallDialog({
   const [starting, setStarting] = useState<string | null>(null);
   const [copied, flashCopied] = useFlash(1500);
   // Extract is mechanical; install is where the choices belong.
-  const isExtractPhase = entry.state.kind === "downloaded";
+  const isExtractPhase = entry.state.kind === "downloaded" && entry.state.extractable;
   // Starts from the setting; null until toggled so a setting that loads late still applies.
   const settings = useAppSettings();
   const [deleteArchiveChoice, setDeleteArchive] = useState<boolean | null>(null);

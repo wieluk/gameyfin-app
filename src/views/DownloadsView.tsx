@@ -367,7 +367,7 @@ function statusText(entry: LibraryEntry): string {
     case "paused":
       return `Paused, ${formatBytes(state.receivedBytes)} of ${formatBytes(state.totalBytes)}`;
     case "downloaded":
-      return `Ready to install (${formatBytes(state.bytes)})`;
+      return `Ready to ${state.extractable ? "extract" : "install"} (${formatBytes(state.bytes)})`;
     case "extracting":
       return "Extracting";
     case "extracted":
