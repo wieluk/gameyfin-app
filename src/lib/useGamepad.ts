@@ -7,6 +7,9 @@ import { useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
+import type { AxisEvent } from "@/bindings/AxisEvent";
+import type { ButtonEvent } from "@/bindings/ButtonEvent";
+import type { ConnectionEvent } from "@/bindings/ConnectionEvent";
 import { isMockBackend } from "@/lib/backend";
 import {
   activateFocused,
@@ -16,9 +19,6 @@ import {
   nextTab,
   scrollByStick,
   scrollPage,
-  type AxisEvent,
-  type ButtonEvent,
-  type ConnectionEvent,
 } from "@/lib/gamepad";
 import { useAppSettings } from "@/lib/queries";
 import { useCouch } from "@/state/couch";

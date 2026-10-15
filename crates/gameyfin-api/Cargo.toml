@@ -16,7 +16,6 @@ rustls.workspace = true
 url.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-time.workspace = true
 async-trait = "0.1"
 regex = "1"
 futures-util = "0.3"

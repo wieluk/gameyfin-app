@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { IconButton } from "@/components/ui";
 import { useDismissOnEscape } from "@/lib/useDismiss";
 
-export type MenuItem = {
+type MenuItem = {
   label: string;
   onSelect: () => void;
   /** Drawn in red and set apart below a line. */

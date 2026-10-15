@@ -9,7 +9,7 @@ import type { GameState, LibraryEntry } from "@/types";
 /** Placeholder for actions that are resolved by the chooser instead of run directly. */
 const noop = async () => {};
 
-export interface PrimaryAction {
+interface PrimaryAction {
   label: string;
   icon: "play" | "download" | "installed";
   /** Nothing to do, the game is mid-transfer or already running. */

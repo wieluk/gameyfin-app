@@ -197,7 +197,7 @@ export function SetupList({ setups, selected, onToggle, onMove, disabled = false
 }
 
 /** Every other program in the download, folded away, for when the names gave nothing away. */
-export function OtherPrograms({ setups, selected, onToggle, disabled }: ListProps) {
+function OtherPrograms({ setups, selected, onToggle, disabled }: ListProps) {
   return (
     <details className="mt-2 rounded-lg border border-default-200/60 px-2.5 py-1.5">
       <summary className="cursor-pointer text-[0.6875rem] text-foreground/45">

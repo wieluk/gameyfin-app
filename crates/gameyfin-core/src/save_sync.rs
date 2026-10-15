@@ -466,11 +466,6 @@ impl SaveSync {
         self
     }
 
-    pub async fn newest_remote(&self, game_id: i64) -> Result<Option<SaveVersion>, ApiError> {
-        // Every store lists newest first.
-        Ok(self.store.list(game_id).await?.into_iter().next())
-    }
-
     pub async fn versions(&self, game_id: i64) -> Result<Vec<SaveVersion>, ApiError> {
         self.store.list(game_id).await
     }

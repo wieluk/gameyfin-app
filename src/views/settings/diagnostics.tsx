@@ -11,7 +11,7 @@ import { useAction } from "@/lib/useAction";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-export const LOG_LEVELS = [
+const LOG_LEVELS = [
   { key: "error", label: "Error" },
   { key: "warn", label: "Warning" },
   { key: "info", label: "Info" },

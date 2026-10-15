@@ -151,12 +151,6 @@ impl GameyfinClient {
         Ok(providers)
     }
 
-    /// A server-side user preference, shared with the web UI.
-    pub async fn user_preference(&self, key: &str) -> ApiResult<Option<String>> {
-        self.call("UserPreferencesEndpoint", "get", json!({ "key": key }))
-            .await
-    }
-
     pub async fn set_user_preference(&self, key: &str, value: &str) -> ApiResult<()> {
         // Void Hilla methods answer with an empty body, which decodes as null.
         self.call::<Option<serde_json::Value>>(

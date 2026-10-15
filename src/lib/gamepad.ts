@@ -4,40 +4,9 @@
  * Movement between elements is geometric: see `spatial.ts`.
  */
 
+import type { AxisEvent } from "@/bindings/AxisEvent";
+
 import { pickFirst, pickInDirection, type Box, type Direction } from "./spatial";
-
-/** The logical buttons the Rust side sends. Mirrors `gamepad::Button`. */
-export type GamepadButton =
-  | "south"
-  | "east"
-  | "west"
-  | "north"
-  | "left-bumper"
-  | "right-bumper"
-  | "left-trigger"
-  | "right-trigger"
-  | "select"
-  | "start"
-  | "up"
-  | "down"
-  | "left"
-  | "right";
-
-export interface ButtonEvent {
-  button: GamepadButton;
-  /** True when the pad has been held rather than freshly pressed. */
-  repeat: boolean;
-}
-
-export interface AxisEvent {
-  rightX: number;
-  rightY: number;
-}
-
-export interface ConnectionEvent {
-  connected: boolean;
-  name: string | null;
-}
 
 /** Elements that can take focus, in document order. */
 const FOCUSABLE = [
@@ -64,7 +33,7 @@ function isReachable(element: Element): boolean {
  * What the user can move between. Confined to an open dialog, or a direction press would
  * focus the library behind it and activate something nobody can see.
  */
-export function navigableElements(): HTMLElement[] {
+function navigableElements(): HTMLElement[] {
   const scope = document.querySelector<HTMLElement>("[data-nav-scope]") ?? document;
   return Array.from(scope.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(isReachable);
 }
@@ -154,7 +123,7 @@ function scrollContainer(): HTMLElement | null {
 }
 
 /** Scroll by a fraction of a page. Used by the right stick and the triggers. */
-export function scrollBy(amount: number) {
+function scrollBy(amount: number) {
   const container = scrollContainer();
   if (!container) return;
   container.scrollBy({ top: amount, behavior: "auto" });

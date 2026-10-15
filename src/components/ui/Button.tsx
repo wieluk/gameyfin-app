@@ -26,8 +26,8 @@ const SIZE = {
 
 const ICON_SIZE = { sm: "h-3 w-3", md: "h-3.5 w-3.5", lg: "h-4 w-4" } as const;
 
-export type ButtonVariant = keyof typeof VARIANT;
-export type ControlSize = keyof typeof SIZE;
+type ButtonVariant = keyof typeof VARIANT;
+type ControlSize = keyof typeof SIZE;
 
 type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;

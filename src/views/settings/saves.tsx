@@ -15,13 +15,13 @@ import { VersionSection, type VersionTool } from "./VersionSection";
 import { Row, SaveError, Section, useSettingSaver } from "./controls";
 
 /** The three places saves can live, as the user sees them named. */
-export const BACKEND_LABELS: Record<SaveBackend, string> = {
+const BACKEND_LABELS: Record<SaveBackend, string> = {
   server: "Gameyfin server",
   folder: "A folder",
   webdav: "WebDAV",
 };
 
-export const BACKENDS = Object.keys(BACKEND_LABELS) as SaveBackend[];
+const BACKENDS = Object.keys(BACKEND_LABELS) as SaveBackend[];
 
 /** Save sync, on from the start against the Gameyfin server. */
 export function SavesSection() {

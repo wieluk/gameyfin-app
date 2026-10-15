@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,8 +50,16 @@ console.log(`Rendered ${RENDERED} (1024x1024)`);
 
 // The CLI's JS entry, not the `.bin` shim: Node refuses to run a `.cmd` without a shell.
 const tauri = join(ROOT, "node_modules", "@tauri-apps", "cli", "tauri.js");
-execFileSync(process.execPath, [tauri, "icon", RENDERED, "--output", join(ROOT, "src-tauri", "icons")], {
+const ICONS = join(ROOT, "src-tauri", "icons");
+execFileSync(process.execPath, [tauri, "icon", RENDERED, "--output", ICONS], {
   cwd: ROOT,
   stdio: "inherit",
 });
+
+// `tauri icon` also emits mobile and Microsoft Store sizes; keep only what the bundle lists.
+const config = JSON.parse(readFileSync(join(ROOT, "src-tauri", "tauri.conf.json"), "utf8"));
+const listed = new Set(config.bundle.icon.map((icon) => icon.replace(/^icons\//, "")));
+for (const entry of readdirSync(ICONS)) {
+  if (!listed.has(entry)) rmSync(join(ICONS, entry), { recursive: true });
+}
 console.log("Icon set written to src-tauri/icons/");

@@ -44,9 +44,8 @@ pub struct Library {
 
 /// A `DownloadProviderDto`. Providers are contributed by plugins (`directdownload`,
 /// `torrentdownload`); higher `priority` wins when several can serve a game.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct DownloadProvider {
     pub key: String,
     pub name: String,
