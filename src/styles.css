@@ -22,6 +22,17 @@
   --color-success-600: rgb(var(--gf-success-600));
 }
 
+/* Whole-rem line heights as in Tailwind 3: v4's ratios give 15.99px, which WebKitGTK rounds
+   down, so every row ends a pixel short. */
+@theme {
+  --text-xs--line-height: 1rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl--line-height: 2rem;
+}
+
 @layer base {
   /* The palette as `<r> <g> <b>` channels. `.dark` is toggled on the root element from the
      theme setting. */
