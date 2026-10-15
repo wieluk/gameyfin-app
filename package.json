@@ -62,7 +62,8 @@
     "globs": [
       "*.md",
       "docs/**/*.md"
-    ]
+    ],
+    "gitignore": true
   },
   "cspell": {
     "version": "0.2",
@@ -93,6 +94,7 @@
       "rustup",
       "Syncthing",
       "Winetricks"
-    ]
+    ],
+    "useGitignore": true
   }
 }
