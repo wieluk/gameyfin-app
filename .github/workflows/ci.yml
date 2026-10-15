@@ -6,13 +6,19 @@ on:
     paths-ignore:
       - "**.md"
       - "docs/**"
-      - "assets/screenshots/**"
+      - "assets/**"
+      - "flatpak/**"
+      - ".github/renovate.json5"
+      - ".gitignore"
       - "LICENSE"
   pull_request:
     paths-ignore:
       - "**.md"
       - "docs/**"
-      - "assets/screenshots/**"
+      - "assets/**"
+      - "flatpak/**"
+      - ".github/renovate.json5"
+      - ".gitignore"
       - "LICENSE"
   workflow_call:
 
