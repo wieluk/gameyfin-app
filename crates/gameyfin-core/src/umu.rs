@@ -701,7 +701,7 @@ mod tests {
             .create_async()
             .await;
 
-        let http = reqwest::Client::new();
+        let http = gameyfin_api::http_client().build().unwrap();
         let db = fetch(&http, &format!("{}/umu_api.php", server.url()))
             .await
             .expect("the server answered");
@@ -720,7 +720,7 @@ mod tests {
             .create_async()
             .await;
 
-        let http = reqwest::Client::new();
+        let http = gameyfin_api::http_client().build().unwrap();
         let result = fetch(&http, &format!("{}/umu_api.php", server.url())).await;
         assert!(result.is_err());
         mock.assert_async().await;
@@ -742,7 +742,7 @@ mod tests {
             .create_async()
             .await;
 
-        let http = reqwest::Client::new();
+        let http = gameyfin_api::http_client().build().unwrap();
         let db = fetch(&http, &format!("{}/umu_api.php", server.url()))
             .await
             .expect("unknown fields are ignored");

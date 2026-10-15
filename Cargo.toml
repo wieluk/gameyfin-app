@@ -15,9 +15,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "sync", "time", "io-util"] }
 tracing = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls", "cookies"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "rustls-no-provider", "cookies"] }
+# The crypto provider reqwest leaves to the app: ring, as the updater plugin uses.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 url = "2"
-sha2 = "0.10"
+sha2 = "0.11"
 uuid = { version = "1", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 ts-rs = { version = "12", features = ["no-serde-warnings"] }

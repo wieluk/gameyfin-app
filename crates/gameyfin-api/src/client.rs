@@ -12,6 +12,17 @@ use crate::models::{DownloadProvider, Game, Library, UserInfo};
 
 const HILLA_PREFIX: &str = "/connect";
 
+/// Every HTTP client starts here: reqwest leaves the TLS crypto provider to the app, and
+/// building a client without one panics.
+pub fn http_client() -> reqwest::ClientBuilder {
+    static PROVIDER: std::sync::Once = std::sync::Once::new();
+    PROVIDER.call_once(|| {
+        // An error only means one is installed already, which serves as well.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    reqwest::Client::builder()
+}
+
 #[derive(Debug, Clone)]
 pub struct GameyfinClient {
     base_url: String,
@@ -28,7 +39,7 @@ impl GameyfinClient {
         // Validate eagerly so a typo surfaces at construction rather than at first call.
         let _ = url::Url::parse(&base_url)?;
 
-        let http = reqwest::Client::builder()
+        let http = http_client()
             .user_agent(concat!("Gameyfin-App/", env!("CARGO_PKG_VERSION")))
             .build()?;
 

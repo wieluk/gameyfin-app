@@ -19,7 +19,7 @@ fn store(url: &str) -> WebDavStore {
         url.to_string(),
         Some("alice".into()),
         Some("secret".into()),
-        reqwest::Client::new(),
+        gameyfin_api::http_client().build().unwrap(),
         5,
     )
 }

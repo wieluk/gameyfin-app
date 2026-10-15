@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::error::{CoreError, CoreResult};
 
@@ -188,7 +188,7 @@ where
         .await?;
 
     if let Some(expected) = &release.sha256 {
-        let actual = sha256_of(&archive).await?;
+        let actual = crate::checksum::file_hex::<Sha256>(&archive).await?;
         if !actual.eq_ignore_ascii_case(expected) {
             // A kept file would be resumed onto by the next attempt.
             let _ = tokio::fs::remove_file(&archive).await;
@@ -254,22 +254,6 @@ fn unpack(archive: &Path, into: &Path) -> CoreResult<PathBuf> {
         ));
     }
     Ok(first)
-}
-
-async fn sha256_of(path: &Path) -> CoreResult<String> {
-    use tokio::io::AsyncReadExt;
-
-    let mut file = tokio::fs::File::open(path).await?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 128 * 1024];
-    loop {
-        let read = file.read(&mut buffer).await?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 #[cfg(test)]

@@ -103,7 +103,7 @@ impl CookieSessionAuth {
     pub fn new(base_url: impl Into<String>, http: reqwest::Client) -> Self {
         // A client that never follows redirects, so the CSRF probe cannot be led into
         // starting an authentication flow.
-        let http = reqwest::Client::builder()
+        let http = crate::http_client()
             .user_agent(concat!("Gameyfin-App/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(15))
@@ -282,7 +282,10 @@ mod tests {
 
     #[tokio::test]
     async fn spring_cookie_beats_vaadin_cookie() {
-        let auth = CookieSessionAuth::new("http://localhost:8080", reqwest::Client::new());
+        let auth = CookieSessionAuth::new(
+            "http://localhost:8080",
+            crate::http_client().build().unwrap(),
+        );
         auth.set_cookies(HashMap::from([
             ("XSRF-TOKEN".to_string(), "spring-tok".to_string()),
             ("csrfToken".to_string(), "vaadin-tok".to_string()),
@@ -297,7 +300,10 @@ mod tests {
 
     #[tokio::test]
     async fn falls_back_to_vaadin_cookie() {
-        let auth = CookieSessionAuth::new("http://localhost:8080", reqwest::Client::new());
+        let auth = CookieSessionAuth::new(
+            "http://localhost:8080",
+            crate::http_client().build().unwrap(),
+        );
         auth.set_cookies(HashMap::from([(
             "csrfToken".to_string(),
             "vaadin-tok".to_string(),
@@ -310,8 +316,14 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_to_sign_without_cookies() {
-        let auth = CookieSessionAuth::new("http://localhost:8080", reqwest::Client::new());
-        let req = reqwest::Client::new().get("http://localhost:8080/connect/X/y");
+        let auth = CookieSessionAuth::new(
+            "http://localhost:8080",
+            crate::http_client().build().unwrap(),
+        );
+        let req = crate::http_client()
+            .build()
+            .unwrap()
+            .get("http://localhost:8080/connect/X/y");
         let err = auth.apply(req).await.unwrap_err();
         assert!(err.is_auth(), "expected an auth error, got {err:?}");
     }
