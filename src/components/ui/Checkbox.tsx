@@ -10,7 +10,7 @@ export function Checkbox({ className = "", ...rest }: Props) {
     <span className={`relative inline-flex h-3.5 w-3.5 shrink-0 ${className}`}>
       <input
         type="checkbox"
-        className="peer h-3.5 w-3.5 cursor-pointer appearance-none rounded border border-default-300 bg-content2 transition-colors checked:border-primary checked:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
+        className="peer h-3.5 w-3.5 cursor-pointer appearance-none rounded-sm border border-default-300 bg-content2 transition-colors checked:border-primary checked:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
         {...rest}
       />
       <Icon

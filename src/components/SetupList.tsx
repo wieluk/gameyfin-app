@@ -155,7 +155,7 @@ export function SetupList({ setups, selected, onToggle, onMove, disabled = false
               />
               {setup.matched && (
                 <span
-                  className={`w-12 shrink-0 rounded px-1.5 py-0.5 text-center text-[0.625rem] font-medium ${ROLE_STYLE[setup.role]}`}
+                  className={`w-12 shrink-0 rounded-sm px-1.5 py-0.5 text-center text-[0.625rem] font-medium ${ROLE_STYLE[setup.role]}`}
                 >
                   {ROLE_LABEL[setup.role]}
                 </span>

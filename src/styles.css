@@ -1,10 +1,30 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss" source(".");
+
+@custom-variant dark (&:is(.dark *));
+
+/* `inline` so utilities read the `--gf-*` palette where they are used, not once at the root. */
+@theme inline {
+  --color-background: rgb(var(--gf-background));
+  --color-foreground: rgb(var(--gf-foreground));
+  --color-content1: rgb(var(--gf-content1));
+  --color-content2: rgb(var(--gf-content2));
+  --color-default-100: rgb(var(--gf-default-100));
+  --color-default-200: rgb(var(--gf-default-200));
+  --color-default-300: rgb(var(--gf-default-300));
+  --color-primary: rgb(var(--gf-primary));
+  --color-primary-600: rgb(var(--gf-primary-600));
+  --color-primary-foreground: rgb(var(--gf-primary-foreground));
+  --color-danger: rgb(var(--gf-danger));
+  --color-danger-600: rgb(var(--gf-danger-600));
+  --color-warning: rgb(var(--gf-warning));
+  --color-warning-600: rgb(var(--gf-warning-600));
+  --color-success: rgb(var(--gf-success));
+  --color-success-600: rgb(var(--gf-success-600));
+}
 
 @layer base {
-  /* The palette, as `<r> <g> <b>` channels so Tailwind's `/50` opacity modifiers work.
-     `.dark` is toggled on the root element from the theme setting. */
+  /* The palette as `<r> <g> <b>` channels. `.dark` is toggled on the root element from the
+     theme setting. */
   :root {
     --gf-background: 250 250 250;
     --gf-foreground: 24 24 27;
@@ -56,6 +76,12 @@
     color: rgb(var(--gf-foreground));
   }
 
+  /* Tailwind 4 dropped the pointer cursor on buttons; keep it. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
   html, body, #root { height: 100%; }
   body {
     /* The app owns the whole viewport; nothing here should scroll like a document. */
@@ -74,7 +100,7 @@
    since `:focus-visible` reads programmatic focus as invisible after a mouse click. */
 :focus-visible,
 html[data-pad-focus="true"] :focus {
-  @apply outline outline-2 outline-offset-2 outline-primary;
+  @apply outline-solid outline-2 outline-offset-2 outline-primary;
   border-radius: 0.5rem;
 }
 

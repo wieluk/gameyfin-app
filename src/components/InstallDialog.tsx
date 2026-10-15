@@ -364,7 +364,7 @@ function MethodCard({
           <h3 className="flex items-center gap-2 text-[0.9375rem] font-medium text-foreground">
             {title}
             {recommended && (
-              <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-primary">
+              <span className="rounded-sm bg-primary/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-primary">
                 Recommended
               </span>
             )}

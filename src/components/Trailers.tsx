@@ -75,7 +75,7 @@ export function Trailers({ urls, title }: { urls: string[]; title: string }) {
                     }}
                   />
                 )}
-                <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-primary backdrop-blur-sm transition-colors group-hover:bg-primary group-hover:text-white">
+                <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-primary backdrop-blur-xs transition-colors group-hover:bg-primary group-hover:text-white">
                   <Icon name="play" className="h-4 w-4" filled />
                 </span>
                 <span className="relative px-2 text-[0.6875rem] text-foreground/45">

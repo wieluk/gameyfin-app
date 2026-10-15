@@ -32,7 +32,7 @@ export function Switch({
       {...aria}
     >
       <span
-        className={`absolute h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${
+        className={`absolute h-3 w-3 rounded-full bg-white shadow-xs transition-transform ${
           checked ? "translate-x-3.5" : "translate-x-0.5"
         }`}
       />

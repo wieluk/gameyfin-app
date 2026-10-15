@@ -180,7 +180,7 @@ export function LibraryView() {
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search your library"
           // Wraps to a row of its own before it gets too narrow to type in.
-          className="!min-w-48 max-w-md flex-1"
+          className="min-w-48! max-w-md flex-1"
         />
 
         <Select
@@ -231,7 +231,7 @@ export function LibraryView() {
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
             aria-label="Sort by"
-            className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1.5 pr-2.5 text-xs font-medium text-foreground outline-none focus-visible:underline"
+            className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1.5 pr-2.5 text-xs font-medium text-foreground outline-hidden focus-visible:underline"
           >
             {SORT_KEYS.map((key) => (
               <option key={key} value={key}>
@@ -413,7 +413,7 @@ function Facet({
       onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
       aria-label={label}
       active={Boolean(value)}
-      className="max-w-[12rem]"
+      className="max-w-48"
     >
       <option value="">{label}</option>
       {value && !options.includes(value) && <option value={value}>{value}</option>}
@@ -431,8 +431,8 @@ function SkeletonGrid() {
     <div data-library-grid className="grid gap-5">
       {Array.from({ length: 12 }).map((_, i) => (
         <div key={i} className="flex flex-col gap-2">
-          <div className="aspect-[2/3] animate-pulse rounded-xl bg-default-200" />
-          <div className="h-3 w-3/4 animate-pulse rounded bg-default-200" />
+          <div className="aspect-2/3 animate-pulse rounded-xl bg-default-200" />
+          <div className="h-3 w-3/4 animate-pulse rounded-sm bg-default-200" />
         </div>
       ))}
     </div>

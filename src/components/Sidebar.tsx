@@ -39,7 +39,7 @@ export function Sidebar({
   return (
     <nav
       className={`flex h-full shrink-0 flex-col gap-1 border-r-2 border-default-200 bg-content1 p-3 dark:border-default-200/60 transition-[width] duration-150 ${
-        collapsed ? "w-[3.75rem]" : "w-52"
+        collapsed ? "w-15" : "w-52"
       }`}
     >
       {items.map((item) => (
@@ -59,7 +59,7 @@ export function Sidebar({
           }
         >
           <span className="relative shrink-0">
-            <Icon name={item.icon} className="h-[1.125rem] w-[1.125rem]" />
+            <Icon name={item.icon} className="h-4.5 w-4.5" />
             {/* Collapsed, the badge becomes a dot on the icon; the count reads in the tooltip. */}
             {collapsed && item.badge ? (
               <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-content1" />
@@ -90,7 +90,7 @@ export function Sidebar({
       >
         <Icon
           name="chevron"
-          className={`h-[1.125rem] w-[1.125rem] shrink-0 transition-transform ${
+          className={`h-4.5 w-4.5 shrink-0 transition-transform ${
             collapsed ? "" : "rotate-180"
           }`}
         />

@@ -24,7 +24,7 @@ export function Select({
   return (
     <span className={`relative inline-flex min-w-0 ${className}`}>
       <select
-        className={`w-full min-w-0 cursor-pointer appearance-none truncate rounded-lg border bg-content2 outline-none transition-colors focus:border-primary disabled:cursor-not-allowed disabled:opacity-50 ${
+        className={`w-full min-w-0 cursor-pointer appearance-none truncate rounded-lg border bg-content2 outline-hidden transition-colors focus:border-primary disabled:cursor-not-allowed disabled:opacity-50 ${
           SIZE[size]
         } ${active ? "border-primary/50 text-primary" : "border-default-200 text-foreground"} ${
           mono ? "font-mono" : ""

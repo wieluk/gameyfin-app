@@ -45,14 +45,14 @@ export function GameDetail({
   return (
     <div
       data-nav-scope
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
       aria-label={game.title}
       onClick={onClose}
     >
       <div
-        className="flex h-[min(92vh,1000px)] w-full max-w-[84rem] flex-col overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl"
+        className="flex h-[min(92vh,1000px)] w-full max-w-336 flex-col overflow-hidden rounded-2xl border border-default-200 bg-content1 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <Header entry={entry} onClose={onClose} />
@@ -79,7 +79,7 @@ export function GameDetail({
               </p>
             )}
 
-            <dl className="grid shrink-0 grid-cols-[auto,1fr] gap-x-6 gap-y-2 text-sm lg:max-w-xs">
+            <dl className="grid shrink-0 grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm lg:max-w-xs">
               {facts.map(([label, value]) => (
                 <div key={label} className="contents">
                   <dt className="text-foreground/45">{label}</dt>
@@ -101,7 +101,7 @@ export function GameDetail({
 }
 
 const HEADER_BUTTON =
-  "flex h-7 w-7 items-center justify-center rounded-lg bg-black/40 text-white/80 backdrop-blur-sm transition-colors hover:bg-black/60 hover:text-white";
+  "flex h-7 w-7 items-center justify-center rounded-lg bg-black/40 text-white/80 backdrop-blur-xs transition-colors hover:bg-black/60 hover:text-white";
 
 function Header({ entry, onClose }: { entry: LibraryEntry; onClose: () => void }) {
   const art = entry.headerUrl ?? entry.coverUrl ?? null;
@@ -111,7 +111,7 @@ function Header({ entry, onClose }: { entry: LibraryEntry; onClose: () => void }
     // Without art the band only holds the title, so it shrinks to fit it.
     <div className={`relative shrink-0 bg-default-200 ${art ? "h-52" : "h-20"}`}>
       {art && <img src={art} alt="" className="h-full w-full object-cover" />}
-      <div className="absolute inset-0 bg-gradient-to-t from-content1 via-content1/70 to-transparent" />
+      <div className="absolute inset-0 bg-linear-to-t from-content1 via-content1/70 to-transparent" />
 
       <div className="absolute right-3 top-3 flex gap-1.5">
         {isInstalled(entry) && (
@@ -256,7 +256,7 @@ function Photos({ urls, title }: { urls: string[]; title: string }) {
           if (e.key === "ArrowRight") scrollBy(1);
           if (e.key === "ArrowLeft") scrollBy(-1);
         }}
-        className="flex gap-2 overflow-x-auto pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+        className="flex gap-2 overflow-x-auto pb-2 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary/40"
       >
         {urls.map((url) => (
           <button

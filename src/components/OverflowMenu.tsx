@@ -61,7 +61,7 @@ function MenuPanel({
       role="menu"
       aria-label={label}
       data-nav-scope
-      className="absolute right-0 top-full z-[65] mt-1 w-56 overflow-hidden rounded-xl border border-default-200 bg-content1 py-1 shadow-2xl"
+      className="absolute right-0 top-full z-65 mt-1 w-56 overflow-hidden rounded-xl border border-default-200 bg-content1 py-1 shadow-2xl"
     >
       {plain.map((item) => (
         <Entry key={item.label} item={item} onClose={onClose} />

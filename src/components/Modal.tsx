@@ -8,9 +8,9 @@ import { useDismissOnEscape } from "@/lib/useDismiss";
 /** Tailwind needs literal class names, so the variants are spelled out rather than built. */
 const LAYER = {
   50: "z-50",
-  60: "z-[60]",
+  60: "z-60",
   /** For a dialog opened from inside another one, which must sit above it. */
-  70: "z-[70]",
+  70: "z-70",
 } as const;
 
 const WIDTH = {
@@ -52,7 +52,7 @@ export function Modal({
     <div
       data-nav-scope
       // Scrolls itself, so a dialog taller than the window can still be read top to bottom.
-      className={`fixed inset-0 ${LAYER[layer]} flex overflow-y-auto bg-black/60 ${PAD[pad]} backdrop-blur-sm`}
+      className={`fixed inset-0 ${LAYER[layer]} flex overflow-y-auto bg-black/60 ${PAD[pad]} backdrop-blur-xs`}
       role={role}
       aria-modal="true"
       aria-label={label}
