@@ -309,8 +309,36 @@ pub fn detect(root: &Path, title: &str) -> std::io::Result<Detection> {
     if candidates[0].score - candidates[1].score >= DECISIVE_MARGIN {
         return Ok(Detection::Confident(candidates.remove(0).path));
     }
+    if let Some(path) = named_after_title(root, &candidates, title) {
+        return Ok(Detection::Confident(path));
+    }
 
     Ok(Detection::Ambiguous(candidates))
+}
+
+/// A program named exactly after the game, wherever it sits. Copies of it (a dev build, a
+/// backup folder) defer to the shallowest, and a tie at the same depth is left to the user.
+fn named_after_title(root: &Path, candidates: &[Candidate], title: &str) -> Option<PathBuf> {
+    let title = normalize(title);
+    if title.is_empty() {
+        return None;
+    }
+    let mut matches: Vec<&Path> = candidates
+        .iter()
+        .map(|c| c.path.as_path())
+        .filter(|p| {
+            p.file_stem()
+                .is_some_and(|s| normalize(&s.to_string_lossy()) == title)
+        })
+        .collect();
+    matches.sort_by_key(|p| depth_below(root, p));
+    match matches.as_slice() {
+        [only] => Some(only.to_path_buf()),
+        [first, second, ..] if depth_below(root, first) < depth_below(root, second) => {
+            Some(first.to_path_buf())
+        }
+        _ => None,
+    }
 }
 
 /// Score a file, or `None` if it is not a launch candidate at all.
@@ -788,6 +816,38 @@ mod tests {
             d.confident().unwrap().file_name().unwrap(),
             "ReturnOfTheObraDinn.exe"
         );
+    }
+
+    #[test]
+    fn the_shallowest_program_named_after_the_game_wins() {
+        let t = Tree::new("title-copies");
+        t.file("Emberward/game/Emberward.exe")
+            .file("Emberward/game/DevTest0.4.0/Emberward.exe")
+            .file("Emberward/game/新增資料夾/Emberward.exe");
+        let d = detect(t.path(), "Emberward").unwrap();
+        assert_eq!(
+            d.confident().unwrap(),
+            t.path().join("Emberward/game/Emberward.exe")
+        );
+    }
+
+    #[test]
+    fn a_deep_program_named_after_the_game_beats_a_launcher() {
+        let t = Tree::new("title-deep");
+        t.file("Launcher.exe")
+            .file("Game/Binaries/Win64/Emberward.exe");
+        let d = detect(t.path(), "Emberward").unwrap();
+        assert!(d.confident().unwrap().ends_with("Emberward.exe"));
+    }
+
+    #[test]
+    fn copies_named_after_the_game_at_the_same_depth_are_ambiguous() {
+        let t = Tree::new("title-tie");
+        t.file("x64/Emberward.exe").file("x86/Emberward.exe");
+        assert!(matches!(
+            detect(t.path(), "Emberward").unwrap(),
+            Detection::Ambiguous(_)
+        ));
     }
 
     #[test]
