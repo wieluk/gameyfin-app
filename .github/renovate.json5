@@ -55,6 +55,13 @@
       allowedVersions: "<0.19",
     },
     {
+      // A .deb built on a newer Ubuntu needs its newer libraries, which older systems lack.
+      matchDatasources: ["github-runners"],
+      matchPackageNames: ["ubuntu"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
       matchPackageNames: ["mtkennerly/ludusavi"],
       extractVersion: "^v(?<version>.+)$",
     },
