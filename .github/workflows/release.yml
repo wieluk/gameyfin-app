@@ -113,6 +113,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: bundle
+    # Explicit, since the default skips this whenever `test` was skipped, as on a pull request.
+    if: ${{ !cancelled() && needs.bundle.result == 'success' }}
     # gh-pages is shared with the docs deploy in docs.yml; one writer at a time.
     concurrency:
       group: ${{ startsWith(github.ref, 'refs/tags/') && 'gh-pages' || format('flatpak-{0}', github.run_id) }}
