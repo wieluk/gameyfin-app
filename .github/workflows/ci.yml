@@ -3,23 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "assets/**"
-      - "flatpak/**"
-      - ".github/renovate.json5"
-      - ".gitignore"
-      - "LICENSE"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "assets/**"
-      - "flatpak/**"
-      - ".github/renovate.json5"
-      - ".gitignore"
-      - "LICENSE"
   workflow_call:
 
 env:
@@ -33,7 +17,41 @@ permissions:
   contents: read
 
 jobs:
+  # Skipping here rather than in `on:` keeps the required "CI result" check on every PR.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # A release run, where the filter is skipped, tests everything.
+      app: ${{ steps.filter.outputs.app || 'true' }}
+    steps:
+      # Pull requests are compared through the API; a push to main needs the history.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        with:
+          predicate-quantifier: every
+          filters: |
+            app:
+              - "**"
+              - "!**/*.md"
+              - "!docs/**"
+              - "!assets/**"
+              - "!flatpak/**"
+              - "!.github/renovate.json5"
+              - "!.gitignore"
+              - "!LICENSE"
+
   frontend:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -51,6 +69,8 @@ jobs:
 
   rust:
     name: rust (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -98,3 +118,14 @@ jobs:
       - name: Check the generated bindings are up to date
         if: runner.os == 'Linux'
         run: git diff --exit-code src/bindings
+
+  # The one check main requires: passes when the jobs above pass or were not needed.
+  result:
+    name: CI result
+    if: always()
+    needs: [changes, frontend, rust]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
