@@ -47,7 +47,7 @@ function Overlay() {
         <dl className="flex flex-col gap-1.5">
           {BUTTON_HELP.map((row) => (
             <div key={row.keys} className="flex items-baseline justify-between gap-4 text-xs">
-              <dt className="shrink-0 rounded border border-default-200 bg-content2 px-1.5 py-0.5 font-mono text-[0.625rem] text-foreground/70">
+              <dt className="shrink-0 rounded-sm border border-default-200 bg-content2 px-1.5 py-0.5 font-mono text-[0.625rem] text-foreground/70">
                 {row.keys}
               </dt>
               <dd className="text-right text-foreground/60">{row.action}</dd>

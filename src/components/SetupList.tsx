@@ -155,7 +155,7 @@ export function SetupList({ setups, selected, onToggle, onMove, disabled = false
               />
               {setup.matched && (
                 <span
-                  className={`w-12 shrink-0 rounded px-1.5 py-0.5 text-center text-[0.625rem] font-medium ${ROLE_STYLE[setup.role]}`}
+                  className={`w-12 shrink-0 rounded-sm px-1.5 py-0.5 text-center text-[0.625rem] font-medium ${ROLE_STYLE[setup.role]}`}
                 >
                   {ROLE_LABEL[setup.role]}
                 </span>
@@ -197,7 +197,7 @@ export function SetupList({ setups, selected, onToggle, onMove, disabled = false
 }
 
 /** Every other program in the download, folded away, for when the names gave nothing away. */
-export function OtherPrograms({ setups, selected, onToggle, disabled }: ListProps) {
+function OtherPrograms({ setups, selected, onToggle, disabled }: ListProps) {
   return (
     <details className="mt-2 rounded-lg border border-default-200/60 px-2.5 py-1.5">
       <summary className="cursor-pointer text-[0.6875rem] text-foreground/45">

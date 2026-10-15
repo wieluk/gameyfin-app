@@ -37,7 +37,7 @@ async fn downloads_a_whole_file() {
         .await;
 
     let dest = scratch("whole");
-    let downloader = Downloader::new(reqwest::Client::new());
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
     let outcome = downloader
         .download(&format!("{}/game", server.url()), &dest, |r| r, |_| {})
         .await
@@ -81,7 +81,7 @@ async fn resumes_from_a_checkpoint_when_the_server_honours_range() {
     cp.received_bytes = already_have as u64;
     cp.save(&dest).await.unwrap();
 
-    let downloader = Downloader::new(reqwest::Client::new());
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
     let outcome = downloader
         .download(&format!("{}/game", server.url()), &dest, |r| r, |_| {})
         .await
@@ -114,7 +114,7 @@ async fn restarts_cleanly_when_the_server_ignores_range() {
     cp.received_bytes = already_have as u64;
     cp.save(&dest).await.unwrap();
 
-    let downloader = Downloader::new(reqwest::Client::new());
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
     let outcome = downloader
         .download(&format!("{}/game", server.url()), &dest, |r| r, |_| {})
         .await
@@ -149,7 +149,7 @@ async fn a_206_for_the_wrong_offset_is_not_trusted() {
     cp.received_bytes = 512;
     cp.save(&dest).await.unwrap();
 
-    let downloader = Downloader::new(reqwest::Client::new());
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
     let outcome = downloader
         .download(&format!("{}/game", server.url()), &dest, |r| r, |_| {})
         .await
@@ -188,7 +188,7 @@ async fn a_truncated_transfer_keeps_the_checkpoint_for_a_later_resume() {
     });
 
     let dest = scratch("truncated");
-    let downloader = Downloader::new(reqwest::Client::new());
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
     let result = downloader
         .download(&format!("http://{addr}/game"), &dest, |r| r, |_| {})
         .await;
@@ -215,7 +215,7 @@ async fn progress_is_reported_and_reaches_the_total() {
 
     let dest = scratch("progress");
     let mut samples = Vec::new();
-    let downloader = Downloader::new(reqwest::Client::new());
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
     downloader
         .download(
             &format!("{}/game", server.url()),
@@ -245,7 +245,7 @@ async fn authorization_closure_is_applied() {
         .await;
 
     let dest = scratch("auth");
-    let downloader = Downloader::new(reqwest::Client::new());
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
     downloader
         .download(
             &format!("{}/game", server.url()),
@@ -343,7 +343,7 @@ async fn a_folder_zip_without_a_length_is_unpacked_while_it_downloads() {
     let dest = scratch("unpack");
     let dir = dest.with_file_name("extracted");
     let mut samples = Vec::new();
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(
             &format!("{}/game", server.url()),
             &dest,
@@ -388,7 +388,7 @@ async fn a_zip_file_with_a_length_is_unpacked_too() {
 
     let dest = scratch("sized-zip");
     let dir = dest.with_file_name("extracted");
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(
             &format!("{}/game", server.url()),
             &dest,
@@ -422,7 +422,7 @@ async fn a_7z_is_saved_as_a_file() {
 
     let dest = scratch("chunked-7z");
     let dir = dest.with_file_name("extracted");
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(
             &format!("{}/game", server.url()),
             &dest,
@@ -471,7 +471,7 @@ async fn a_resumed_download_is_never_unpacked() {
     cp.received_bytes = already_have as u64;
     cp.save(&dest).await.unwrap();
 
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(
             &format!("{}/game", server.url()),
             &dest,
@@ -510,7 +510,7 @@ async fn a_download_retried_after_a_cancel_is_still_unpacked() {
     cp.received_bytes = 10;
     cp.save(&dest).await.unwrap();
 
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(
             &format!("{}/game", server.url()),
             &dest,
@@ -550,7 +550,7 @@ async fn a_tar_gz_is_unpacked_while_it_downloads() {
 
     let dest = scratch("tar-gz");
     let dir = dest.with_file_name("extracted");
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(
             &format!("{}/game", server.url()),
             &dest,
@@ -583,7 +583,7 @@ async fn a_gzip_holding_no_tar_reports_it_cannot_be_unpacked_on_the_way() {
 
     let dest = scratch("gzip-no-tar");
     let dir = dest.with_file_name("extracted");
-    let result = Downloader::new(reqwest::Client::new())
+    let result = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(
             &format!("{}/game", server.url()),
             &dest,
@@ -657,7 +657,7 @@ async fn a_paused_unpack_resumes_from_the_entry_it_stopped_in() {
     let url = format!("{}/game", server.url());
     let cancel = Cancel::new();
     let pause_at = zip.len() * 2 / 3;
-    let result = Downloader::new(reqwest::Client::new())
+    let result = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .with_cancel(cancel.clone())
         .download_or_unpack(
             &url,
@@ -698,7 +698,7 @@ async fn a_paused_unpack_resumes_from_the_entry_it_stopped_in() {
         .await;
 
     let mut samples = Vec::new();
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(&url, &dest, Some(&dir), |r| r, |p| samples.push(p))
         .await
         .unwrap();
@@ -734,7 +734,7 @@ async fn an_unpack_from_an_old_server_starts_over_after_a_pause() {
     let dir = dest.with_file_name("extracted");
     let url = format!("{}/game", server.url());
     let cancel = Cancel::new();
-    let result = Downloader::new(reqwest::Client::new())
+    let result = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .with_cancel(cancel.clone())
         .download_or_unpack(
             &url,
@@ -752,7 +752,7 @@ async fn an_unpack_from_an_old_server_starts_over_after_a_pause() {
     assert!(matches!(result, Err(CoreError::Paused)), "{result:?}");
     assert!(Checkpoint::load(&dest).await.is_none());
 
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(&url, &dest, Some(&dir), |r| r, |_| {})
         .await
         .unwrap();
@@ -790,7 +790,7 @@ async fn a_changed_archive_unpacks_again_from_the_start() {
     });
     cp.save(&dest).await.unwrap();
 
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download_or_unpack(
             &format!("{}/game", server.url()),
             &dest,
@@ -825,7 +825,7 @@ async fn a_cancelled_unpack_is_removed() {
     let dest = scratch("cancel-unpack");
     let dir = dest.with_file_name("extracted");
     let cancel = Cancel::new();
-    let result = Downloader::new(reqwest::Client::new())
+    let result = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .with_cancel(cancel.clone())
         .download_or_unpack(
             &format!("{}/game", server.url()),
@@ -867,7 +867,7 @@ async fn a_resume_names_the_version_it_continues() {
     cp.save(&dest).await.unwrap();
 
     let mut resumable = Vec::new();
-    let outcome = Downloader::new(reqwest::Client::new())
+    let outcome = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .download(
             &format!("{}/game", server.url()),
             &dest,
@@ -909,7 +909,7 @@ async fn a_pause_during_a_stall_returns_promptly() {
         pauser.pause();
     });
     let started = std::time::Instant::now();
-    let result = Downloader::new(reqwest::Client::new())
+    let result = Downloader::new(gameyfin_api::http_client().build().unwrap())
         .with_cancel(cancel)
         .download(&format!("http://{addr}/game"), &dest, |r| r, |_| {})
         .await;

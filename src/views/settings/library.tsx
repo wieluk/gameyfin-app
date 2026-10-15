@@ -55,7 +55,7 @@ export function RootsSection() {
                 {root.path}
               </code>
               {root.isDefault && (
-                <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[0.625rem] text-primary">
+                <span className="shrink-0 rounded-sm bg-primary/15 px-1.5 py-0.5 text-[0.625rem] text-primary">
                   Default
                 </span>
               )}

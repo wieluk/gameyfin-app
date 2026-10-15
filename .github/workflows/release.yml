@@ -4,17 +4,38 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  # Packaging is otherwise first tried on release day. Builds only: nothing is signed or published.
+  pull_request:
+    paths:
+      - "src-tauri/tauri*.json"
+      - "src-tauri/icons/**"
+      - "flatpak/**"
+      - "scripts/fetch-sidecar.mjs"
+      - "scripts/build-flatpak.mjs"
+      - "Cargo.lock"
+      - "package-lock.json"
+      - ".github/workflows/release.yml"
+
+concurrency:
+  group: release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  # A pull request already runs CI on its own.
   test:
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
 
   bundle:
     name: bundle (${{ matrix.os }})
     needs: test
+    if: ${{ !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     permissions:
       contents: write
     runs-on: ${{ matrix.os }}
@@ -32,14 +53,14 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
             librsvg2-dev libsoup-3.0-dev patchelf libudev-dev
 
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Set the version from the tag
@@ -55,23 +76,32 @@ jobs:
       - run: npm run fetch-sidecars
 
       - name: Check the updater signing setup
+        if: github.event_name != 'pull_request'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: node scripts/check-signing.mjs
 
-      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+      # A file rather than inline JSON, since tauri-action's argument parsing drops its quotes.
+      - name: Leave the updater files out of a pull request build
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > pr-build.json
+
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Kept from pull request builds, which skip the updater files that need it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ github.event_name != 'pull_request' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         with:
+          args: ${{ github.event_name == 'pull_request' && '--config pr-build.json' || '' }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: gameyfin-app ${{ github.ref_name }}
           releaseDraft: true
-          assetNamePattern: gameyfin-app_[version]_[arch][setup][ext]
+          releaseAssetNamePattern: gameyfin-app_[version]_[arch][setup][ext]
 
       # The flatpak job repackages this deb rather than building the app again.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: matrix.os == 'ubuntu-24.04'
         with:
           name: deb-bundle
@@ -83,21 +113,23 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: bundle
+    # Explicit, since the default skips this whenever `test` was skipped, as on a pull request.
+    if: ${{ !cancelled() && needs.bundle.result == 'success' }}
     # gh-pages is shared with the docs deploy in docs.yml; one writer at a time.
     concurrency:
-      group: gh-pages
+      group: ${{ startsWith(github.ref, 'refs/tags/') && 'gh-pages' || format('flatpak-{0}', github.run_id) }}
       cancel-in-progress: false
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           # Release notes come from the commits since the previous tag.
           fetch-depth: 0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
 
       # A fresh checkout, so the metainfo release needs setting again.
       - name: Set the version and release notes from the tag
@@ -120,7 +152,7 @@ jobs:
             https://flathub.org/repo/flathub.flatpakrepo
           flatpak install -y --user flathub org.gnome.Platform//50 org.gnome.Sdk//50
 
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: deb-bundle
           path: build
@@ -153,7 +185,7 @@ jobs:
 
       - run: npm run package:flatpak
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: flatpak-bundle
           path: build/*.flatpak
@@ -179,7 +211,7 @@ jobs:
 
       - name: Fetch the published Flatpak repository
         if: steps.pages.outputs.exists == 'true'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: gh-pages
           path: pages
@@ -233,7 +265,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           # Release notes come from the commits since the previous tag.

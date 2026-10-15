@@ -53,7 +53,7 @@ export function NotificationBell() {
       >
         <Icon name="bell" className="h-3.5 w-3.5" />
         {unread > 0 && (
-          <span className="absolute right-0.5 top-0 h-3.5 min-w-[0.875rem] rounded-full bg-primary px-1 text-center text-[0.5625rem] font-semibold leading-[0.875rem] text-white">
+          <span className="absolute right-0.5 top-0 h-3.5 min-w-3.5 rounded-full bg-primary px-1 text-center text-[0.5625rem] font-semibold leading-3.5 text-white">
             {unread > 9 ? "9+" : unread}
           </span>
         )}
@@ -96,7 +96,7 @@ function NotificationPanel({
       role="dialog"
       aria-label="Notifications"
       data-nav-scope
-      className="absolute right-0 top-8 z-[65] w-80 overflow-hidden rounded-xl border border-default-200 bg-content1 shadow-2xl"
+      className="absolute right-0 top-8 z-65 w-80 overflow-hidden rounded-xl border border-default-200 bg-content1 shadow-2xl"
     >
       <div className="flex items-center justify-between border-b border-default-200/60 px-3 py-2">
         <h2 className="text-xs font-semibold text-foreground">Notifications</h2>

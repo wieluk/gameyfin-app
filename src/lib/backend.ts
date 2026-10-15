@@ -49,8 +49,6 @@ import type { UpdateStatus } from "@/bindings/UpdateStatus";
 export type {
   LibraryFolder,
   LibraryRoot,
-  PrefixEntry,
-  ProviderChoice,
   ShortcutLocation,
   UpdateStatus,
 };

@@ -149,7 +149,6 @@ fn non_blank(value: &str) -> Option<String> {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", default)]
-#[ts(export)]
 pub struct Settings {
     /// Without a trailing slash.
     pub server_url: Option<String>,

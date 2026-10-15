@@ -5,7 +5,7 @@ import type { SaveSyncProgress } from "@/bindings/SaveSyncProgress";
 /** Most checks finish inside this, and a window that flashes past cannot be read. */
 export const SHOW_AFTER_MS = 1200;
 
-export type Decision =
+type Decision =
   | { kind: "show"; progress: SaveSyncProgress }
   /** Shown only if nothing else arrives first. */
   | { kind: "later"; progress: SaveSyncProgress }
@@ -19,7 +19,7 @@ export function isFinal(progress: SaveSyncProgress): boolean {
 }
 
 /** Worth a window even when no progress was on screen. */
-export function isInformative(progress: SaveSyncProgress): boolean {
+function isInformative(progress: SaveSyncProgress): boolean {
   const phase = progress.phase;
   switch (phase.kind) {
     case "failed":

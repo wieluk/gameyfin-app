@@ -330,7 +330,7 @@ where
             let expected = crate::wine::sha_for(&sums, &release.asset).ok_or_else(|| {
                 CoreError::Other(format!("the checksum file does not name {}", release.asset))
             })?;
-            let actual = sha512_of(&archive).await?;
+            let actual = crate::checksum::file_hex::<sha2::Sha512>(&archive).await?;
             if !actual.eq_ignore_ascii_case(&expected) {
                 // A kept partial would be resumed onto by the next attempt.
                 let _ = std::fs::remove_file(&archive);
@@ -392,23 +392,6 @@ fn find_build(root: &Path) -> Option<PathBuf> {
         .flatten()
         .map(|entry| entry.path())
         .find(|path| path.join("proton").is_file())
-}
-
-async fn sha512_of(path: &Path) -> CoreResult<String> {
-    use sha2::{Digest, Sha512};
-    use tokio::io::AsyncReadExt;
-
-    let mut file = tokio::fs::File::open(path).await?;
-    let mut hasher = Sha512::new();
-    let mut buffer = vec![0u8; 256 * 1024];
-    loop {
-        let read = file.read(&mut buffer).await?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Delete one managed build. Prefixes that used it switch to the default on next launch.

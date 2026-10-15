@@ -8,10 +8,6 @@ src-tauri/binaries/
 # build would otherwise add a third near-identical copy.
 src-tauri/gen/schemas/
 
-# Desktop only; `npm run icons` emits these but nothing ships them.
-src-tauri/icons/android/
-src-tauri/icons/ios/
-
 build/
 .flatpak-builder/
 

@@ -16,7 +16,7 @@ import { Modal, ModalFooter } from "./Modal";
 import type { SaveLocations } from "@/bindings/SaveLocations";
 import type { SavePathSettings } from "@/bindings/SavePathSettings";
 
-export type LoadedSavePaths = {
+type LoadedSavePaths = {
   current: SavePathSettings | null;
   locations: SaveLocations | null;
   error: string | null;

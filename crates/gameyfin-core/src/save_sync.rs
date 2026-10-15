@@ -361,8 +361,8 @@ pub fn pack(staging: &Path, archive: &Path) -> std::io::Result<u64> {
     let file = std::fs::File::create(archive)?;
     let mut zip = zip::ZipWriter::new(file);
     // Ludusavi already compressed the payload; compressing it again costs time for nothing.
-    let options: zip::write::FileOptions<'_, ()> =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     let mut entries = Vec::new();
     collect_files(staging, staging, &mut entries)?;
@@ -464,11 +464,6 @@ impl SaveSync {
         self.installation_id = installation_id;
         self.device_name = device_name;
         self
-    }
-
-    pub async fn newest_remote(&self, game_id: i64) -> Result<Option<SaveVersion>, ApiError> {
-        // Every store lists newest first.
-        Ok(self.store.list(game_id).await?.into_iter().next())
     }
 
     pub async fn versions(&self, game_id: i64) -> Result<Vec<SaveVersion>, ApiError> {

@@ -1,4 +1,4 @@
-export { Button, IconButton, type ButtonVariant, type ControlSize } from "./Button";
+export { Button, IconButton } from "./Button";
 export { Checkbox, Radio } from "./Checkbox";
 export { FormField } from "./FormField";
 export { Select } from "./Select";

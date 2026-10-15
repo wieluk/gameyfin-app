@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::error::{CoreError, CoreResult};
 
@@ -215,7 +215,7 @@ where
         .await?;
 
     if let Some(expected) = &release.sha256 {
-        let actual = sha256_of(&archive)?;
+        let actual = crate::checksum::file_hex::<Sha256>(&archive).await?;
         if !actual.eq_ignore_ascii_case(expected) {
             // Left behind, a partial file would be resumed rather than refetched.
             let _ = tokio::fs::remove_file(&archive).await;
@@ -309,26 +309,6 @@ fn find_binary(root: &Path) -> CoreResult<PathBuf> {
     Err(CoreError::Other(
         "the download did not contain the save helper".into(),
     ))
-}
-
-fn sha256_of(path: &Path) -> CoreResult<String> {
-    use std::io::Read;
-
-    let mut file = std::fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 128 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
 }
 
 #[cfg(test)]
@@ -433,27 +413,6 @@ mod tests {
         } else {
             assert!(name.ends_with("linux.tar.gz"), "{name}");
         }
-    }
-
-    #[test]
-    fn the_checksum_the_install_compares_is_the_file_s_own() {
-        let dir = std::env::temp_dir().join(format!("gameyfin-sha-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("archive");
-        std::fs::write(&file, b"ludusavi").unwrap();
-
-        // From `printf ludusavi | sha256sum`, so a bug in the hashing here cannot agree
-        // with itself and pass.
-        let actual = sha256_of(&file).unwrap();
-        assert_eq!(
-            actual,
-            "73b491e0ae51ddab5b56c18b8a0056e638289689fe0ef2a8b530297ec41e9ab7"
-        );
-
-        // A single changed byte must not still match, or the check protects nothing.
-        std::fs::write(&file, b"ludusavj").unwrap();
-        assert_ne!(sha256_of(&file).unwrap(), actual);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

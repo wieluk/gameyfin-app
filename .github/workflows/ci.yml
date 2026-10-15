@@ -3,17 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "assets/screenshots/**"
-      - "LICENSE"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "assets/screenshots/**"
-      - "LICENSE"
   workflow_call:
 
 env:
@@ -27,16 +17,50 @@ permissions:
   contents: read
 
 jobs:
+  # Skipping here rather than in `on:` keeps the required "CI result" check on every PR.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # A release run, where the filter is skipped, tests everything.
+      app: ${{ steps.filter.outputs.app || 'true' }}
+    steps:
+      # Pull requests are compared through the API; a push to main needs the history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        with:
+          predicate-quantifier: every
+          filters: |
+            app:
+              - "**"
+              - "!**/*.md"
+              - "!docs/**"
+              - "!assets/**"
+              - "!flatpak/**"
+              - "!.github/renovate.json5"
+              - "!.gitignore"
+              - "!LICENSE"
+
   frontend:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -45,6 +69,8 @@ jobs:
 
   rust:
     name: rust (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -52,10 +78,10 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -70,9 +96,9 @@ jobs:
             librsvg2-dev libsoup-3.0-dev patchelf libudev-dev
 
       # `frontendDist` points at ../dist, so the frontend must be built first.
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npx vite build
@@ -92,3 +118,14 @@ jobs:
       - name: Check the generated bindings are up to date
         if: runner.os == 'Linux'
         run: git diff --exit-code src/bindings
+
+  # The one check main requires: passes when the jobs above pass or were not needed.
+  result:
+    name: CI result
+    if: always()
+    needs: [changes, frontend, rust]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

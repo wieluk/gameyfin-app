@@ -3,7 +3,7 @@ import { useEffect, useState, type InputHTMLAttributes, type TextareaHTMLAttribu
 import { Icon, type IconName } from "@/components/Icon";
 
 const FIELD =
-  "w-full min-w-0 rounded-lg border border-default-200 bg-content2 text-foreground outline-none transition-colors placeholder:text-foreground/35 focus:border-primary disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full min-w-0 rounded-lg border border-default-200 bg-content2 text-foreground outline-hidden transition-colors placeholder:text-foreground/35 focus:border-primary disabled:cursor-not-allowed disabled:opacity-50";
 
 const SIZE = {
   md: "px-3 py-1.5 text-xs",

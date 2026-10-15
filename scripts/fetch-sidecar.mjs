@@ -28,6 +28,7 @@ const OUT_DIR = join(ROOT, "src-tauri", "binaries");
  */
 const SIDECARS = {
   ludusavi: {
+    // renovate: datasource=github-releases depName=mtkennerly/ludusavi
     version: "0.31.0",
     license: [
       "LUDUSAVI-LICENSE.txt",
@@ -58,6 +59,7 @@ const SIDECARS = {
     },
   },
   umu: {
+    // renovate: datasource=github-releases depName=Open-Wine-Components/umu-launcher
     version: "1.4.4",
     license: [
       "UMU-LICENSE.txt",

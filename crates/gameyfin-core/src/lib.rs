@@ -4,6 +4,7 @@
 
 pub mod arguments;
 pub mod checkpoint;
+mod checksum;
 pub mod diagnose;
 pub mod download;
 pub mod environment;

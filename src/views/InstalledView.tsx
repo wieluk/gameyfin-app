@@ -165,7 +165,7 @@ function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolea
           <div className="flex items-center gap-2">
             <h3 className="truncate text-sm font-medium text-foreground">{entry.game.title}</h3>
             {running && (
-              <span className="flex shrink-0 items-center gap-1 rounded bg-success/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-success">
+              <span className="flex shrink-0 items-center gap-1 rounded-sm bg-success/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-success">
                 <span className="h-1 w-1 animate-pulse rounded-full bg-success" />
                 Running
               </span>
@@ -226,7 +226,7 @@ function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolea
       {launchFailure && (
         <p
           role="alert"
-          className="whitespace-pre-line break-words border-t border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+          className="whitespace-pre-line wrap-break-word border-t border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
         >
           {launchFailure}
         </p>

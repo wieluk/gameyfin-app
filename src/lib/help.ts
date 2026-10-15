@@ -1,7 +1,7 @@
 /** Where each help button leads in the published docs. Kept in one place so a renamed heading
  *  is caught by the test beside it, not by a user landing at the top of the wrong page. */
 
-export const DOCS_URL = "https://wieluk.github.io/gameyfin-app/docs/";
+const DOCS_URL = "https://wieluk.github.io/gameyfin-app/docs/";
 
 export const HELP = {
   firstStart: "getting-started#first-start",

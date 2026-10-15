@@ -141,7 +141,7 @@ export function outcomeOf(state: SaveSyncState): { text: string; ok: boolean } {
 type Listed = { state: SaveSyncState; installed: boolean };
 
 /** How soon a row needs the user, lowest first. A row needing nothing sorts last. */
-export function attentionRank({ state, installed }: Listed): number {
+function attentionRank({ state, installed }: Listed): number {
   switch (state.kind) {
     case "conflict":
       return 0;

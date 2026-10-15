@@ -53,7 +53,7 @@ export function RootChooser({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
       role="presentation"
       onClick={onCancel}
     >
@@ -140,7 +140,7 @@ function RootOption({
         </span>
       </span>
       {tooSmall && (
-        <span className="shrink-0 rounded bg-danger/15 px-1.5 py-0.5 text-[0.625rem] text-danger">
+        <span className="shrink-0 rounded-sm bg-danger/15 px-1.5 py-0.5 text-[0.625rem] text-danger">
           Not enough room
         </span>
       )}

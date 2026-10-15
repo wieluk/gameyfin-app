@@ -152,7 +152,7 @@ pub struct AppState {
 
 /// For API calls. A connect timeout keeps an offline start from hanging on the splash.
 fn api_http() -> reqwest::Result<reqwest::Client> {
-    reqwest::Client::builder()
+    gameyfin_api::http_client()
         .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(8))
         .timeout(Duration::from_secs(30))
@@ -252,7 +252,7 @@ impl AppState {
     pub fn http(&self) -> reqwest::Client {
         self.http
             .get_or_init(|| {
-                reqwest::Client::builder()
+                gameyfin_api::http_client()
                     .user_agent(USER_AGENT)
                     .timeout(Duration::from_secs(20))
                     .build()
@@ -265,7 +265,7 @@ impl AppState {
     pub fn transfer_http(&self) -> reqwest::Client {
         self.transfer_http
             .get_or_init(|| {
-                reqwest::Client::builder()
+                gameyfin_api::http_client()
                     .user_agent(USER_AGENT)
                     .connect_timeout(Duration::from_secs(30))
                     .read_timeout(Duration::from_secs(120))
