@@ -5,7 +5,6 @@ members = ["crates/gameyfin-api", "crates/gameyfin-core", "crates/gameyfin-saves
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.82"
 license = "MIT"
 repository = "https://github.com/wieluk/gameyfin-app"
 
