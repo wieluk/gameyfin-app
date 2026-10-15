@@ -361,8 +361,8 @@ pub fn pack(staging: &Path, archive: &Path) -> std::io::Result<u64> {
     let file = std::fs::File::create(archive)?;
     let mut zip = zip::ZipWriter::new(file);
     // Ludusavi already compressed the payload; compressing it again costs time for nothing.
-    let options: zip::write::FileOptions<'_, ()> =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     let mut entries = Vec::new();
     collect_files(staging, staging, &mut entries)?;

@@ -20,14 +20,14 @@ sha2.workspace = true
 futures-util = "0.3"
 async-trait = "0.1"
 time.workspace = true
-zip = { version = "2", default-features = false, features = ["deflate", "bzip2", "zstd", "lzma"] }
-sevenz-rust2 = "0.13"
+zip = { version = "9", default-features = false, features = ["deflate", "bzip2", "zstd", "lzma"] }
+sevenz-rust2 = "0.24"
 tar = "0.4.46"
 liblzma = { version = "0.4.8", features = ["static"] }
 # The other tar wrappers, already in the tree through `zip`.
 flate2 = "1"
-bzip2 = "0.5"
-zstd = "0.13"
+bzip2 = "0.6"
+zstd = "0.14"
 # Vulkan bindings, dynamically loaded so a machine without a driver still starts.
 ash = "0.38"
 # Shortcut icons from covers and Windows executables. Already in the tree through Tauri.

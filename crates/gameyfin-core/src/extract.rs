@@ -297,7 +297,10 @@ where
             .enclosed_name()
             .and_then(|name| safe_join(destination, &name.to_string_lossy()))
         else {
-            tracing::warn!("skipping unsafe archive entry: {}", entry.name());
+            tracing::warn!(
+                "skipping unsafe archive entry: {}",
+                entry.name().unwrap_or_default()
+            );
             entries_done += 1;
             continue;
         };
@@ -359,7 +362,7 @@ where
         Some(password) => sevenz_rust2::Password::from(password),
         None => sevenz_rust2::Password::empty(),
     };
-    let mut reader = sevenz_rust2::SevenZReader::open(archive, key)
+    let mut reader = sevenz_rust2::ArchiveReader::open(archive, key)
         .map_err(|e| CoreError::Other(format!("could not read the 7z archive: {e}")))?;
 
     let entries_total = reader.archive().files.len() as u64;
@@ -1144,7 +1147,7 @@ mod tests {
         {
             let file = File::create(&archive).unwrap();
             let mut writer = zip::ZipWriter::new(file);
-            let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+            let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
             writer.start_file("readme.txt", options).unwrap();
             std::io::Write::write_all(&mut writer, b"hello").unwrap();
