@@ -1,0 +1,69 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", "helpers:pinGitHubActionDigests"],
+  schedule: ["before 6am on monday"],
+  labels: ["dependencies"],
+  // Gives a hijacked release time to be noticed and pulled before it reaches a PR.
+  minimumReleaseAge: "3 days",
+  lockFileMaintenance: { enabled: true, schedule: ["before 6am on monday"] },
+  customManagers: [
+    {
+      // The Ludusavi and umu-launcher builds bundled beside the app.
+      customType: "regex",
+      managerFilePatterns: ["/^scripts/fetch-sidecar\\.mjs$/"],
+      matchStrings: [
+        '// renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+version: "(?<currentValue>[^"]+)"',
+      ],
+    },
+  ],
+  packageRules: [
+    {
+      // One PR a week for everything that should not break anything.
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      groupName: "non-major dependencies",
+    },
+    {
+      // Raise the ranges in package.json too, so they say what the lockfile installs.
+      matchManagers: ["npm"],
+      rangeStrategy: "bump",
+    },
+    {
+      // The CLI refuses to build when the crates and the npm packages disagree.
+      matchPackageNames: ["/^@tauri-apps\\//", "tauri", "tauri-build", "/^tauri-plugin-/"],
+      groupName: "Tauri",
+    },
+    {
+      matchPackageNames: ["vite", "vitest", "@vitejs/plugin-react"],
+      groupName: "Vite",
+    },
+    {
+      matchPackageNames: ["tailwindcss", "@tailwindcss/vite"],
+      groupName: "Tailwind",
+    },
+    {
+      matchPackageNames: ["react", "react-dom", "@types/react", "@types/react-dom"],
+      groupName: "React",
+    },
+    {
+      // bzip2 and zstd are the versions zip itself uses, so they move with it.
+      matchPackageNames: ["zip", "zstd", "bzip2", "sevenz-rust2"],
+      groupName: "archive crates",
+    },
+    {
+      // Only one gtk may link GTK 3, and Tauri's is 0.18.
+      matchPackageNames: ["gtk", "gdkwayland-sys"],
+      allowedVersions: "<0.19",
+    },
+    {
+      matchPackageNames: ["mtkennerly/ludusavi"],
+      extractVersion: "^v(?<version>.+)$",
+    },
+    {
+      matchManagers: ["custom.regex"],
+      groupName: "sidecars",
+      prBodyNotes: [
+        "The checksums in `scripts/fetch-sidecar.mjs` need updating by hand: run `npm run fetch-sidecars`, which fails with the new hash, and paste it in. CI fails until then.",
+      ],
+    },
+  ],
+}
