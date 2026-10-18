@@ -1,0 +1,64 @@
+name: Bundle
+description: Builds the app with tauri-action. Shared by the Linux and Windows bundle jobs in release.yml.
+
+inputs:
+  github-token:
+    required: true
+  signing-key:
+    required: false
+    default: ""
+  signing-key-password:
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: 24
+        cache: npm
+    - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+    # A tag run can only restore a cache saved on main, so one saved anywhere else is wasted.
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      with:
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - name: Set the version from the tag
+      if: startsWith(github.ref, 'refs/tags/v')
+      shell: bash
+      env:
+        TAG: ${{ github.ref_name }}
+      run: node scripts/set-version.mjs "$TAG"
+
+    - run: npm ci
+      shell: bash
+
+    # Declared as sidecars, so the bundle cannot be built without them on disk.
+    - run: npm run fetch-sidecars
+      shell: bash
+
+    - name: Check the updater signing setup
+      if: github.event_name != 'pull_request'
+      shell: bash
+      env:
+        TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.signing-key }}
+      run: node scripts/check-signing.mjs
+
+    # A file rather than inline JSON, since tauri-action's argument parsing drops its quotes.
+    - name: Leave the updater files out of a pull request build
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > pr-build.json
+
+    - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.signing-key }}
+        TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.signing-key-password }}
+      with:
+        args: ${{ github.event_name == 'pull_request' && '--config pr-build.json' || '' }}
+        tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+        releaseName: gameyfin-app ${{ github.ref_name }}
+        releaseDraft: true
+        releaseAssetNamePattern: gameyfin-app_[version]_[arch][setup][ext]

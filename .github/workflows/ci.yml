@@ -84,7 +84,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: rustfmt, clippy
+      # Not from a release tag, whose cache no later run can restore.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
       # The Tauri shell is a workspace member; Linux needs WebKit/GTK dev packages.
       - name: Install Linux GUI dependencies

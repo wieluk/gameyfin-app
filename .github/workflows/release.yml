@@ -4,6 +4,10 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  # Keeps a release-profile Rust cache and the GNOME runtime cached on main: a tag run can only
+  # restore caches saved there. After Monday's dependency updates have landed.
+  schedule:
+    - cron: "17 4 * * 2"
   # Packaging is otherwise first tried on release day. Builds only: nothing is signed or published.
   pull_request:
     paths:
@@ -15,6 +19,7 @@ on:
       - "Cargo.lock"
       - "package-lock.json"
       - ".github/workflows/release.yml"
+      - ".github/actions/bundle/**"
 
 concurrency:
   group: release-${{ github.event.pull_request.number || github.ref }}
@@ -24,29 +29,48 @@ permissions:
   contents: read
 
 jobs:
-  # A pull request already runs CI on its own.
+  # A tag usually points at a commit whose CI already passed on main; that run counts.
+  ci-passed:
+    if: github.event_name != 'pull_request' && github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      passed: ${{ steps.check.outputs.passed }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          count=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&status=success&per_page=1" \
+            --jq '.total_count')
+          if [ "$count" -gt 0 ]; then
+            echo "CI already passed for $SHA, so it is not run again."
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Otherwise CI runs here, beside the bundles: they only make a draft, and nothing is
+  # published until it passes. A pull request already runs CI on its own.
   test:
-    if: github.event_name != 'pull_request'
+    needs: ci-passed
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'schedule' && needs.ci-passed.outputs.passed != 'true' }}
     permissions:
       contents: read
       pull-requests: read
     uses: ./.github/workflows/ci.yml
 
-  bundle:
-    name: bundle (${{ matrix.os }})
-    needs: test
-    if: ${{ !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+  # Two jobs rather than a matrix, so the flatpak can start from the deb without waiting on Windows.
+  bundle-linux:
+    name: bundle (ubuntu-24.04)
     permissions:
       contents: write
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-latest]
     steps:
       - name: Install build dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -56,65 +80,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+
+      # Signing secrets are kept from pull request builds, which skip the updater files.
+      - uses: ./.github/actions/bundle
         with:
-          node-version: 24
-          cache: npm
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-
-      - name: Set the version from the tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        env:
-          TAG: ${{ github.ref_name }}
-        run: node scripts/set-version.mjs "$TAG"
-
-      - run: npm ci
-
-      # Declared as sidecars, so the bundle cannot be built without them on disk.
-      - run: npm run fetch-sidecars
-
-      - name: Check the updater signing setup
-        if: github.event_name != 'pull_request'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: node scripts/check-signing.mjs
-
-      # A file rather than inline JSON, since tauri-action's argument parsing drops its quotes.
-      - name: Leave the updater files out of a pull request build
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > pr-build.json
-
-      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Kept from pull request builds, which skip the updater files that need it.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ github.event_name != 'pull_request' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        with:
-          args: ${{ github.event_name == 'pull_request' && '--config pr-build.json' || '' }}
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: gameyfin-app ${{ github.ref_name }}
-          releaseDraft: true
-          releaseAssetNamePattern: gameyfin-app_[version]_[arch][setup][ext]
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          signing-key: ${{ github.event_name != 'pull_request' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          signing-key-password: ${{ github.event_name != 'pull_request' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
 
       # The flatpak job repackages this deb rather than building the app again.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: matrix.os == 'ubuntu-24.04'
         with:
           name: deb-bundle
           path: target/release/bundle/deb/*.deb
           retention-days: 1
 
+  bundle-windows:
+    name: bundle (windows-latest)
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/bundle
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          signing-key: ${{ github.event_name != 'pull_request' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          signing-key-password: ${{ github.event_name != 'pull_request' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+
   flatpak:
     name: flatpak
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    needs: bundle
+    # Waits for `test` as well, since a tagged run publishes the repository from here.
+    needs: [test, bundle-linux]
     # Explicit, since the default skips this whenever `test` was skipped, as on a pull request.
-    if: ${{ !cancelled() && needs.bundle.result == 'success' }}
+    if: ${{ !cancelled() && needs.bundle-linux.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.test.result) }}
     # gh-pages is shared with the docs deploy in docs.yml; one writer at a time.
     concurrency:
       group: ${{ startsWith(github.ref, 'refs/tags/') && 'gh-pages' || format('flatpak-{0}', github.run_id) }}
@@ -146,11 +151,30 @@ jobs:
           sudo apt-get install -y \
             flatpak flatpak-builder desktop-file-utils ostree
 
+      # A new key each week, so the cache follows runtime updates; `--or-update` covers the rest.
+      - name: Pick the GNOME runtime cache key
+        id: runtime
+        run: echo "key=flatpak-gnome-50-$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: runtime-cache
+        with:
+          path: ~/.local/share/flatpak
+          key: ${{ steps.runtime.outputs.key }}
+          restore-keys: flatpak-gnome-50-
+
       - name: Add Flathub and install the GNOME runtime
         run: |
           flatpak remote-add --if-not-exists --user flathub \
             https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install -y --user flathub org.gnome.Platform//50 org.gnome.Sdk//50
+          flatpak install -y --user --or-update flathub org.gnome.Platform//50 org.gnome.Sdk//50
+
+      # Saved only on main, the one place a tag run can restore it from.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: github.ref == 'refs/heads/main' && steps.runtime-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.local/share/flatpak
+          key: ${{ steps.runtime.outputs.key }}
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -258,10 +282,10 @@ jobs:
 
   publish:
     name: publish
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [test, bundle-linux, bundle-windows, flatpak]
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') && contains(fromJSON('["success", "skipped"]'), needs.test.result) && needs.bundle-linux.result == 'success' && needs.bundle-windows.result == 'success' && needs.flatpak.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [bundle, flatpak]
     permissions:
       contents: write
     steps:
