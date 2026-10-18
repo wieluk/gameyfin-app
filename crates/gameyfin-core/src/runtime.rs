@@ -68,34 +68,10 @@ fn extra_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// The same, on Windows, where neither 7-Zip nor WinRAR puts itself on `PATH`.
+/// Nothing beyond `PATH` on Windows, where the app looks for no tools of its own.
 #[cfg(windows)]
 fn extra_search_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
-    // All three cover every mix of installer and process bitness; `ProgramW6432` is the
-    // 64-bit folder even from a 32-bit process.
-    for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
-        let Some(base) = std::env::var_os(key).map(PathBuf::from) else {
-            continue;
-        };
-        dirs.push(base.join("7-Zip"));
-        dirs.push(base.join("WinRAR"));
-        dirs.push(base.join("NanaZip"));
-    }
-
-    // 7-Zip and NanaZip can also be installed per-user, the likelier case on a shared machine.
-    if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
-        dirs.push(local.join("Programs").join("7-Zip"));
-        dirs.push(local.join("Programs").join("NanaZip"));
-    }
-
-    // `tar.exe`, which is libarchive, has shipped with Windows since 10 1803.
-    if let Some(root) = std::env::var_os("SystemRoot").map(PathBuf::from) {
-        dirs.push(root.join("System32"));
-    }
-
-    dirs
+    Vec::new()
 }
 
 /// Extensions a program name may carry on Windows. Not `PATHEXT`: only runnable binaries,

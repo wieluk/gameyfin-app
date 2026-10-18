@@ -36,7 +36,12 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Already in the tree through gilrs; watches for the DLL an installer is about to call.
 inotify = "0.11"
 
+[target.'cfg(windows)'.dependencies]
+# UnRAR itself: Windows has no RAR tool to fall back on, and its tar.exe fails on many archives.
+unrar = "0.5.8"
+
 [dev-dependencies]
+unrar = "0.5.8"
 tokio = { version = "1", features = ["full"] }
 mockito = "1"
 gameyfin-saves = { path = "../gameyfin-saves", features = ["test-util"] }

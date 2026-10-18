@@ -11,7 +11,7 @@ use crate::error::{CoreError, CoreResult};
 pub enum ArchiveKind {
     Zip,
     SevenZip,
-    /// RAR. Unpacked with an external tool: complete RAR implementations cannot be redistributed.
+    /// RAR. Unpacked by UnRAR on Windows, and by an installed tool elsewhere.
     Rar,
     /// A tar, optionally compressed. How Linux builds of a game usually arrive.
     Tar(TarCompression),
@@ -230,7 +230,7 @@ where
     match detect(archive)? {
         ArchiveKind::Zip => extract_zip(archive, destination, password, &mut on_progress),
         ArchiveKind::SevenZip => extract_7z(archive, destination, password, &mut on_progress),
-        ArchiveKind::Rar => extract_rar(archive, destination, &mut on_progress),
+        ArchiveKind::Rar => extract_rar(archive, destination, password, &mut on_progress),
         ArchiveKind::Tar(compression) => {
             extract_tar(archive, destination, compression, &mut on_progress)
         }
@@ -631,6 +631,93 @@ fn place_link(_link: &Path, resolved: &Path, target: &Path) {
     }
 }
 
+/// Unpack a RAR in-process with UnRAR. Windows has no reliable tool to hand: its `tar.exe`
+/// reads only some RARs, and 7-Zip or WinRAR are often not installed.
+#[cfg(windows)]
+fn extract_rar<F>(
+    archive: &Path,
+    destination: &Path,
+    password: Option<&str>,
+    on_progress: &mut F,
+) -> CoreResult<u64>
+where
+    F: FnMut(ExtractProgress),
+{
+    let expected = rar_unpacked_size(archive, password)
+        .unwrap_or_else(|| std::fs::metadata(archive).map(|m| m.len()).unwrap_or(0));
+    let (archive, target, password) = (
+        archive.to_path_buf(),
+        destination.to_path_buf(),
+        password.map(str::to_string),
+    );
+    with_sampled_progress(destination, expected, on_progress, move || {
+        unrar_into(&archive, &target, password.as_deref())
+    })
+}
+
+/// The total unpacked size, for progress. `None` when the headers are encrypted and no
+/// password was given.
+#[cfg(any(windows, test))]
+fn rar_unpacked_size(archive: &Path, password: Option<&str>) -> Option<u64> {
+    let listing = match password {
+        Some(password) => unrar::Archive::with_password(archive, password),
+        None => unrar::Archive::new(archive),
+    }
+    .open_for_listing()
+    .ok()?;
+    listing
+        .map(|entry| entry.ok().map(|e| e.unpacked_size))
+        .sum()
+}
+
+/// Entry by entry rather than UnRAR's own paths, so every name goes through [`safe_join`].
+#[cfg(any(windows, test))]
+fn unrar_into(archive: &Path, destination: &Path, password: Option<&str>) -> CoreResult<()> {
+    let mut cursor = match password {
+        Some(password) => unrar::Archive::with_password(archive, password),
+        None => unrar::Archive::new(archive),
+    }
+    .open_for_processing()
+    .map_err(unrar_error)?;
+
+    while let Some(header) = cursor.read_header().map_err(unrar_error)? {
+        let entry = header.entry();
+        let name = entry.filename.to_string_lossy().into_owned();
+        cursor = match safe_join(destination, &name) {
+            None => {
+                tracing::warn!("skipping unsafe archive entry: {name}");
+                header.skip()
+            }
+            Some(target) if entry.is_directory() => {
+                std::fs::create_dir_all(&target)?;
+                header.skip()
+            }
+            Some(target) => {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                header.extract_to(&target)
+            }
+        }
+        .map_err(unrar_error)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn unrar_error(e: unrar::error::UnrarError) -> CoreError {
+    use unrar::error::Code;
+    match e.code {
+        // Said plainly, as for a zip: a missing password otherwise reads as a broken download.
+        Code::MissingPassword | Code::BadPassword => CoreError::Other(
+            "this archive is password protected. Set the password in Settings, under \
+             Downloads, and try again."
+                .to_string(),
+        ),
+        _ => CoreError::Other(format!("could not unpack the rar archive: {e}")),
+    }
+}
+
 /// External programs that can unpack a RAR, in order of preference.
 #[cfg(not(windows))]
 const RAR_TOOLS: &[(&str, &[&str])] = &[
@@ -642,24 +729,13 @@ const RAR_TOOLS: &[(&str, &[&str])] = &[
     ("bsdtar", &["-xf"]),
 ];
 
-/// The same, on Windows. None are on `PATH`, so they are found in their install folders
-/// (see [`crate::runtime::find_program`]); `tar.exe` is last because its RAR support is partial.
-#[cfg(windows)]
-const RAR_TOOLS: &[(&str, &[&str])] = &[
-    ("7z", &["x", "-y", "-o"]),
-    ("7zz", &["x", "-y", "-o"]),
-    ("NanaZipC", &["x", "-y", "-o"]),
-    ("unrar", &["x", "-y"]),
-    ("unar", &["-force-overwrite", "-quiet", "-output-directory"]),
-    ("bsdtar", &["-xf"]),
-    ("tar", &["-xf"]),
-];
-
 /// Tools that unpack into the working directory instead of taking an output flag.
-const EXTRACTS_INTO_WORKING_DIR: &[&str] = &["unrar", "bsdtar", "tar"];
+#[cfg(not(windows))]
+const EXTRACTS_INTO_WORKING_DIR: &[&str] = &["unrar", "bsdtar"];
 
 /// Every installed tool from [`RAR_TOOLS`], in preference order: installed is not able, and
 /// Debian's `p7zip` ships without the RAR codec.
+#[cfg(not(windows))]
 fn installed_rar_tools() -> Vec<(&'static str, &'static [&'static str])> {
     RAR_TOOLS
         .iter()
@@ -668,18 +744,10 @@ fn installed_rar_tools() -> Vec<(&'static str, &'static [&'static str])> {
         .collect()
 }
 
-/// What to install when no RAR tool is present. RAR cannot be unpacked in-process (the
-/// complete implementations forbid bundling), so this names a tool the user installs.
+/// What to install when no RAR tool is present. `unar` first: it needs no separate codec,
+/// which is exactly what the packaged 7z on Debian and Ubuntu is missing.
+#[cfg(not(windows))]
 pub fn rar_tool_hint() -> String {
-    if cfg!(windows) {
-        return "RAR archives need 7-Zip or WinRAR. Install 7-Zip from https://7-zip.org \
-                (or WinRAR from https://rarlab.com), then try again. Gameyfin finds it \
-                automatically, with nothing added to PATH."
-            .to_string();
-    }
-
-    // `unar` first: it needs no separate codec, which is exactly what the packaged 7z on
-    // Debian and Ubuntu is missing.
     format!(
         "RAR archives need an external tool. Install unar, for example `{}`. The 7z in \
          Debian's and Ubuntu's p7zip package cannot read RAR on its own; its codec is the \
@@ -688,7 +756,15 @@ pub fn rar_tool_hint() -> String {
     )
 }
 
-fn extract_rar<F>(archive: &Path, destination: &Path, on_progress: &mut F) -> CoreResult<u64>
+/// Unpack a RAR with whichever installed tool manages it. The password is not passed on:
+/// each tool asks for it differently, and they are only a fallback here.
+#[cfg(not(windows))]
+fn extract_rar<F>(
+    archive: &Path,
+    destination: &Path,
+    _password: Option<&str>,
+    on_progress: &mut F,
+) -> CoreResult<u64>
 where
     F: FnMut(ExtractProgress),
 {
@@ -721,6 +797,7 @@ where
 }
 
 /// Unpack a RAR with one named tool. See [`extract_rar`], which tries these in turn.
+#[cfg(not(windows))]
 fn run_rar_tool<F>(
     tool: &str,
     flags: &[&str],
@@ -738,12 +815,6 @@ where
     // Piped so the child does not inherit our stdio, and so failures can be reported.
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
-    #[cfg(windows)]
-    {
-        // Nobody reads a console whose output we are capturing; it only flashes up.
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(crate::process::CREATE_NO_WINDOW);
-    }
     for flag in flags {
         // The 7-Zip family joins the output directory to its flag with no separator.
         if *flag == "-o" {
@@ -769,16 +840,45 @@ where
 
     // Last in `RAR_TOOLS` because libarchive's RAR support is partial: it can unpack
     // "successfully" into files that are not what the archive held. Better said than inferred.
-    if tool == "bsdtar" || tool == "tar" {
+    if tool == "bsdtar" {
         tracing::warn!(
             "falling back to bsdtar for a RAR; install unar if this archive unpacks \
              incorrectly"
         );
     }
 
-    // These tools print no usable progress, so the destination is sampled against the
-    // compressed size as a rough total.
+    // The compressed size stands in as a rough total.
     let expected = std::fs::metadata(archive).map(|m| m.len()).unwrap_or(0);
+    let tool = tool.to_string();
+    with_sampled_progress(destination, expected, on_progress, move || {
+        // `wait_with_output` drains the pipes: a verbose extractor fills a pipe buffer at
+        // once, and waiting without reading would deadlock there.
+        let output = command
+            .spawn()
+            .and_then(|child| child.wait_with_output())
+            .map_err(|e| CoreError::Other(format!("could not run {tool}: {e}")))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(CoreError::Other(format!(
+                "{tool} could not unpack the archive: {}",
+                stderr.trim()
+            )));
+        }
+        Ok(())
+    })
+}
+
+/// Run an unpack that reports nothing itself on its own thread, sampling the destination's
+/// size against `expected` meanwhile, then one step on completion.
+fn with_sampled_progress<F>(
+    destination: &Path,
+    expected: u64,
+    on_progress: &mut F,
+    work: impl FnOnce() -> CoreResult<()> + Send + 'static,
+) -> CoreResult<u64>
+where
+    F: FnMut(ExtractProgress),
+{
     let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::channel::<ExtractProgress>();
 
@@ -804,14 +904,8 @@ where
         })
     };
 
-    // On its own thread so the pipes drain: a verbose extractor fills a pipe buffer at once,
-    // and polling `try_wait` without reading would deadlock there.
-    let child = command
-        .spawn()
-        .map_err(|e| CoreError::Other(format!("could not run {tool}: {e}")))?;
-    let waiter = std::thread::spawn(move || child.wait_with_output());
-
-    while !waiter.is_finished() {
+    let worker = std::thread::spawn(work);
+    while !worker.is_finished() {
         if let Ok(progress) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
             on_progress(progress);
         }
@@ -820,20 +914,10 @@ where
     finished.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = sampler.join();
 
-    let output = waiter
+    worker
         .join()
-        .map_err(|_| CoreError::Other(format!("{tool} stopped unexpectedly")))?
-        .map_err(|e| CoreError::Other(format!("could not run {tool}: {e}")))?;
+        .map_err(|_| CoreError::Other("the unpack stopped unexpectedly".to_string()))??;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(CoreError::Other(format!(
-            "{tool} could not unpack the archive: {}",
-            stderr.trim()
-        )));
-    }
-
-    // The external tools give no usable progress, so this reports one step on completion.
     let written = directory_size(destination).unwrap_or(0);
     on_progress(ExtractProgress {
         entries_done: 1,
@@ -912,6 +996,63 @@ mod tests {
         assert_eq!(detect_bytes(b"Rar!\x1a\x07\x00"), ArchiveKind::Rar);
         // RAR 5 differs only after the shared prefix.
         assert_eq!(detect_bytes(b"Rar!\x1a\x07\x01\x00"), ArchiveKind::Rar);
+    }
+
+    fn rar_fixture(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata")
+                .join(name),
+            &path,
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn unrar_unpacks_a_unicode_name() {
+        let dir = scratch("rar-unicode");
+        let archive = rar_fixture(&dir, "unicode.rar");
+        let dest = dir.join("out");
+
+        unrar_into(&archive, &dest, None).unwrap();
+        assert!(dest.join("te…―st✌").is_file());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn unrar_uses_the_password_and_asks_for_one_plainly() {
+        let dir = scratch("rar-crypted");
+        let archive = rar_fixture(&dir, "crypted.rar");
+        let dest = dir.join("out");
+
+        let err = unrar_into(&archive, &dest, None).unwrap_err();
+        assert!(err.to_string().contains("password protected"), "got {err}");
+
+        unrar_into(&archive, &dest, Some("unrar")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dest.join(".gitignore")).unwrap(),
+            "target\nCargo.lock\n"
+        );
+        assert_eq!(rar_unpacked_size(&archive, Some("unrar")), Some(18));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sampled_progress_ends_at_what_was_written() {
+        let dir = scratch("sampled");
+        let file = dir.join("game.bin");
+        let mut samples = Vec::new();
+
+        let written = with_sampled_progress(&dir, 0, &mut |p| samples.push(p), move || {
+            std::fs::write(file, vec![0u8; 64])?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(written, 64);
+        assert_eq!(samples.last().unwrap().percent(), 100.0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
