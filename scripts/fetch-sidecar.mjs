@@ -142,8 +142,11 @@ async function fetchSidecar(name, sidecar) {
 
   const archive = join(tmpDir, asset);
   writeFileSync(archive, bytes);
-  // `tar` reads zip on modern Windows and on the Linux runners, so no extra dependency.
-  execFileSync("tar", ["-xf", archive, "-C", tmpDir], { stdio: "inherit" });
+  // `tar` reads zip on modern Windows and on the Linux runners, so no extra dependency. Named in
+  // full on Windows: Git Bash puts GNU tar first, which reads `D:\...` as a remote host.
+  const tar =
+    process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+  execFileSync(tar, ["-xf", archive, "-C", tmpDir], { stdio: "inherit" });
 
   const extracted = join(tmpDir, target.member);
   if (!existsSync(extracted)) {
