@@ -16,6 +16,10 @@ const queryClient = new QueryClient({
   },
 });
 
+// Set by the backend when it rebuilds a window it let go in the tray, opened from a menu entry.
+const startRoute = (window as { __GAMEYFIN_START_ROUTE__?: string }).__GAMEYFIN_START_ROUTE__;
+if (startRoute) window.history.replaceState(null, "", startRoute);
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>

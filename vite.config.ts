@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
   clearScreen: false,
   server: { port: 1420, strictPort: true, watch: { ignored: ["**/src-tauri/**"] } },
-  build: { target: "es2022", sourcemap: true },
+  // No source maps: Tauri builds every file in dist into the binary.
+  build: { target: "es2022", sourcemap: false },
   test: { environment: "jsdom", globals: true },
 });

@@ -6,6 +6,8 @@
 
 - **Closing the window keeps Gameyfin running**: the close button hides the window to the
   tray. Downloads run inside the app, so without this, closing the window stops them.
+  After ten minutes in the tray the window is unloaded to free its memory, a few hundred
+  MB. Downloads and save sync carry on; opening the window again takes a moment longer.
 - **Start Gameyfin when I log in**: starts with your session, so background downloads keep
   going.
   - **Start hidden in the tray** (on by default): that start stays in the tray. Opening
@@ -13,6 +15,11 @@
 - **Bring Gameyfin back when a game closes** (on by default): raises the window once a game
   quits, where its save upload and any error are shown.
 - **Appearance**: dark, light or match your system.
+
+While a game runs and the Gameyfin window has been in the background for a minute, the window
+is unloaded so the game gets its memory. Playtime, save sync and notifications carry on. It
+comes back when the game closes (with **Bring Gameyfin back when a game closes** on), or from
+the tray. Without a tray icon the window stays loaded.
 
 ## Notifications
 

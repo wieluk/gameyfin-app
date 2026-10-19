@@ -1,8 +1,8 @@
 //! The system tray icon. Downloads run in this process, so closing the window can hide it
 //! instead of quitting; the setting decides.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -12,6 +12,20 @@ use crate::state::AppState;
 
 /// Both closes arrive as the same event, so this is what tells hide from quit.
 static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// How long the window stays hidden before its webview is let go. Rebuilding it takes a moment;
+/// keeping it holds a few hundred MB for as long as the app sits in the tray.
+const RELEASE_AFTER: Duration = Duration::from_secs(10 * 60);
+
+/// How long the window may sit behind a running game before it is let go, so the game gets the
+/// memory. Long enough that a quick look at the library from the game keeps it.
+const GAME_RELEASE_AFTER: Duration = Duration::from_secs(60);
+
+/// Games running now. While any is, a window in the background is let go.
+static GAMES_RUNNING: AtomicUsize = AtomicUsize::new(0);
+
+/// Bumped on every hide and show, so a release timer can tell the window has moved on.
+static VISIBILITY: AtomicU64 = AtomicU64::new(0);
 
 /// Not a given on Linux, where the appindicator library is often missing. Anything that
 /// would strand the window behind a tray has to check this first.
@@ -119,16 +133,115 @@ pub fn reveal(app: &AppHandle, route: Option<&str>) {
 
 /// [`reveal`] with the launcher's activation token, which Wayland needs to raise the window.
 pub fn reveal_activated(app: &AppHandle, route: Option<&str>, token: Option<String>) {
+    VISIBILITY.fetch_add(1, Ordering::SeqCst);
+    let (app, route) = (app.clone(), route.map(str::to_string));
+    // Off the main thread: rebuilding a released window waits on the event loop.
+    tauri::async_runtime::spawn(async move {
+        let (window, rebuilt) = match app.get_webview_window("main") {
+            Some(window) => (window, false),
+            None => match rebuild(&app, route.as_deref()) {
+                Some(window) => (window, true),
+                None => return,
+            },
+        };
+        let _ = window.show();
+        let _ = window.unminimize();
+        if let (Some(route), false) = (route, rebuilt) {
+            // The frontend navigates: reloading the webview would drop every in-flight query.
+            let _ = tauri::Emitter::emit(&app, "navigate", route);
+        }
+        raise(window, token).await;
+    });
+}
+
+/// Hides the window, and lets its webview go if it is still hidden after [`RELEASE_AFTER`].
+pub fn hide(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let _ = window.show();
-    let _ = window.unminimize();
-    if let Some(route) = route {
-        // The frontend navigates: reloading the webview would drop every in-flight query.
-        let _ = tauri::Emitter::emit(app, "navigate", route);
+    let _ = window.hide();
+    let hidden = VISIBILITY.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(RELEASE_AFTER).await;
+        if VISIBILITY.load(Ordering::SeqCst) != hidden {
+            return;
+        }
+        if let Some(window) = app.get_webview_window("main") {
+            if !window.is_visible().unwrap_or(true) {
+                tracing::info!("letting go of the hidden window");
+                let _ = window.destroy();
+            }
+        }
+    });
+}
+
+/// A game started. Pair with [`game_ended`]. The window comes back from the tray, or by itself
+/// when the game closes if "Bring Gameyfin back" is on.
+pub fn game_started(app: &AppHandle) {
+    if GAMES_RUNNING.fetch_add(1, Ordering::SeqCst) > 0 {
+        return;
     }
-    tauri::async_runtime::spawn(raise(window, token));
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        const CHECK: Duration = Duration::from_secs(5);
+        let mut behind_since: Option<Instant> = None;
+        while GAMES_RUNNING.load(Ordering::SeqCst) > 0 {
+            tokio::time::sleep(CHECK).await;
+            let window = app.get_webview_window("main");
+            // Without a tray, a window let go could not be got back.
+            let behind = window.is_some() && has_tray() && !crate::notify::is_focused(&app);
+            if !behind {
+                behind_since = None;
+                continue;
+            }
+            if behind_since.get_or_insert_with(Instant::now).elapsed() >= GAME_RELEASE_AFTER {
+                tracing::info!("letting go of the window while a game runs");
+                VISIBILITY.fetch_add(1, Ordering::SeqCst);
+                if let Some(window) = window {
+                    let _ = window.destroy();
+                }
+                behind_since = None;
+            }
+        }
+    });
+}
+
+pub fn game_ended() {
+    GAMES_RUNNING.fetch_sub(1, Ordering::SeqCst);
+}
+
+/// The main window again, after [`hide`] let it go, wired up as at startup.
+fn rebuild(app: &AppHandle, route: Option<&str>) -> Option<tauri::WebviewWindow> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")?;
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app, config)
+        .ok()?
+        .visible(false);
+    if let Some(route) = route {
+        // Read before the router starts, since an event sent now would arrive before any listener.
+        let route = serde_json::to_string(route).ok()?;
+        builder =
+            builder.initialization_script(format!("window.__GAMEYFIN_START_ROUTE__ = {route};"));
+    }
+    let window = match builder.build() {
+        Ok(window) => window,
+        Err(e) => {
+            tracing::error!("could not rebuild the window: {e}");
+            return None;
+        }
+    };
+    tracing::info!("window rebuilt");
+    guard_window(app);
+    if let Some(pad) = app.state::<AppState>().gamepad() {
+        crate::gamepad::follow_focus(app, pad);
+    }
+    crate::taskbar::redraw(app);
+    Some(window)
 }
 
 /// Focus is dropped for a window still hidden or minimised, and show and unminimise only land
@@ -202,11 +315,11 @@ fn activate(window: &tauri::WebviewWindow, _token: String) {
 
 fn toggle(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
-        return;
+        return reveal(app, None);
     };
     let showing = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
     if showing {
-        let _ = window.hide();
+        hide(app);
     } else {
         reveal(app, None);
     }
@@ -235,9 +348,7 @@ pub async fn intercept_close(app: &AppHandle) -> bool {
         return false;
     }
 
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
+    hide(app);
     tracing::debug!("window hidden to the tray rather than closed");
     true
 }

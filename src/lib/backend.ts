@@ -261,7 +261,7 @@ export const backend = {
   /** Checks the configured location answers. Returns a sentence to show the user. */
   testSaveStore: () => invoke<string>("test_save_store"),
 
-  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  updateStatus: (force = false) => invoke<UpdateStatus>("update_status", { force }),
   /** Returns what to tell the user; what happens next differs by package format. */
   installUpdate: () => invoke<UpdateOutcome>("install_update"),
   /** Quits and starts the freshly installed version. */

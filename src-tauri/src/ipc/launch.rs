@@ -134,8 +134,10 @@ async fn launch(
         };
         library.set_activity(game_id, running);
         notify(&app);
+        crate::tray::game_started(&app);
 
         let ended = supervisor.wait_or_stop(&stopper, teardown).await;
+        crate::tray::game_ended();
         state.processes.finish(game_id);
         // Back to Gameyfin, where the save upload and any failure to start are shown.
         if state.settings().focus_after_game {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert } from "@/components/Alert";
@@ -88,7 +88,8 @@ export function InstalledView() {
   );
 }
 
-function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolean }) {
+// Memoized so a progress update to one game redraws only its row.
+const InstalledRow = memo(function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolean }) {
   const [expanded, setExpanded] = useState(focused);
   const row = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -331,7 +332,7 @@ function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolea
       )}
     </article>
   );
-}
+});
 
 function Options({
   entry,

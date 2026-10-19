@@ -10,6 +10,12 @@ use tauri::{AppHandle, Manager};
 /// or to COM, so only a change is sent.
 static SHOWN: AtomicI64 = AtomicI64::new(-1);
 
+/// Draws the bar again on a window that never had it, such as one just rebuilt.
+pub fn redraw(app: &AppHandle) {
+    SHOWN.store(i64::MIN, Ordering::Relaxed);
+    refresh(app);
+}
+
 pub fn refresh(app: &AppHandle) {
     let percent = app
         .state::<crate::state::AppState>()

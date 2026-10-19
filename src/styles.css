@@ -127,7 +127,8 @@ html[data-couch="true"][data-pad-focus="true"] :focus {
   outline-offset: 3px;
 }
 
-/* Cover art, so the tile size is in px rather than rem: it is an image, not text. */
+/* Cover art, so the tile size is in px rather than rem: it is an image, not text.
+   The minimums are mirrored in CARD_MIN_WIDTH (LibraryView.tsx), which sizes the covers. */
 [data-library-grid] {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }

@@ -17,6 +17,8 @@ tracing.workspace = true
 reqwest.workspace = true
 sha2.workspace = true
 futures-util = "0.3"
+# Chunks as reqwest hands them over, so the unpacker gets them without a copy.
+bytes = "1"
 async-trait = "0.1"
 time.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate", "bzip2", "zstd", "lzma"] }

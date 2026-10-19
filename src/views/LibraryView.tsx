@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GameCard } from "@/components/GameCard";
 import { GameDetail } from "@/components/GameDetail";
@@ -26,10 +26,19 @@ import {
 } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
 import { useEntries, useStatus } from "@/lib/queries";
+import { useStableCallback } from "@/lib/useStableCallback";
+import { useCouch } from "@/state/couch";
 import { useRescanOnOpen } from "@/lib/rescan";
 import { SORT_KEYS, SORT_LABELS, directionLabel, sortEntries } from "@/lib/sort";
 import { PANEL_BODY } from "@/lib/ui";
 
+
+/** The grid's minimum column widths in styles.css. A column never reaches twice its minimum,
+ * which bounds how large a cover is drawn. */
+const CARD_MIN_WIDTH: Record<"desk" | "couch", Record<CardSize, number>> = {
+  desk: { small: 118, medium: 160, large: 230 },
+  couch: { small: 200, medium: 260, large: 330 },
+};
 
 export function LibraryView() {
   // In a store so the view survives switching tabs and restarting.
@@ -65,6 +74,9 @@ export function LibraryView() {
   // As in Downloads and Installed: reflect changes made outside the app.
   useRescanOnOpen();
 
+  const couch = useCouch((state) => state.couch);
+  const coverSizes = `${2 * CARD_MIN_WIDTH[couch ? "couch" : "desk"][cardSize]}px`;
+
   const entries = useEntries();
   const offline = Boolean(useStatus().data?.offline);
   const libraries = useQuery({ queryKey: ["libraries"], queryFn: () => backend.listLibraries() });
@@ -96,6 +108,8 @@ export function LibraryView() {
       setActionError(messageOf(e));
     }
   }
+
+  const onPrimaryAction = useStableCallback((entry: LibraryEntry) => void handlePrimaryAction(entry));
 
   async function downloadTo(entry: LibraryEntry, root: string) {
     setChoosingRoot(null);
@@ -137,6 +151,13 @@ export function LibraryView() {
     offline,
   ]);
 
+  // Progress replaces entries without changing a game or where it lives, so the options key on those alone.
+  const scope = useMemo(
+    () => (entries.data ?? []).map((e) => `${e.game.id}:${isLocal(e) ? 1 : 0}${isInstalled(e) ? 1 : 0}`).join(),
+    [entries.data],
+  );
+  const games = useSameItems((entries.data ?? []).map((e) => e.game));
+
   // Built from the current library, and narrowed by the other filters, so no option ever matches nothing.
   const options = useMemo(() => {
     const all = entries.data ?? [];
@@ -158,7 +179,9 @@ export function LibraryView() {
       FacetKey,
       string[]
     >;
-  }, [entries.data, libraryId, installedOnly, facets, offline]);
+    // `entries.data` is read through `scope` and `games`, which change whenever the options could.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, games, libraryId, installedOnly, facets, offline]);
 
   const hiddenOffline = useMemo(
     () => (offline ? (entries.data ?? []).filter((e) => !isLocal(e)).length : 0),
@@ -296,7 +319,8 @@ export function LibraryView() {
               <GameCard
                 key={entry.game.id}
                 entry={entry}
-                onPrimaryAction={(e) => void handlePrimaryAction(e)}
+                coverSizes={coverSizes}
+                onPrimaryAction={onPrimaryAction}
                 onOpen={setSelected}
               />
             ))}
@@ -462,4 +486,13 @@ function EmptyState({ search, hiddenOffline }: { search: string; hiddenOffline: 
       {offlineNote && <p className="text-xs text-foreground/40">{offlineNote}</p>}
     </div>
   );
+}
+
+/** The previous array while every item is the same object, so a memo keyed on it outlives a progress patch. */
+function useSameItems<T>(items: T[]): T[] {
+  const previous = useRef(items);
+  const same =
+    previous.current.length === items.length && previous.current.every((item, i) => item === items[i]);
+  if (!same) previous.current = items;
+  return previous.current;
 }

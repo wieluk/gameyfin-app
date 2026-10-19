@@ -140,6 +140,17 @@ async fn keep_umu_database_fresh(app: tauri::AppHandle) {
     }
 }
 
+/// glibc serves a large block from the heap once one that size was freed, and then keeps it.
+/// Decoding a cover or a download chunk would leave the process holding each peak; a fixed
+/// threshold sends them to mmap, which returns them on free.
+fn limit_retained_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: called before any other thread exists, and only changes an allocator tunable.
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 1 << 20);
+    }
+}
+
 /// Everything that needs the settings, the session or the library, once they are readable.
 async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     let state = app.state::<AppState>();
@@ -176,7 +187,7 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     if settings.check_for_updates {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
-            let status = updater::check(&app.state::<AppState>()).await;
+            let status = updater::check_cached(&app.state::<AppState>(), false).await;
             if let (true, Some(version)) = (status.available, status.latest_version.clone()) {
                 notify::update_available(&app, &version).await;
                 let _ = app.emit("update-available", status);
@@ -193,9 +204,7 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     // Only a login start hides: one by hand, or the restart after an update, must show the window.
     // Hiding needs somewhere to be hidden to, which only the tray provides.
     if launched_hidden && settings.autostart_hidden && tray::has_tray() {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.hide();
-        }
+        tray::hide(&app);
     }
     // After any hiding, so a start in the tray does not begin by reading the pad.
     gamepad::follow_focus(&app, pad);
@@ -210,6 +219,7 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
 }
 
 pub fn run() {
+    limit_retained_memory();
     // Before logging and before the single-instance plugin, which would hand the argument
     // over and leave this process printing nothing.
     let args: Vec<String> = std::env::args().collect();
@@ -377,6 +387,17 @@ pub fn run() {
             notify::dismiss_notification,
             notify::mark_notifications_read,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Gameyfin");
+        .build(tauri::generate_context!())
+        .expect("error while building Gameyfin")
+        .run(|_app, event| {
+            // A window let go in the tray is the last one closing, which is no reason to quit.
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
+                if !tray::is_quitting() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
