@@ -1,1 +1,0 @@
-import{_ as e,o as a,c as s,a2 as o}from"./chunks/framework.DkefD2kJ.js";const g=JSON.parse('{"title":"App settings","description":"","frontmatter":{},"headers":[],"relativePath":"app.md","filePath":"app.md"}'),n={name:"app.md"};function i(r,t,l,d,h,p){return a(),s("div",null,[...t[0]||(t[0]=[o("",18)])])}const u=e(n,[["render",i]]);export{g as __pageData,u as default};
