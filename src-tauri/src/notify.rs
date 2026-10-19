@@ -21,6 +21,7 @@ pub enum Category {
     Action,
     Failure,
     Update,
+    Proton,
 }
 
 impl Category {
@@ -29,6 +30,7 @@ impl Category {
             Category::Transfer | Category::Action => settings.notify_transfers,
             Category::Failure => settings.notify_failures,
             Category::Update => settings.notify_updates,
+            Category::Proton => settings.notify_proton,
         }
     }
 
@@ -412,6 +414,21 @@ pub async fn update_available(app: &AppHandle, version: &str) {
     .await;
 }
 
+/// Leads to the Proton builds, which head the Compatibility tab.
+pub async fn proton_update(app: &AppHandle, family: &str, tag: &str) {
+    send(
+        app,
+        Note {
+            category: Category::Proton,
+            title: format!("New {family}"),
+            body: format!("{tag} is ready to download."),
+            route: Some("/settings?tab=compatibility"),
+            game_id: None,
+        },
+    )
+    .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +449,7 @@ mod tests {
         assert!(Category::Transfer.enabled_in(&settings));
         assert!(Category::Failure.enabled_in(&settings));
         assert!(Category::Update.enabled_in(&settings));
+        assert!(Category::Proton.enabled_in(&settings));
 
         settings.notify_transfers = false;
         assert!(!Category::Transfer.enabled_in(&settings));
@@ -440,13 +458,19 @@ mod tests {
 
         settings.notify_failures = false;
         assert!(!Category::Failure.enabled_in(&settings));
+
+        settings.notify_proton = false;
+        assert!(!Category::Proton.enabled_in(&settings));
+        assert!(Category::Update.enabled_in(&settings));
     }
 
     #[test]
     fn only_what_needs_the_user_interrupts_a_focused_window() {
         assert!(Category::Action.shows_while_focused() && Category::Failure.shows_while_focused());
         assert!(
-            !Category::Transfer.shows_while_focused() && !Category::Update.shows_while_focused()
+            !Category::Transfer.shows_while_focused()
+                && !Category::Update.shows_while_focused()
+                && !Category::Proton.shows_while_focused()
         );
     }
 

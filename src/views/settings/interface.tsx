@@ -53,6 +53,12 @@ export function NotificationSection() {
         checked={settings.data?.notifyUpdates ?? true}
         onChange={(next) => save({ notifyUpdates: next })}
       />
+      <SwitchField
+        label="New Proton versions"
+        hint="For the Proton builds you have downloaded."
+        checked={settings.data?.notifyProton ?? true}
+        onChange={(next) => save({ notifyProton: next })}
+      />
       <p className={`${HINT} mt-1 border-t border-default-200/60 pt-2`}>
         Held back while you are looking at the window, apart from failures. Every notification is
         also listed behind the bell in the title bar.

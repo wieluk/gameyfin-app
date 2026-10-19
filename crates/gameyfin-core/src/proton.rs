@@ -206,6 +206,12 @@ fn sort_newest_first(builds: &mut [InstalledProton]) {
     builds.sort_by_key(|b| std::cmp::Reverse(version_key(&b.name)));
 }
 
+/// Whether a release tag is newer than a build on disk, whose folder name may carry a prefix
+/// or an architecture suffix the tag lacks.
+pub fn is_newer(tag: &str, build_name: &str) -> bool {
+    !build_name.contains(tag) && version_key(tag) > version_key(build_name)
+}
+
 /// Digit groups of a build name, so `GE-Proton11-6` sorts above `GE-Proton10-34`. The
 /// architecture suffix is dropped first, or its `86` and `64` would count as versions.
 fn version_key(name: &str) -> Vec<u64> {
@@ -594,6 +600,23 @@ mod tests {
         );
 
         assert!(version_key("UMU-Proton-10.0-4") > version_key("UMU-Proton-9.0-4e"));
+    }
+
+    #[test]
+    fn only_a_later_release_counts_as_newer() {
+        assert!(is_newer("GE-Proton10-25", "GE-Proton10-20"));
+        assert!(is_newer("GE-Proton11-1", "GE-Proton10-34-x86_64"));
+        assert!(is_newer(
+            "cachyos-11.0-20261005-slr",
+            "proton-cachyos-11.0-20260901-slr-x86_64_v3"
+        ));
+        assert!(!is_newer("GE-Proton10-25", "GE-Proton10-25-x86_64"));
+        assert!(!is_newer(
+            "cachyos-11.0-20261005-slr",
+            "proton-cachyos-11.0-20261005-slr-x86_64"
+        ));
+        // A release pulled from the feed leaves an older one on top.
+        assert!(!is_newer("UMU-Proton-9.0-4e", "UMU-Proton-10.0-4"));
     }
 
     #[test]

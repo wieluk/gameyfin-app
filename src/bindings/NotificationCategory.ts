@@ -3,4 +3,4 @@
 /**
  * What kind of event a notification reports, which decides the setting that gates it.
  */
-export type NotificationCategory = "transfer" | "action" | "failure" | "update";
+export type NotificationCategory = "transfer" | "action" | "failure" | "update" | "proton";

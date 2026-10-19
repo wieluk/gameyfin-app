@@ -31,7 +31,11 @@ downloadProvider: string | null, notifyTransfers: boolean,
 /**
  * Separate so failures stay audible with the routine chatter off.
  */
-notifyFailures: boolean, notifyUpdates: boolean, closeToTray: boolean, 
+notifyFailures: boolean, notifyUpdates: boolean, 
+/**
+ * New builds of a Proton family that is installed.
+ */
+notifyProton: boolean, closeToTray: boolean, 
 /**
  * Hides the window on a login start only. Starting Gameyfin by hand always shows it.
  */

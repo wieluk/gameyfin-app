@@ -17,6 +17,7 @@ pub struct SettingsPatch {
     pub notify_transfers: Option<bool>,
     pub notify_failures: Option<bool>,
     pub notify_updates: Option<bool>,
+    pub notify_proton: Option<bool>,
     pub close_to_tray: Option<bool>,
     pub autostart_hidden: Option<bool>,
     pub autostart: Option<bool>,
@@ -74,6 +75,7 @@ impl SettingsPatch {
             notify_transfers,
             notify_failures,
             notify_updates,
+            notify_proton,
             close_to_tray,
             autostart_hidden,
             autostart,
@@ -172,6 +174,8 @@ pub struct Settings {
     /// Separate so failures stay audible with the routine chatter off.
     pub notify_failures: bool,
     pub notify_updates: bool,
+    /// New builds of a Proton family that is installed.
+    pub notify_proton: bool,
     pub close_to_tray: bool,
     /// Hides the window on a login start only. Starting Gameyfin by hand always shows it.
     pub autostart_hidden: bool,
@@ -231,6 +235,7 @@ impl Default for Settings {
             notify_transfers: true,
             notify_failures: true,
             notify_updates: true,
+            notify_proton: true,
             close_to_tray: false,
             autostart_hidden: true,
             focus_after_game: true,
@@ -659,6 +664,7 @@ mod tests {
         ("notifyTransfers", "false"),
         ("notifyFailures", "false"),
         ("notifyUpdates", "false"),
+        ("notifyProton", "false"),
         ("closeToTray", "true"),
         ("autostartHidden", "false"),
         ("autostart", "true"),

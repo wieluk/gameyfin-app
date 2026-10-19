@@ -156,6 +156,7 @@ async fn start_up(app: tauri::AppHandle, launched_hidden: bool) {
     // From cache first, so an early launch is not delayed by a fetch.
     state.load_umu_database(&config_dir);
     tauri::async_runtime::spawn(keep_umu_database_fresh(app.clone()));
+    tauri::async_runtime::spawn(proton::watch_for_updates(app.clone()));
     if let Some(cache) = state.image_cache() {
         tokio::task::spawn_blocking(move || cache.prune());
     }

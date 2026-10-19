@@ -16,8 +16,14 @@
 
 ## Notifications
 
-Three switches: downloads and installs, failures, and new versions of Gameyfin. Failures
-are always shown; the others stay quiet while you are looking at the window.
+Four switches: downloads and installs, failures, new versions of Gameyfin, and new Proton
+versions. Failures are always shown; the others stay quiet while you are looking at the
+window.
+
+Proton builds do not update by themselves, since a new build can break a game that ran.
+Gameyfin checks twice a day for a newer UMU-Proton, GE-Proton or Proton-CachyOS, only for the
+ones you have downloaded, and tells you once per release. Clicking it opens **Settings,
+Compatibility**, where **Update to** fetches it.
 
 Clicking a notification opens Gameyfin on the page it is about. Every notification is also
 listed behind the bell in the title bar, even when its popup was switched off or held back.
