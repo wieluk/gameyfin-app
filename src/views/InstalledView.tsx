@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert } from "@/components/Alert";
@@ -88,7 +88,8 @@ export function InstalledView() {
   );
 }
 
-function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolean }) {
+// Memoized so a progress update to one game redraws only its row.
+const InstalledRow = memo(function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolean }) {
   const [expanded, setExpanded] = useState(focused);
   const row = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -111,6 +112,13 @@ function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolea
 
   const play = () => run(() => backend.launch(entry.game.id));
   const runSetup = (setup: string) => run(() => backend.installSetups(entry.game.id, [setup]));
+  // Rerun through the shell so Windows shows its consent dialog: the setup it refused, or the game.
+  const runAsAdministrator = (stage: string) =>
+    run(async () => {
+      if (stage === "launch") await backend.launchElevated(entry.game.id);
+      else await backend.runSetupElevated(entry.game.id);
+      await queryClient.invalidateQueries({ queryKey: keys.entries });
+    });
 
   function uninstall(options: UninstallOptions) {
     uninstallPrompt.close();
@@ -279,13 +287,23 @@ function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolea
               : "border-primary/30 bg-primary/10 text-foreground/70"
           }`}
         >
-          <p>
+          <p className="whitespace-pre-line wrap-break-word">
             {busy.kind === "installing"
               ? busy.step
                 ? `Installing ${busy.step}…`
                 : "Running a setup program…"
               : busy.message}
           </p>
+          {busy.kind === "failed" && busy.elevationRequired && (
+            <Button
+              className="mt-2"
+              size="sm"
+              variant="primary"
+              onClick={() => void runAsAdministrator(busy.stage)}
+            >
+              Run as administrator
+            </Button>
+          )}
           {busy.kind === "preparing" && busy.progress && (
             <div className="mt-2">
               <TransferProgress {...busy.progress} />
@@ -331,7 +349,7 @@ function InstalledRow({ entry, focused }: { entry: LibraryEntry; focused: boolea
       )}
     </article>
   );
-}
+});
 
 function Options({
   entry,

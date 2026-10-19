@@ -146,6 +146,26 @@ pub fn current_version() -> &'static str {
 }
 
 /// Never fails: offline and rate-limited are normal, so the reason travels in `error`.
+/// How long one answer from GitHub stands in for another check.
+const CHECK_REUSE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// The last answer, behind an async lock so the startup check and the window share one request.
+static LAST_CHECK: tokio::sync::Mutex<Option<(std::time::Instant, UpdateStatus)>> =
+    tokio::sync::Mutex::const_new(None);
+
+/// [`check`], reusing a recent answer unless `force`. A failed check is never reused.
+pub async fn check_cached(state: &AppState, force: bool) -> UpdateStatus {
+    let mut last = LAST_CHECK.lock().await;
+    if let Some((at, status)) = last.as_ref() {
+        if !force && status.error.is_none() && at.elapsed() < CHECK_REUSE {
+            return status.clone();
+        }
+    }
+    let status = check(state).await;
+    *last = Some((std::time::Instant::now(), status.clone()));
+    status
+}
+
 pub async fn check(state: &AppState) -> UpdateStatus {
     let channel = detect_channel();
     let mut status = UpdateStatus {
@@ -436,8 +456,11 @@ async fn flatpak_update(app: &AppHandle) -> CommandResult<UpdateOutcome> {
 }
 
 #[tauri::command]
-pub async fn update_status(state: tauri::State<'_, AppState>) -> CommandResult<UpdateStatus> {
-    Ok(check(&state).await)
+pub async fn update_status(
+    state: tauri::State<'_, AppState>,
+    force: Option<bool>,
+) -> CommandResult<UpdateStatus> {
+    Ok(check_cached(&state, force.unwrap_or(false)).await)
 }
 
 /// Install a waiting update where the format allows it. Returns a sentence for the user,

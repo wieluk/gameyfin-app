@@ -1,6 +1,7 @@
 //! Running Windows games through umu and Proton: the launcher, the downloaded builds, and
 //! which runtime a game gets.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -8,7 +9,7 @@ use std::time::Duration;
 use gameyfin_core::proton::{self, InstalledProton, ProtonFamily, ProtonRelease};
 use gameyfin_core::{RuntimeContext, WindowsRuntime};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{blocking, CommandError, CommandResult, Context};
 use crate::state::AppState;
@@ -151,6 +152,64 @@ async fn download(
     .context(format!("Could not install {}", release.tag))?;
     let _ = app.emit("proton-changed", ());
     Ok(installed)
+}
+
+/// The newest tag announced per family, so a release the user skips is announced only once.
+const ANNOUNCED_FILE: &str = "proton-announced.json";
+
+/// Proton updates by hand, since a new build can break a game that ran, so the user is told.
+pub async fn watch_for_updates(app: AppHandle) {
+    // A family releases a few times a month, and GitHub limits unauthenticated requests.
+    const CHECK_EVERY: Duration = Duration::from_secs(12 * 60 * 60);
+    loop {
+        announce_updates(&app).await;
+        tokio::time::sleep(CHECK_EVERY).await;
+    }
+}
+
+/// Only families with a build installed: an unused one is not news.
+async fn announce_updates(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let config_dir = state.config_dir();
+    let dir = config_dir.clone();
+    let installed = tokio::task::spawn_blocking(move || proton::installed(&dir))
+        .await
+        .unwrap_or_default();
+    if installed.is_empty() {
+        return;
+    }
+    let file = config_dir.join(ANNOUNCED_FILE);
+    let mut announced: BTreeMap<String, String> = crate::persist::read_json_or_default(&file).await;
+    let before = announced.clone();
+    for family in [
+        ProtonFamily::UmuProton,
+        ProtonFamily::GeProton,
+        ProtonFamily::ProtonCachyos,
+    ] {
+        // Newest first, so this is the build the family runs.
+        let Some(build) = installed.iter().find(|b| b.family == Some(family)) else {
+            continue;
+        };
+        let release = match proton::latest_release(&state.http(), family).await {
+            Ok(release) => release,
+            Err(e) => {
+                tracing::info!(family = family.as_str(), error = %e, "could not check for Proton");
+                continue;
+            }
+        };
+        if !proton::is_newer(&release.tag, &build.name)
+            || announced.get(family.as_str()) == Some(&release.tag)
+        {
+            continue;
+        }
+        crate::notify::proton_update(app, family.label(), &release.tag).await;
+        announced.insert(family.as_str().to_string(), release.tag);
+    }
+    if announced != before {
+        if let Err(e) = crate::persist::write_json(&file, &announced, false).await {
+            tracing::warn!("could not record the announced Proton releases: {e}");
+        }
+    }
 }
 
 #[derive(Debug, Serialize, ts_rs::TS)]

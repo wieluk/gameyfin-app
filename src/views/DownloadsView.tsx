@@ -223,7 +223,7 @@ function DownloadRow({
         <>
           <div className="h-1.5 overflow-hidden rounded-full bg-default-200">
             <div
-              className={`h-full rounded-full transition-[width] ${
+              className={`h-full rounded-full ${
                 state.kind === "downloading"
                   ? "bg-primary"
                   : state.kind === "paused"

@@ -18,7 +18,7 @@ runs:
       with:
         node-version: 24
         cache: npm
-    - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
     # A tag run can only restore a cache saved on main, so one saved anywhere else is wasted.
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       with:

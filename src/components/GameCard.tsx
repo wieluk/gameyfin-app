@@ -1,5 +1,6 @@
+import { memo } from "react";
 import { Icon } from "./Icon";
-import { primaryAction } from "@/lib/actions";
+import { isInstalled, primaryAction } from "@/lib/actions";
 import {
   formatBytes,
   formatEta,
@@ -7,6 +8,7 @@ import {
   formatPlaytime,
   formatSpeed,
 } from "@/lib/format";
+import { titleGradient } from "@/lib/ui";
 import type { LibraryEntry, TransferProgress } from "@/types";
 
 /** A library tile; 2:3 cover art so the grid reads as a shelf, not a table. */
@@ -18,12 +20,16 @@ const STAGE_FAILURE = {
   launch: "Launch failed",
 } as const;
 
-export function GameCard({
+// Memoized: progress patches one entry five times a second, and only that card should redraw.
+export const GameCard = memo(function GameCard({
   entry,
+  coverSizes,
   onPrimaryAction,
   onOpen,
 }: {
   entry: LibraryEntry;
+  /** The widest the card can be drawn, as an `<img sizes>` value. */
+  coverSizes: string;
   onPrimaryAction: (entry: LibraryEntry) => void;
   onOpen: (entry: LibraryEntry) => void;
 }) {
@@ -49,7 +55,14 @@ export function GameCard({
         className="relative aspect-2/3 cursor-pointer overflow-hidden rounded-xl bg-default-200 shadow-xs ring-1 ring-default-300/40 transition-transform duration-200 group-hover:-translate-y-1 group-hover:shadow-xl focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary"
       >
         {coverUrl ? (
-          <img src={coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+          <img
+            src={coverUrl}
+            srcSet={coverSrcSet(coverUrl)}
+            sizes={coverSizes}
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
         ) : (
           <PlaceholderArt title={game.title} />
         )}
@@ -78,21 +91,25 @@ export function GameCard({
         <h3 className="truncate text-sm font-medium text-foreground" title={game.title}>
           {game.title}
         </h3>
-        <p className="truncate text-xs text-foreground/50">{subtitle(entry)}</p>
+        <p className="truncate text-xs text-foreground/50">{cardSubtitle(entry)}</p>
       </div>
     </article>
   );
+});
+
+/** Widths the backend scales covers to. The webview takes the smallest that fills the card at
+ * this screen's density, since a full-size cover decoded for a small tile is memory thrown away. */
+const COVER_WIDTHS = [320, 480, 640, 960, 1280, 1920];
+
+function coverSrcSet(url: string): string {
+  return COVER_WIDTHS.map((width) => `${url}?w=${width} ${width}w`).join(", ");
 }
 
-/** Deterministic gradient keyed off the title, so a coverless game still looks placed. */
 function PlaceholderArt({ title }: { title: string }) {
-  const hue = [...title].reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) % 360, 7);
   return (
     <div
       className="flex h-full w-full items-center justify-center p-3"
-      style={{
-        background: `linear-gradient(145deg, hsl(${hue} 45% 28%), hsl(${(hue + 40) % 360} 40% 16%))`,
-      }}
+      style={{ background: titleGradient(title) }}
     >
       <span className="line-clamp-3 text-center text-sm font-semibold text-white/85">{title}</span>
     </div>
@@ -103,14 +120,14 @@ function InstallingBadge({ progress }: { progress?: TransferProgress }) {
   const percent =
     progress && progress.totalBytes > 0 ? (progress.receivedBytes / progress.totalBytes) * 100 : undefined;
   return (
-    <div className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-xs">
+    <div className="absolute inset-x-0 bottom-0 bg-black/80 px-2.5 py-1.5">
       <div className="mb-1 flex justify-between text-[0.625rem] text-white/80">
         <span>Installing</span>
         {progress ? <span>{formatInstallProgress(progress)}</span> : null}
       </div>
       <div className="h-1 overflow-hidden rounded-full bg-white/20">
         <div
-          className={`h-full rounded-full bg-warning transition-[width] ${percent === undefined ? "animate-pulse" : ""}`}
+          className={`h-full rounded-full bg-warning ${percent === undefined ? "animate-pulse" : ""}`}
           style={{ width: `${percent ?? 100}%` }}
         />
       </div>
@@ -118,6 +135,8 @@ function InstallingBadge({ progress }: { progress?: TransferProgress }) {
   );
 }
 
+// No backdrop blur and no width transition: with progress landing five times a second, either
+// one keeps the webview repainting the cover for the whole download.
 function StateBadge({ entry }: { entry: LibraryEntry }) {
   const { state } = entry;
 
@@ -125,13 +144,13 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
     const percent = state.totalBytes > 0 ? (state.receivedBytes / state.totalBytes) * 100 : 0;
     const eta = formatEta(state.receivedBytes, state.totalBytes, state.bytesPerSecond);
     return (
-      <div className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-xs">
+      <div className="absolute inset-x-0 bottom-0 bg-black/80 px-2.5 py-1.5">
         <div className="mb-1 flex justify-between text-[0.625rem] text-white/80">
           <span>{formatSpeed(state.bytesPerSecond)}</span>
           {eta ? <span>{eta}</span> : null}
         </div>
         <div className="h-1 overflow-hidden rounded-full bg-white/20">
-          <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${percent}%` }} />
+          <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
         </div>
       </div>
     );
@@ -140,7 +159,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
   if (state.kind === "paused") {
     const percent = state.totalBytes > 0 ? (state.receivedBytes / state.totalBytes) * 100 : 0;
     return (
-      <div className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-xs">
+      <div className="absolute inset-x-0 bottom-0 bg-black/80 px-2.5 py-1.5">
         <div className="mb-1 text-[0.625rem] text-white/80">Paused</div>
         <div className="h-1 overflow-hidden rounded-full bg-white/20">
           <div className="h-full rounded-full bg-white/50" style={{ width: `${percent}%` }} />
@@ -162,7 +181,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
   if (state.kind === "failed") {
     return (
       <div
-        className="absolute inset-x-0 bottom-0 bg-danger/85 px-2.5 py-1.5 backdrop-blur-xs"
+        className="absolute inset-x-0 bottom-0 bg-danger/90 px-2.5 py-1.5"
         title={state.message}
       >
         <p className="truncate text-[0.625rem] font-medium text-white">
@@ -188,7 +207,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
     if (download && download.totalBytes > 0) {
       return (
         <div
-          className="absolute inset-x-0 bottom-0 bg-black/75 px-2.5 py-1.5 backdrop-blur-xs"
+          className="absolute inset-x-0 bottom-0 bg-black/80 px-2.5 py-1.5"
           title={busy?.kind === "preparing" ? busy.message : undefined}
         >
           <div className="mb-1 flex justify-between text-[0.625rem] text-white/80">
@@ -197,7 +216,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
           </div>
           <div className="h-1 overflow-hidden rounded-full bg-white/20">
             <div
-              className="h-full rounded-full bg-primary transition-[width]"
+              className="h-full rounded-full bg-primary"
               style={{ width: `${(download.receivedBytes / download.totalBytes) * 100}%` }}
             />
           </div>
@@ -211,8 +230,8 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
       return (
         <span
           title={busy.kind === "installing" ? undefined : busy.message}
-          className={`absolute left-2 top-2 rounded-md px-2 py-0.5 text-[0.625rem] font-medium text-white backdrop-blur-xs ${
-            busy.kind === "failed" ? "bg-danger/85" : "bg-black/75"
+          className={`absolute left-2 top-2 rounded-md px-2 py-0.5 text-[0.625rem] font-medium text-white ${
+            busy.kind === "failed" ? "bg-danger/85" : "bg-black/80"
           }`}
         >
           {busy.kind === "preparing"
@@ -224,7 +243,7 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
       );
     }
     return (
-      <span className="absolute left-2 top-2 rounded-md bg-black/65 px-2 py-0.5 text-[0.625rem] font-medium text-white/90 backdrop-blur-xs">
+      <span className="absolute left-2 top-2 rounded-md bg-black/75 px-2 py-0.5 text-[0.625rem] font-medium text-white/90">
         Installed
       </span>
     );
@@ -233,8 +252,8 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
   return null;
 }
 
-
-function subtitle(entry: LibraryEntry): string {
+/** The line under a tile. Each form says what its number is, since they sit side by side. */
+export function cardSubtitle(entry: LibraryEntry): string {
   if (entry.state.kind === "downloading") {
     return `${formatBytes(entry.state.receivedBytes)} of ${formatBytes(entry.state.totalBytes)}`;
   }
@@ -244,6 +263,9 @@ function subtitle(entry: LibraryEntry): string {
   if (entry.state.kind === "downloaded") {
     return `Downloaded (${formatBytes(entry.state.bytes)})`;
   }
-  if (entry.minutesPlayed > 0) return formatPlaytime(entry.minutesPlayed);
-  return formatBytes(entry.game.metadata.fileSize);
+  if (entry.state.kind === "installing") return "Installing";
+  if (entry.minutesPlayed > 0) return `${formatPlaytime(entry.minutesPlayed)} played`;
+  if (isInstalled(entry)) return "Not played yet";
+  const size = entry.game.metadata.fileSize;
+  return size > 0 ? `${formatBytes(size)} download` : "Not installed";
 }

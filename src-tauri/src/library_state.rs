@@ -48,12 +48,19 @@ pub struct GameRecord {
     pub suggested_winetricks: Vec<String>,
     /// A setup program Windows refused without elevation, so the retry runs that exact file.
     pub elevation_program: Option<PathBuf>,
+    /// The game would not start without administrator rights, so its retry asks for them.
+    pub launch_elevation: bool,
+    /// Gameyfin unticked "Run as administrator" on it, so a failed start may need it back.
+    pub run_as_admin_cleared: bool,
     pub saves: gameyfin_core::LocalSaveState,
     pub save_restore_strategy: SaveRestoreStrategy,
     /// Hand-entered `(source, target)` path mappings.
     pub save_redirects: Vec<(String, String)>,
     /// A download stopped part way, by a pause, a failure or quitting, kept so it can resume.
     pub partial_download: Option<PartialDownload>,
+    /// The server's size for the game when it was downloaded, so a change can be noticed.
+    /// Zero is unknown.
+    pub source_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -257,6 +264,10 @@ pub enum InstalledBusy {
     },
     Failed {
         message: String,
+        /// Says whether the administrator retry reruns the setup or starts the game.
+        stage: Stage,
+        /// The retry that helps is "as administrator", not a plain retry.
+        elevation_required: bool,
     },
 }
 
@@ -541,7 +552,7 @@ impl LibraryState {
         };
 
         if record.is_installed() {
-            if let Some(busy) = busy_for(&activity) {
+            if let Some(busy) = busy_for(&activity, &record) {
                 return installed_state(record, Some(busy));
             }
         }
@@ -572,9 +583,9 @@ impl LibraryState {
             Activity::Failed { message, stage } => GameState::Failed {
                 message,
                 stage,
+                elevation_required: offers_elevation(&record, stage),
                 path: record.install_dir.as_deref().map(display),
                 executable: record.executable,
-                elevation_required: stage == Stage::Install && record.elevation_program.is_some(),
             },
         }
     }
@@ -696,7 +707,7 @@ fn resting_state(record: GameRecord) -> GameState {
 }
 
 /// Downloading and extracting stay Downloads-side work even for an installed game.
-fn busy_for(activity: &Activity) -> Option<InstalledBusy> {
+fn busy_for(activity: &Activity, record: &GameRecord) -> Option<InstalledBusy> {
     match activity {
         Activity::Preparing { message, progress } => Some(InstalledBusy::Preparing {
             message: message.clone(),
@@ -708,11 +719,21 @@ fn busy_for(activity: &Activity) -> Option<InstalledBusy> {
         }),
         Activity::Failed {
             message,
-            stage: Stage::Install | Stage::Launch,
+            stage: stage @ (Stage::Install | Stage::Launch),
         } => Some(InstalledBusy::Failed {
             message: message.clone(),
+            stage: *stage,
+            elevation_required: offers_elevation(record, *stage),
         }),
         _ => None,
+    }
+}
+
+fn offers_elevation(record: &GameRecord, stage: Stage) -> bool {
+    match stage {
+        Stage::Install => record.elevation_program.is_some(),
+        Stage::Launch => record.launch_elevation,
+        _ => false,
     }
 }
 
@@ -801,6 +822,13 @@ mod tests {
 
         state.fail(8, Stage::Install, "exit code 1");
         assert!(!elevation_offered(&state, 8));
+
+        // A game that would not start without the rights gets the same way out.
+        state.update_record(9, |r| r.launch_elevation = true).await;
+        state.fail(9, Stage::Launch, "needs administrator");
+        assert!(elevation_offered(&state, 9));
+        state.fail(9, Stage::Install, "exit code 1");
+        assert!(!elevation_offered(&state, 9));
     }
 
     #[tokio::test]
@@ -837,6 +865,21 @@ mod tests {
             state.state_of(4),
             GameState::Installed {
                 busy: Some(InstalledBusy::Failed { .. }),
+                ..
+            }
+        ));
+        state
+            .update_record(4, |r| r.elevation_program = Some(dir.join("setup.exe")))
+            .await;
+        state.fail(4, Stage::Install, "needs administrator");
+        // Installed reruns setups too, so it needs the same way out as Downloads.
+        assert!(matches!(
+            state.state_of(4),
+            GameState::Installed {
+                busy: Some(InstalledBusy::Failed {
+                    elevation_required: true,
+                    ..
+                }),
                 ..
             }
         ));

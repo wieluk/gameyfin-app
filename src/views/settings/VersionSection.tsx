@@ -109,7 +109,7 @@ export function VersionSection({ tool, children }: { tool: VersionTool; children
         <div className="flex flex-col gap-1 pt-1">
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-default-200">
             <div
-              className="h-full bg-primary transition-[width]"
+              className="h-full bg-primary"
               style={{
                 width: progress?.totalBytes
                   ? `${Math.round((progress.receivedBytes / progress.totalBytes) * 100)}%`

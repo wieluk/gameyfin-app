@@ -55,7 +55,9 @@ export function primaryAction(state: GameState): PrimaryAction {
       // Retry the step that failed. A launch failure offers Play: the game is installed,
       // and re-downloading it was never the fix.
       if (state.stage === "launch") {
-        return { label: "Play", icon: "play", disabled: false, run: backend.launch };
+        return state.elevationRequired
+          ? { label: "Run as administrator", icon: "play", disabled: false, run: backend.launchElevated }
+          : { label: "Play", icon: "play", disabled: false, run: backend.launch };
       }
       return {
         label:

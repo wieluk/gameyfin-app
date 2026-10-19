@@ -122,6 +122,8 @@ export const backend = {
   /** Retry the setup program Windows refused to start, as administrator. */
   runSetupElevated: (gameId: number) => invoke<void>("run_setup_elevated", { gameId }),
   launch: (gameId: number) => invoke<void>("launch_game", { gameId }),
+  /** Start a game that would not start without administrator rights, through Windows' consent. */
+  launchElevated: (gameId: number) => invoke<void>("launch_game_elevated", { gameId }),
   /** Stop whatever the game is running, an installer or the game itself. */
   stopGame: (gameId: number) => invoke<void>("stop_game", { gameId }),
   listExecutables: (gameId: number) => invoke<string[]>("list_executables", { gameId }),
@@ -261,7 +263,7 @@ export const backend = {
   /** Checks the configured location answers. Returns a sentence to show the user. */
   testSaveStore: () => invoke<string>("test_save_store"),
 
-  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  updateStatus: (force = false) => invoke<UpdateStatus>("update_status", { force }),
   /** Returns what to tell the user; what happens next differs by package format. */
   installUpdate: () => invoke<UpdateOutcome>("install_update"),
   /** Quits and starts the freshly installed version. */

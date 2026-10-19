@@ -231,6 +231,7 @@ pub async fn start_download(
                         r.archive_path = Some(outcome.path.clone());
                         r.archive_bytes = outcome.bytes;
                         r.partial_download = None;
+                        r.source_bytes = expected_bytes;
                     })
                     .await;
                 library.clear_activity(game_id);
@@ -252,7 +253,10 @@ pub async fn start_download(
             Ok(Outcome::Unpacked { dir, bytes }) => {
                 tracing::info!(game_id, ?dir, bytes, "download unpacked as it arrived");
                 library
-                    .update_record(game_id, |r| r.partial_download = None)
+                    .update_record(game_id, |r| {
+                        r.partial_download = None;
+                        r.source_bytes = expected_bytes;
+                    })
                     .await;
                 let setups = {
                     let dir = dir.clone();

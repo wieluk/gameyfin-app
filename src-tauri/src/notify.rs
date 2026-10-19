@@ -21,19 +21,40 @@ pub enum Category {
     Action,
     Failure,
     Update,
+    Proton,
+    /// The server stopped accepting the login, which only signing in again fixes.
+    SignedOut,
+    Connection,
+    Saves,
+    NewGames,
+    /// An installed game whose files changed on the server.
+    GameUpdate,
 }
 
 impl Category {
     fn enabled_in(self, settings: &Settings) -> bool {
+        settings.notify_enabled && self.enabled_alone(settings)
+    }
+
+    fn enabled_alone(self, settings: &Settings) -> bool {
         match self {
             Category::Transfer | Category::Action => settings.notify_transfers,
             Category::Failure => settings.notify_failures,
             Category::Update => settings.notify_updates,
+            Category::Proton => settings.notify_proton,
+            Category::SignedOut => settings.notify_sign_in,
+            Category::Connection => settings.notify_connection,
+            Category::Saves => settings.notify_saves,
+            Category::NewGames => settings.notify_new_games,
+            Category::GameUpdate => settings.notify_game_updates,
         }
     }
 
     fn shows_while_focused(self) -> bool {
-        matches!(self, Category::Action | Category::Failure)
+        matches!(
+            self,
+            Category::Action | Category::Failure | Category::SignedOut
+        )
     }
 }
 
@@ -57,7 +78,7 @@ pub struct Note {
     pub category: Category,
     pub title: String,
     pub body: String,
-    pub route: Option<&'static str>,
+    pub route: Option<String>,
     /// Whose cover the desktop popup shows.
     pub game_id: Option<i64>,
 }
@@ -82,7 +103,7 @@ impl Inbox {
             title: note.title.clone(),
             body: note.body.clone(),
             created_at,
-            route: note.route.map(str::to_string),
+            route: note.route.clone(),
             read: false,
         });
         items.truncate(KEEP);
@@ -220,7 +241,7 @@ mod desktop {
                     _ => false,
                 };
                 if clicked {
-                    crate::tray::reveal(&app, note.route);
+                    crate::tray::reveal(&app, note.route.as_deref());
                     app.state::<super::Inbox>().dismiss(Some(id));
                     let _ = app.emit("notifications-changed", ());
                 }
@@ -342,7 +363,7 @@ pub async fn download_finished(app: &AppHandle, game_id: i64, title: &str) {
             category: Category::Transfer,
             title: "Download finished".into(),
             body: format!("{title} is ready to install."),
-            route: Some("/downloads"),
+            route: Some("/downloads".into()),
             game_id: Some(game_id),
         },
     )
@@ -357,7 +378,7 @@ pub async fn setup_needed(app: &AppHandle, game_id: i64, route: &'static str, bo
             category: Category::Action,
             title: "Setup needed".into(),
             body: body.to_string(),
-            route: Some(route),
+            route: Some(route.into()),
             game_id: Some(game_id),
         },
     )
@@ -371,7 +392,7 @@ pub async fn install_finished(app: &AppHandle, game_id: i64, title: &str) {
             category: Category::Transfer,
             title: "Ready to play".into(),
             body: format!("{title} is installed."),
-            route: Some("/installed"),
+            route: Some("/installed".into()),
             game_id: Some(game_id),
         },
     )
@@ -391,7 +412,7 @@ pub async fn failed(app: &AppHandle, game_id: i64, stage: &str, title: &str, rea
             category: Category::Failure,
             title: format!("{stage} failed"),
             body: format!("{title}: {reason}"),
-            route: Some(failure_route(stage, installed)),
+            route: Some(failure_route(stage, installed).into()),
             game_id: Some(game_id),
         },
     )
@@ -405,8 +426,144 @@ pub async fn update_available(app: &AppHandle, version: &str) {
             category: Category::Update,
             title: "Update available".into(),
             body: format!("Gameyfin {version} has been released."),
-            route: Some("/settings?tab=about"),
+            route: Some("/settings?tab=about".into()),
             game_id: None,
+        },
+    )
+    .await;
+}
+
+/// Leads to the Proton builds, which head the Compatibility tab.
+pub async fn proton_update(app: &AppHandle, family: &str, tag: &str) {
+    send(
+        app,
+        Note {
+            category: Category::Proton,
+            title: format!("New {family}"),
+            body: format!("{tag} is ready to download."),
+            route: Some("/settings?tab=compatibility".into()),
+            game_id: None,
+        },
+    )
+    .await;
+}
+
+/// No route: signed out, the window shows the sign-in wherever it was.
+pub async fn signed_out(app: &AppHandle, server: &str) {
+    send(
+        app,
+        Note {
+            category: Category::SignedOut,
+            title: "Signed out".into(),
+            body: format!("Sign in to {server} again to keep downloads and save sync going."),
+            route: None,
+            game_id: None,
+        },
+    )
+    .await;
+}
+
+pub async fn server_unreachable(app: &AppHandle, server: &str) {
+    send(
+        app,
+        Note {
+            category: Category::Connection,
+            title: "Server unreachable".into(),
+            body: format!("{server} is not answering. Installed games still play."),
+            route: None,
+            game_id: None,
+        },
+    )
+    .await;
+}
+
+pub async fn server_back(app: &AppHandle, server: &str) {
+    send(
+        app,
+        Note {
+            category: Category::Connection,
+            title: "Back online".into(),
+            body: format!("{server} is answering again."),
+            route: None,
+            game_id: None,
+        },
+    )
+    .await;
+}
+
+pub async fn save_sync_failed(app: &AppHandle, game_id: i64, title: &str, reason: &str) {
+    send(
+        app,
+        Note {
+            category: Category::Saves,
+            title: "Save sync failed".into(),
+            body: format!("{title}: {reason}"),
+            route: Some("/saves".into()),
+            game_id: Some(game_id),
+        },
+    )
+    .await;
+}
+
+/// `route` is `None` when the question is a dialog over whatever page is open.
+pub async fn save_choice_needed(app: &AppHandle, game_id: i64, title: &str, route: Option<String>) {
+    send(
+        app,
+        Note {
+            category: Category::Saves,
+            title: "Choose a save".into(),
+            body: format!("{title}: pick which save to use."),
+            route,
+            game_id: Some(game_id),
+        },
+    )
+    .await;
+}
+
+/// One notification for a batch, since a scan can add many games at once.
+pub async fn new_games(app: &AppHandle, games: &[(i64, String)]) {
+    let titles: Vec<&str> = games.iter().map(|(_, title)| title.as_str()).collect();
+    let Some((title, body)) = new_games_text(&titles) else {
+        return;
+    };
+    send(
+        app,
+        Note {
+            category: Category::NewGames,
+            title,
+            body,
+            route: Some("/".into()),
+            game_id: (games.len() == 1).then(|| games[0].0),
+        },
+    )
+    .await;
+}
+
+fn new_games_text(titles: &[&str]) -> Option<(String, String)> {
+    Some(match titles {
+        [] => return None,
+        [one] => (
+            "New game".into(),
+            format!("{one} was added to the library."),
+        ),
+        [a, b] => ("2 new games".into(), format!("{a} and {b} were added.")),
+        [a, b, rest @ ..] => (
+            format!("{} new games", titles.len()),
+            format!("{a}, {b} and {} more were added.", rest.len()),
+        ),
+    })
+}
+
+/// Stock servers have no versions, so new files show as the game's size changing.
+pub async fn game_files_changed(app: &AppHandle, game_id: i64, title: &str) {
+    send(
+        app,
+        Note {
+            category: Category::GameUpdate,
+            title: "Game updated on the server".into(),
+            body: format!("{title} has new files. Download it again to update."),
+            route: Some(format!("/installed?game={game_id}")),
+            game_id: Some(game_id),
         },
     )
     .await;
@@ -421,9 +578,20 @@ mod tests {
             category: Category::Transfer,
             title: title.into(),
             body: String::new(),
-            route: Some("/downloads"),
+            route: Some("/downloads".into()),
             game_id: None,
         }
+    }
+
+    #[test]
+    fn the_main_switch_silences_every_kind() {
+        let settings = Settings {
+            notify_enabled: false,
+            ..Settings::default()
+        };
+        assert!(!Category::Failure.enabled_in(&settings));
+        assert!(!Category::SignedOut.enabled_in(&settings));
+        assert!(!Category::Transfer.enabled_in(&settings));
     }
 
     #[test]
@@ -432,6 +600,7 @@ mod tests {
         assert!(Category::Transfer.enabled_in(&settings));
         assert!(Category::Failure.enabled_in(&settings));
         assert!(Category::Update.enabled_in(&settings));
+        assert!(Category::Proton.enabled_in(&settings));
 
         settings.notify_transfers = false;
         assert!(!Category::Transfer.enabled_in(&settings));
@@ -440,13 +609,44 @@ mod tests {
 
         settings.notify_failures = false;
         assert!(!Category::Failure.enabled_in(&settings));
+
+        settings.notify_proton = false;
+        assert!(!Category::Proton.enabled_in(&settings));
+        assert!(Category::Update.enabled_in(&settings));
+    }
+
+    #[test]
+    fn the_server_watch_has_a_switch_per_kind() {
+        let watched = [
+            Category::SignedOut,
+            Category::Connection,
+            Category::Saves,
+            Category::NewGames,
+            Category::GameUpdate,
+        ];
+        let mut settings = Settings::default();
+        assert!(watched.iter().all(|c| c.enabled_in(&settings)));
+
+        settings.notify_sign_in = false;
+        settings.notify_connection = false;
+        settings.notify_saves = false;
+        settings.notify_new_games = false;
+        settings.notify_game_updates = false;
+        assert!(watched.iter().all(|c| !c.enabled_in(&settings)));
+        assert!(Category::Failure.enabled_in(&settings));
     }
 
     #[test]
     fn only_what_needs_the_user_interrupts_a_focused_window() {
         assert!(Category::Action.shows_while_focused() && Category::Failure.shows_while_focused());
+        assert!(Category::SignedOut.shows_while_focused());
         assert!(
-            !Category::Transfer.shows_while_focused() && !Category::Update.shows_while_focused()
+            !Category::Connection.shows_while_focused() && !Category::Saves.shows_while_focused()
+        );
+        assert!(
+            !Category::Transfer.shows_while_focused()
+                && !Category::Update.shows_while_focused()
+                && !Category::Proton.shows_while_focused()
         );
     }
 
@@ -493,6 +693,26 @@ mod tests {
         assert_eq!(admit(&mut open, 2, 2), None);
         assert_eq!(admit(&mut open, 3, 2), Some(1));
         assert_eq!(Vec::from(open), [2, 3]);
+    }
+
+    #[test]
+    fn new_games_are_summed_up_in_one_line() {
+        assert_eq!(new_games_text(&[]), None);
+        assert_eq!(
+            new_games_text(&["Hades"]).unwrap().1,
+            "Hades was added to the library."
+        );
+        assert_eq!(
+            new_games_text(&["Hades", "Celeste"]).unwrap(),
+            ("2 new games".into(), "Hades and Celeste were added.".into())
+        );
+        assert_eq!(
+            new_games_text(&["Hades", "Celeste", "Tunic", "Inside"]).unwrap(),
+            (
+                "4 new games".into(),
+                "Hades, Celeste and 2 more were added.".into()
+            )
+        );
     }
 
     #[test]

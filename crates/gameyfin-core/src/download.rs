@@ -426,6 +426,9 @@ pub enum Outcome {
     Unpacked { dir: PathBuf, bytes: u64 },
 }
 
+/// How much of a download is gathered before it goes to disk.
+const WRITE_BUFFER: usize = 1024 * 1024;
+
 /// Enough of a body to see a zip header, or a plain tar's `ustar` marker at byte 257.
 const SNIFF_BYTES: usize = 262;
 
@@ -613,7 +616,7 @@ impl Downloader {
         // Whatever was sniffed is the start of the file.
         let mut stream = futures_util::stream::iter(head.into_iter().map(Ok)).chain(stream);
 
-        let mut file = if written > 0 {
+        let file = if written > 0 {
             let mut f = tokio::fs::OpenOptions::new()
                 .write(true)
                 .open(destination)
@@ -625,6 +628,8 @@ impl Downloader {
         } else {
             tokio::fs::File::create(destination).await?
         };
+        // Each write to a bare tokio file is a trip to the blocking pool, and chunks are a few KiB.
+        let mut file = tokio::io::BufWriter::with_capacity(WRITE_BUFFER, file);
 
         let mut cp = Checkpoint::new(total_bytes, etag, filename);
         cp.received_bytes = written;
@@ -734,7 +739,7 @@ impl Downloader {
     /// Anything else that stops removes the folder rather than leaving half a game, except
     /// a pause, whose next attempt starts over.
     #[allow(clippy::too_many_arguments)]
-    async fn unpack<S, B, F>(
+    async fn unpack<S, F>(
         &self,
         mut stream: S,
         destination: &Path,
@@ -745,8 +750,7 @@ impl Downloader {
         on_progress: &mut F,
     ) -> CoreResult<Outcome>
     where
-        S: futures_util::Stream<Item = reqwest::Result<B>> + Unpin,
-        B: AsRef<[u8]>,
+        S: futures_util::Stream<Item = reqwest::Result<bytes::Bytes>> + Unpin,
         F: FnMut(Progress),
     {
         if resume.is_none() {
@@ -766,7 +770,7 @@ impl Downloader {
             checkpoint.unpack = Some(point);
         };
 
-        let (chunks, receiver) = tokio::sync::mpsc::channel::<std::io::Result<Vec<u8>>>(16);
+        let (chunks, receiver) = tokio::sync::mpsc::channel::<std::io::Result<bytes::Bytes>>(16);
         let unpacker = {
             let (dir, cancel, mark) = (dir.to_path_buf(), self.cancel.clone(), mark.clone());
             tokio::task::spawn_blocking(move || {
@@ -792,7 +796,7 @@ impl Downloader {
         let mut limiter = RateLimiter::shared(self.rate_limit.clone());
         let pumped: CoreResult<()> = loop {
             let chunk = match self.next_unless_stopped(&mut stream).await {
-                Next::Chunk(Ok(chunk)) => chunk.as_ref().to_vec(),
+                Next::Chunk(Ok(chunk)) => chunk,
                 Next::Chunk(Err(e)) => break Err(e.into()),
                 Next::End => break Ok(()),
                 Next::Stopped => break Err(self.cancel.stop_error()),
@@ -874,16 +878,16 @@ impl Downloader {
 
 /// Hands downloaded chunks to the blocking unpacker. A closed channel is the end of the body.
 struct ChunkReader {
-    chunks: tokio::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
-    current: Vec<u8>,
+    chunks: tokio::sync::mpsc::Receiver<std::io::Result<bytes::Bytes>>,
+    current: bytes::Bytes,
     at: usize,
 }
 
 impl ChunkReader {
-    fn new(chunks: tokio::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>) -> Self {
+    fn new(chunks: tokio::sync::mpsc::Receiver<std::io::Result<bytes::Bytes>>) -> Self {
         Self {
             chunks,
-            current: Vec::new(),
+            current: bytes::Bytes::new(),
             at: 0,
         }
     }
@@ -911,7 +915,7 @@ impl std::io::Read for ChunkReader {
 /// Flush and record progress on an error path, ignoring secondary failures so they cannot
 /// mask the original cause.
 async fn persist(
-    file: &mut tokio::fs::File,
+    file: &mut tokio::io::BufWriter<tokio::fs::File>,
     cp: &mut Checkpoint,
     destination: &Path,
     written: u64,

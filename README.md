@@ -27,10 +27,11 @@ in sync between PCs.
 
 ## Server support
 
-The app works with any Gameyfin 2.4 server. Three features need server changes that are not
+The app works with Gameyfin 2.4 and newer. Four features need server changes that are not
 merged into [Gameyfin](https://github.com/gameyfin/gameyfin) yet: **save sync to the server**
-(a folder or WebDAV share works anywhere), **staying signed in** past the server's four-hour
-session, and **the server's version** in Settings. They are in
+(a folder or WebDAV share works anywhere), **resuming a paused download** (otherwise it starts
+over), **staying signed in** past the server's four-hour session, and **the server's version**
+in Settings. They are in
 `ghcr.io/wieluk/gameyfin:gameyfin-app`, built from the `integration/gameyfin-app` branch of
 [this fork](https://github.com/wieluk/gameyfin). On a stock server the app leaves them out.
 

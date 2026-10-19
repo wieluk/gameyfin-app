@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { UpdateOutcome } from "@/bindings/UpdateOutcome";
 import type { UpdateProgress } from "@/bindings/UpdateProgress";
@@ -8,18 +8,34 @@ import { Button } from "@/components/ui";
 import { backend, isMockBackend, type UpdateStatus } from "@/lib/backend";
 import { messageOf } from "@/lib/errors";
 import { formatBytes } from "@/lib/format";
+import { useAppSettings } from "@/lib/queries";
 import { useTauriEvent } from "@/lib/useTauriEvent";
 
-/** Read once and reused by the banner and by Settings. Invalidated as `["update"]`. */
+/** Read once and reused by the banner and by Settings. Asks GitHub only when checks are on. */
 export function useUpdate() {
-  return useQuery({
-    queryKey: ["update"],
+  const queryClient = useQueryClient();
+  const checks = useAppSettings().data?.checkForUpdates === true;
+  const query = useQuery({
+    queryKey: UPDATE_KEY,
     queryFn: () => backend.updateStatus(),
     // Releases are not frequent enough to be worth asking about on every window focus.
     staleTime: 60 * 60 * 1000,
-    enabled: !isMockBackend,
+    enabled: !isMockBackend && checks,
   });
+  const [checking, setChecking] = useState(false);
+  /** "Check now": skips the backend's cached answer, and works with startup checks off. */
+  async function checkNow() {
+    setChecking(true);
+    try {
+      queryClient.setQueryData(UPDATE_KEY, await backend.updateStatus(true));
+    } finally {
+      setChecking(false);
+    }
+  }
+  return { ...query, checking: checking || query.isFetching, checkNow };
 }
+
+const UPDATE_KEY = ["update"];
 
 /** Installing and the restart that follows it, shared by the banner and Settings. */
 export function useInstallUpdate() {
@@ -65,7 +81,7 @@ export function UpdateProgressBar({ progress }: { progress: UpdateProgress | nul
     <span className="flex items-center gap-2">
       <span className="h-1.5 w-24 overflow-hidden rounded-full bg-default-200">
         <span
-          className={`block h-full rounded-full bg-primary transition-[width] ${done === null ? "animate-pulse" : ""}`}
+          className={`block h-full rounded-full bg-primary ${done === null ? "animate-pulse" : ""}`}
           style={{ width: done === null ? "100%" : `${Math.round(done)}%` }}
         />
       </span>

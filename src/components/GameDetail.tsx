@@ -1,14 +1,19 @@
 import { Alert } from "@/components/Alert";
 import { Trailers } from "@/components/Trailers";
 import { useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { GameSaves } from "./GameSaves";
 import { Icon } from "./Icon";
+import { ShortcutOptions } from "./ShortcutOptions";
 import { isInstalled, primaryAction } from "@/lib/actions";
-import { formatBytes, formatPlaytime } from "@/lib/format";
+import { backend } from "@/lib/backend";
+import { messageOf } from "@/lib/errors";
+import { keys } from "@/lib/queries";
+import { formatBytes, formatPlaytime, formatRelative } from "@/lib/format";
 import { useLibraryView, type FacetKey } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
-import { PANEL_BODY } from "@/lib/ui";
+import { PANEL_BODY, titleGradient } from "@/lib/ui";
 import { Button } from "@/components/ui";
 import { useDismissOnEscape } from "@/lib/useDismiss";
 
@@ -23,6 +28,7 @@ export function GameDetail({
   onPrimaryAction: (entry: LibraryEntry) => void;
 }) {
   const { game, state } = entry;
+  const [stopError, setStopError] = useState<string | null>(null);
 
   // Through the shared stack, so Escape closes this dialog rather than every open one.
   useDismissOnEscape(onClose);
@@ -30,6 +36,15 @@ export function GameDetail({
   const facts: [string, string][] = [
     ["Size", formatBytes(game.metadata.fileSize)],
     ["Playtime", formatPlaytime(entry.minutesPlayed)],
+    ...(entry.lastPlayedAt
+      ? ([["Last played", formatRelative(entry.lastPlayedAt)]] as [string, string][])
+      : []),
+    ...(game.userRating !== null
+      ? ([["Player rating", score(game.userRating)]] as [string, string][])
+      : []),
+    ...(game.criticRating !== null
+      ? ([["Critic rating", score(game.criticRating)]] as [string, string][])
+      : []),
     ...(game.release ? ([["Released", game.release]] as [string, string][]) : []),
     ...(game.developers.length
       ? ([["Developer", game.developers.join(", ")]] as [string, string][])
@@ -58,18 +73,19 @@ export function GameDetail({
         <Header entry={entry} onClose={onClose} />
 
         <div className={PANEL_BODY}>
-          <div className="mb-5 flex flex-wrap gap-2">
-            <PrimaryButton entry={entry} onClick={() => onPrimaryAction(entry)} />
-            {state.kind === "installed" && (
-              <span className="rounded-lg border border-default-200 px-3 py-2 text-xs text-foreground/55">
-                {state.path}
-              </span>
+          <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-3">
+            {state.kind === "running" ? (
+              <StopButton gameId={game.id} onError={setStopError} />
+            ) : (
+              <PrimaryButton entry={entry} onClick={() => onPrimaryAction(entry)} />
             )}
+            {isInstalled(entry) && <ShortcutOptions gameId={game.id} inline />}
           </div>
 
           {state.kind === "failed" && (
             <Alert className="mb-5">{state.message}</Alert>
           )}
+          {stopError && <Alert className="mb-5">{stopError}</Alert>}
 
           {/* Side by side where there is room, as on the web interface; stacked when narrow. */}
           <div className="mb-5 flex flex-col gap-5 lg:flex-row lg:gap-8">
@@ -100,6 +116,11 @@ export function GameDetail({
   );
 }
 
+/** Ratings arrive on a 0 to 100 scale, sometimes with decimals. */
+function score(rating: number): string {
+  return `${Math.round(rating)} / 100`;
+}
+
 const HEADER_BUTTON =
   "flex h-7 w-7 items-center justify-center rounded-lg bg-black/40 text-white/80 backdrop-blur-xs transition-colors hover:bg-black/60 hover:text-white";
 
@@ -108,8 +129,11 @@ function Header({ entry, onClose }: { entry: LibraryEntry; onClose: () => void }
   const navigate = useNavigate();
 
   return (
-    // Without art the band only holds the title, so it shrinks to fit it.
-    <div className={`relative shrink-0 bg-default-200 ${art ? "h-52" : "h-20"}`}>
+    // Without art the band takes the tile's gradient, shorter since there is nothing to show.
+    <div
+      className={`relative shrink-0 bg-default-200 ${art ? "h-52" : "h-32"}`}
+      style={art ? undefined : { background: titleGradient(entry.game.title) }}
+    >
       {art && <img src={art} alt="" className="h-full w-full object-cover" />}
       <div className="absolute inset-0 bg-linear-to-t from-content1 via-content1/70 to-transparent" />
 
@@ -157,6 +181,43 @@ function PrimaryButton({
       disabled={action.disabled}
     >
       {action.label}
+    </Button>
+  );
+}
+
+/** As on the Installed row: a game that will not close would otherwise stay Running for good. */
+function StopButton({
+  gameId,
+  onError,
+}: {
+  gameId: number;
+  onError: (message: string | null) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [stopping, setStopping] = useState(false);
+
+  async function stop() {
+    setStopping(true);
+    onError(null);
+    try {
+      await backend.stopGame(gameId);
+      await queryClient.invalidateQueries({ queryKey: keys.entries });
+    } catch (e) {
+      onError(messageOf(e));
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  return (
+    <Button
+      variant="destructive"
+      size="lg"
+      icon="close"
+      disabled={stopping}
+      onClick={() => void stop()}
+    >
+      {stopping ? "Stopping…" : "Stop"}
     </Button>
   );
 }

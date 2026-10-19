@@ -72,7 +72,8 @@ pub async fn install_options(
     use gameyfin_core::InstallMethod;
 
     let record = state.library().record(game_id);
-    let install_dir = super::install_dir_for(&state, game_id).await?;
+    // The folder the setups below write to, which is what the user is told to type.
+    let install_dir = super::setup_dir_for(&state, game_id).await?;
     let (runtime, can_run_windows) = windows_runtime(&state, game_id).await;
     let blocked = |needs_windows: bool| {
         (needs_windows && !can_run_windows).then(gameyfin_core::windows_runtime_hint)
@@ -694,6 +695,8 @@ pub struct SetupRun {
     pub steps: Vec<SetupStep>,
     /// Reruns as administrator, through the shell.
     pub elevated: bool,
+    /// Started by the user, so a program that needs administrator rights asks for them at once.
+    pub ask_to_elevate: bool,
     /// Passes the toolkits' silent switches and notifies when done.
     pub silent: bool,
     /// Overrides the setting.
@@ -710,6 +713,7 @@ impl SetupRun {
                 role: SetupRole::Game,
             }],
             elevated: false,
+            ask_to_elevate: true,
             silent: false,
             delete_download,
             left_for_user: 0,
@@ -734,7 +738,7 @@ async fn run_setups(app: &AppHandle, game_id: i64, run: SetupRun) -> CommandResu
         // Checked before a prefix is built: Wine would only say `Bad format` minutes later.
         super::ensure_windows_program(&step.program, "download")?;
     }
-    let install_dir = super::install_dir_for(&state, game_id).await?;
+    let install_dir = super::setup_dir_for(&state, game_id).await?;
     let claim = claim(
         &state,
         game_id,
@@ -842,6 +846,7 @@ async fn run_setups(app: &AppHandle, game_id: i64, run: SetupRun) -> CommandResu
 struct Attempt {
     silent: bool,
     elevated: bool,
+    ask_to_elevate: bool,
     /// Asked for once a 32-bit program found no 32-bit graphics driver without it.
     wow64: bool,
     /// Shown on the row while it runs.
@@ -875,6 +880,7 @@ async fn run_step(
     let mut attempt = Attempt {
         silent: run.silent,
         elevated: run.elevated,
+        ask_to_elevate: run.ask_to_elevate,
         wow64: false,
         label,
     };
@@ -1035,11 +1041,12 @@ async fn prepare_installer(
             .arguments
             .extend(state.settings().unattended_args(kind));
     }
-    config.arguments.extend(kind.destination_args(&destination));
-    // The user's own options last, so their flags win over the toolkit defaults.
-    config.arguments.extend(gameyfin_core::arguments::split(
-        &state.library().record(game_id).installer_arguments,
-    ));
+    let own = gameyfin_core::arguments::split(&state.library().record(game_id).installer_arguments);
+    let mut args = with_destination(kind, &destination, own);
+    if game_link.is_some() {
+        args = nsis_folder_for_wine(args);
+    }
+    config.arguments.extend(args);
 
     let command =
         gameyfin_core::resolve_command(&config).context("could not build the installer command")?;
@@ -1151,12 +1158,25 @@ async fn execute_installer(
     let unarc_guard =
         unarc_prefix.map(|prefix| tauri::async_runtime::spawn(gameyfin_core::unarc::guard(prefix)));
     let started = std::time::Instant::now();
-    let run = if elevated {
+    let mut run = if elevated {
         // Started by the shell, so nothing to capture and no limit to apply.
         gameyfin_core::run_elevated(&command).await
     } else {
         gameyfin_core::run_capturing_stoppable(&command, address_space, &stopper).await
     };
+    // What double-clicking it does: Windows shows its own consent dialog.
+    let mut asked = elevated;
+    if attempt.ask_to_elevate
+        && matches!(run, Err(gameyfin_core::CoreError::ElevationRequired { .. }))
+    {
+        tracing::info!(
+            game_id,
+            ?program,
+            "the installer needs administrator rights"
+        );
+        run = gameyfin_core::run_elevated(&command).await;
+        asked = true;
+    }
     if let Some(guard) = unarc_guard {
         guard.abort();
     }
@@ -1212,15 +1232,16 @@ async fn execute_installer(
         }
         // Not a broken download: remembering the program lets the UI offer the elevated retry.
         Err(gameyfin_core::CoreError::ElevationRequired { .. }) => {
-            let refused = program.to_path_buf();
-            state
-                .library()
-                .update_record(game_id, |r| r.elevation_program = Some(refused))
-                .await;
+            remember_for_elevation(&state, game_id, program).await;
             Some(failed(format!(
                 "{} needs to run as administrator.",
                 file_label(program)
             )))
+        }
+        // A dismissed consent dialog, which the same button retries.
+        Err(e) if asked => {
+            remember_for_elevation(&state, game_id, program).await;
+            Some(failed(e.to_string()))
         }
         Err(e) => Some(failed(e.to_string())),
     };
@@ -1256,6 +1277,50 @@ async fn execute_installer(
          If you chose a different location, use \"I installed it myself\"."
             .to_string(),
     ))
+}
+
+async fn remember_for_elevation(state: &AppState, game_id: i64, program: &Path) {
+    let program = program.to_path_buf();
+    state
+        .library()
+        .update_record(game_id, |r| r.elevation_program = Some(program))
+        .await;
+}
+
+/// The destination switch with the user's options. Theirs go last so they win, except that
+/// NSIS reads `/D=` to the end of the line, so that one always goes last.
+fn with_destination(
+    kind: gameyfin_core::InstallerKind,
+    destination: &str,
+    own: Vec<String>,
+) -> Vec<String> {
+    let mut args = kind.destination_args(destination);
+    if kind != gameyfin_core::InstallerKind::Nsis {
+        args.extend(own);
+        return args;
+    }
+    let (theirs, rest): (Vec<_>, Vec<_>) = own.into_iter().partition(|a| a.starts_with("/D="));
+    match theirs.into_iter().last() {
+        Some(chosen) => rest.into_iter().chain([chosen]).collect(),
+        None => rest.into_iter().chain(args).collect(),
+    }
+}
+
+/// Wine quotes an argument with a space in it, and NSIS ignores a quoted `/D=`. As separate
+/// words, Wine joins them with single spaces, which NSIS reads to the end of the line.
+fn nsis_folder_for_wine(mut args: Vec<String>) -> Vec<String> {
+    match args.pop() {
+        Some(last) if last.starts_with("/D=") => {
+            args.extend(
+                last.split(' ')
+                    .filter(|w| !w.is_empty())
+                    .map(str::to_string),
+            );
+        }
+        Some(last) => args.push(last),
+        None => {}
+    }
+    args
 }
 
 /// Files, bytes and the newest change under a folder, to tell whether a program touched it.
@@ -1409,7 +1474,7 @@ pub async fn auto_install_download(
                     "{title} is a {}. Choose how to install it in Downloads.",
                     payload.label()
                 ),
-                route: Some("/downloads"),
+                route: Some("/downloads".into()),
                 game_id: Some(game_id),
             };
             crate::notify::send(app, note).await;
@@ -1485,6 +1550,8 @@ pub async fn auto_run_setups(
     let run = SetupRun {
         steps: silent.into_iter().map(|(step, _)| step).collect(),
         elevated: false,
+        // A consent dialog nobody is waiting for could sit unseen, so it is offered instead.
+        ask_to_elevate: false,
         silent: true,
         delete_download: None,
         left_for_user: manual.len(),
@@ -1584,6 +1651,7 @@ pub async fn install_setups(
     let run = SetupRun {
         steps,
         elevated: false,
+        ask_to_elevate: true,
         silent: silent.unwrap_or(false),
         delete_download,
         left_for_user: 0,
@@ -1706,6 +1774,8 @@ pub async fn uninstall_game(
             r.setup_candidates.clear();
             r.installed_setups.clear();
             r.elevation_program = None;
+            r.launch_elevation = false;
+            r.run_as_admin_cleared = false;
         })
         .await;
     // After the record, so a prefix that will not go leaves the game uninstalled regardless.
@@ -1768,6 +1838,35 @@ mod tests {
 
     fn failed(limit: InstallerMemoryLimit, cap_mib: Option<u64>, output: &str) -> Option<String> {
         memory_advice(limit, cap_mib, output, Duration::from_secs(600), false)
+    }
+
+    #[test]
+    fn nsis_gets_its_folder_last_and_the_users_own_wins() {
+        use gameyfin_core::InstallerKind::{InnoSetup, Nsis};
+        let own = |flags: &[&str]| flags.iter().map(|f| f.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            with_destination(Nsis, "C:\\Games\\Game", own(&["/S"])),
+            own(&["/S", "/D=C:\\Games\\Game"])
+        );
+        assert_eq!(
+            with_destination(Nsis, "C:\\Games\\Game", own(&["/D=E:\\Mine", "/S"])),
+            own(&["/S", "/D=E:\\Mine"])
+        );
+        assert_eq!(
+            with_destination(InnoSetup, "C:\\Games\\Game", own(&["/VERYSILENT"])),
+            own(&["/SP-", "/DIR=C:\\Games\\Game", "/VERYSILENT"])
+        );
+    }
+
+    #[test]
+    fn wine_gets_the_nsis_folder_as_words_it_will_not_quote() {
+        let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            nsis_folder_for_wine(args(&["/S", "/D=C:\\Games\\Risk of Rain 2"])),
+            args(&["/S", "/D=C:\\Games\\Risk", "of", "Rain", "2"])
+        );
+        let inno = args(&["/SP-", "/DIR=C:\\Games\\Risk of Rain 2"]);
+        assert_eq!(nsis_folder_for_wine(inno.clone()), inno);
     }
 
     #[test]

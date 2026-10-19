@@ -59,6 +59,18 @@ pub async fn install_dir_for(state: &AppState, game_id: i64) -> CommandResult<Pa
     Ok(layout.install_dir(game_id, &state.title(game_id).await))
 }
 
+/// Where a setup program installs: the folder the game is already in, so a patch or DLC finds
+/// a game installed elsewhere, else the default one.
+pub async fn setup_dir_for(state: &AppState, game_id: i64) -> CommandResult<PathBuf> {
+    let record = state.library().record(game_id);
+    if record.is_installed() {
+        if let Some(dir) = record.install_dir {
+            return Ok(dir);
+        }
+    }
+    install_dir_for(state, game_id).await
+}
+
 pub async fn downloads_dir_for(state: &AppState, game_id: i64) -> CommandResult<PathBuf> {
     let layout = layout_for(state, game_id)?;
     Ok(layout.downloads_dir(game_id, &state.title(game_id).await))

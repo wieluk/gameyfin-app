@@ -11,6 +11,10 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 /// How often the pad is sampled. 60Hz: fast enough that a press never feels dropped.
 const POLL_INTERVAL: Duration = Duration::from_millis(16);
 
+/// The pace with no pad, reading off or the window behind another: quick enough to notice a pad
+/// arriving, slow enough that an idle app is not waking the CPU sixty times a second.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
 /// How long a direction is held before repeating: long enough that one deliberate press
 /// moves exactly one item.
 const REPEAT_DELAY: Duration = Duration::from_millis(400);
@@ -286,7 +290,13 @@ fn run(app: AppHandle, handle: Handle) {
     let mut connected = false;
 
     loop {
-        std::thread::sleep(POLL_INTERVAL);
+        let active = connected && handle.enabled() && handle.focused();
+        let interval = if active {
+            POLL_INTERVAL
+        } else {
+            IDLE_POLL_INTERVAL
+        };
+        std::thread::sleep(interval);
 
         // Events must be drained even while disabled, or the queue grows without bound
         // and re-enabling replays every press made in between.

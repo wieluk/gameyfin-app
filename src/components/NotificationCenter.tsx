@@ -16,6 +16,12 @@ const TONE: Record<AppNotification["category"], string> = {
   action: "bg-warning",
   failure: "bg-danger",
   update: "bg-success",
+  proton: "bg-success",
+  "signed-out": "bg-warning",
+  connection: "bg-default-400",
+  saves: "bg-danger",
+  "new-games": "bg-primary",
+  "game-update": "bg-success",
 };
 
 /** The bell in the title bar: every notification this session, whether or not it popped up. */

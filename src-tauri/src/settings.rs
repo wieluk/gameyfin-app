@@ -14,9 +14,16 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 #[ts(export, optional_fields)]
 pub struct SettingsPatch {
+    pub notify_enabled: Option<bool>,
     pub notify_transfers: Option<bool>,
     pub notify_failures: Option<bool>,
     pub notify_updates: Option<bool>,
+    pub notify_proton: Option<bool>,
+    pub notify_sign_in: Option<bool>,
+    pub notify_connection: Option<bool>,
+    pub notify_saves: Option<bool>,
+    pub notify_new_games: Option<bool>,
+    pub notify_game_updates: Option<bool>,
     pub close_to_tray: Option<bool>,
     pub autostart_hidden: Option<bool>,
     pub autostart: Option<bool>,
@@ -71,9 +78,16 @@ impl SettingsPatch {
             )+};
         }
         set!(
+            notify_enabled,
             notify_transfers,
             notify_failures,
             notify_updates,
+            notify_proton,
+            notify_sign_in,
+            notify_connection,
+            notify_saves,
+            notify_new_games,
+            notify_game_updates,
             close_to_tray,
             autostart_hidden,
             autostart,
@@ -168,10 +182,22 @@ pub struct Settings {
     pub installer_memory_limit: InstallerMemoryLimit,
     /// `None` is the server's highest-priority provider.
     pub download_provider: Option<String>,
+    /// Over every kind below: off keeps the list behind the bell but shows no popups.
+    pub notify_enabled: bool,
     pub notify_transfers: bool,
     /// Separate so failures stay audible with the routine chatter off.
     pub notify_failures: bool,
     pub notify_updates: bool,
+    /// New builds of a Proton family that is installed.
+    pub notify_proton: bool,
+    pub notify_sign_in: bool,
+    /// Losing the server and getting it back.
+    pub notify_connection: bool,
+    /// Save sync failures, and the questions it waits on.
+    pub notify_saves: bool,
+    pub notify_new_games: bool,
+    /// An installed game whose files changed on the server.
+    pub notify_game_updates: bool,
     pub close_to_tray: bool,
     /// Hides the window on a login start only. Starting Gameyfin by hand always shows it.
     pub autostart_hidden: bool,
@@ -228,9 +254,16 @@ impl Default for Settings {
             download_limit_kib: 0,
             installer_memory_limit: InstallerMemoryLimit::default(),
             download_provider: None,
+            notify_enabled: true,
             notify_transfers: true,
             notify_failures: true,
             notify_updates: true,
+            notify_proton: true,
+            notify_sign_in: true,
+            notify_connection: true,
+            notify_saves: true,
+            notify_new_games: true,
+            notify_game_updates: true,
             close_to_tray: false,
             autostart_hidden: true,
             focus_after_game: true,
@@ -656,9 +689,16 @@ mod tests {
 
     /// The names `src/lib/backend.ts` sends; a drifted name would change nothing silently.
     const CLIENT_FIELDS: &[(&str, &str)] = &[
+        ("notifyEnabled", "false"),
         ("notifyTransfers", "false"),
         ("notifyFailures", "false"),
         ("notifyUpdates", "false"),
+        ("notifyProton", "false"),
+        ("notifySignIn", "false"),
+        ("notifyConnection", "false"),
+        ("notifySaves", "false"),
+        ("notifyNewGames", "false"),
+        ("notifyGameUpdates", "false"),
         ("closeToTray", "true"),
         ("autostartHidden", "false"),
         ("autostart", "true"),

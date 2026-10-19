@@ -22,7 +22,7 @@ export function TransferProgress({
     <div>
       <div className="h-1.5 overflow-hidden rounded-full bg-default-200">
         <div
-          className={`h-full rounded-full bg-primary transition-[width] ${done === undefined ? "animate-pulse" : ""}`}
+          className={`h-full rounded-full bg-primary ${done === undefined ? "animate-pulse" : ""}`}
           style={{ width: `${done ?? 100}%` }}
         />
       </div>

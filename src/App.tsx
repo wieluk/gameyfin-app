@@ -39,6 +39,10 @@ export function App() {
     setRestoreSettled(true);
     void queryClient.invalidateQueries({ queryKey: keys.status });
   });
+  // The backend's watch saw the server go, come back or drop the login.
+  useTauriEvent("connection-changed", () => {
+    void queryClient.invalidateQueries({ queryKey: keys.status });
+  });
   // The event may have fired before the listener attached; this is the backstop.
   useEffect(() => {
     if (isMockBackend) return;

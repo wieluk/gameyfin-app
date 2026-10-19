@@ -17,6 +17,8 @@ tracing.workspace = true
 reqwest.workspace = true
 sha2.workspace = true
 futures-util = "0.3"
+# Chunks as reqwest hands them over, so the unpacker gets them without a copy.
+bytes = "1"
 async-trait = "0.1"
 time.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate", "bzip2", "zstd", "lzma"] }
@@ -39,6 +41,8 @@ inotify = "0.11"
 [target.'cfg(windows)'.dependencies]
 # UnRAR itself: Windows has no RAR tool to fall back on, and its tar.exe fails on many archives.
 unrar = "0.5.8"
+# Reads where Steam is installed, which on Windows only the registry knows.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Registry"] }
 
 [dev-dependencies]
 unrar = "0.5.8"

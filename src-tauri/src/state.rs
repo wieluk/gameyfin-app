@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -109,6 +109,10 @@ pub fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
 #[derive(Default)]
 pub struct AppState {
     client: RwLock<Option<GameyfinClient>>,
+    /// Bumped whenever `client` changes, so a remembered session check never outlives it.
+    client_generation: AtomicU64,
+    /// The last session check, shared by callers arriving together (startup and the window).
+    session_check: tokio::sync::Mutex<Option<(Instant, u64, SessionAnswer)>>,
     settings: RwLock<Settings>,
     /// Serialises read-modify-write of settings, so concurrent changes are not lost.
     settings_writer: tokio::sync::Mutex<()>,
@@ -140,6 +144,8 @@ pub struct AppState {
     /// No expiry on purpose: stale titles beat an empty library when the server is down.
     offline_catalog: RwLock<CachedCatalog>,
     catalog_writer: tokio::sync::Mutex<()>,
+    /// Held while the catalogue is fetched, so callers arriving together share one request.
+    catalog_fetch: tokio::sync::Mutex<()>,
     unreachable: AtomicBool,
     image_cache: OnceLock<Arc<crate::image_cache::ImageCache>>,
     umu: RwLock<gameyfin_core::umu::Database>,
@@ -148,6 +154,23 @@ pub struct AppState {
     download_limit: gameyfin_core::download::RateLimit,
     pub downloads: Registry<gameyfin_core::download::Cancel>,
     pub processes: Registry<gameyfin_core::Stopper>,
+}
+
+/// What the server said about the session: signed in or not, or nothing at all.
+#[derive(Debug, Clone, Copy)]
+enum SessionAnswer {
+    Answered(bool),
+    Unreachable,
+}
+
+impl SessionAnswer {
+    /// `(authenticated, offline)`; unreachable keeps whatever session is stored.
+    fn as_pair(self, has_session: bool) -> (bool, bool) {
+        match self {
+            Self::Answered(signed_in) => (signed_in, false),
+            Self::Unreachable => (has_session, true),
+        }
+    }
 }
 
 /// For API calls. A connect timeout keeps an offline start from hanging on the splash.
@@ -169,6 +192,7 @@ impl AppState {
         let auth = Arc::new(CookieSessionAuth::new(base_url, http.clone()));
         auth.set_cookies(cookies).await;
         *write(&self.client) = Some(GameyfinClient::with_http(base_url, auth, http)?);
+        self.client_generation.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -182,6 +206,7 @@ impl AppState {
     ) -> gameyfin_api::ApiResult<()> {
         let auth = Arc::new(DeviceTokenAuth::with_cookies(token, cookies));
         *write(&self.client) = Some(GameyfinClient::with_http(base_url, auth, api_http()?)?);
+        self.client_generation.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -238,6 +263,7 @@ impl AppState {
 
     pub fn disconnect(&self) {
         *write(&self.client) = None;
+        self.client_generation.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn client(&self) -> Option<GameyfinClient> {
@@ -269,6 +295,8 @@ impl AppState {
                     .user_agent(USER_AGENT)
                     .connect_timeout(Duration::from_secs(30))
                     .read_timeout(Duration::from_secs(120))
+                    // Byte offsets must be the file's own, or a resume would splice at the wrong place.
+                    .no_gzip()
                     .build()
                     .unwrap_or_default()
             })
@@ -290,6 +318,14 @@ impl AppState {
                 .cached_games()
                 .ok_or_else(|| gameyfin_api::ApiError::Other("not connected".into()));
         };
+
+        let _fetching = self.catalog_fetch.lock().await;
+        // Whoever held the lock may just have fetched it.
+        if let Some((fetched, games)) = read(&self.catalog).as_ref() {
+            if fetched.elapsed() < TTL {
+                return Ok(games.clone());
+            }
+        }
 
         match client.games().await {
             Ok(games) => {
@@ -408,21 +444,32 @@ impl AppState {
             // No client yet with a stored session means startup is still connecting.
             return (has_session, has_session);
         };
-        match client.user_info().await {
+        // Long enough to cover a burst of callers, short enough that a change still shows promptly.
+        const REUSE: Duration = Duration::from_secs(5);
+        let generation = self.client_generation.load(Ordering::Relaxed);
+        let mut last = self.session_check.lock().await;
+        if let Some((at, seen, answer)) = *last {
+            if seen == generation && at.elapsed() < REUSE {
+                return answer.as_pair(has_session);
+            }
+        }
+        let answer = match client.user_info().await {
             Ok(user) => {
                 self.set_reachable(true);
-                (user.is_some(), false)
+                SessionAnswer::Answered(user.is_some())
             }
             Err(e) if e.is_auth() => {
                 self.set_reachable(true);
-                (false, false)
+                SessionAnswer::Answered(false)
             }
             Err(e) => {
                 tracing::debug!("could not reach the server: {e}");
                 self.set_reachable(false);
-                (has_session, true)
+                SessionAnswer::Unreachable
             }
-        }
+        };
+        *last = Some((Instant::now(), generation, answer));
+        answer.as_pair(has_session)
     }
 
     pub fn umu_entry_count(&self) -> usize {
@@ -490,6 +537,10 @@ impl AppState {
 
     pub fn set_gamepad(&self, handle: crate::gamepad::Handle) {
         let _ = self.gamepad.set(handle);
+    }
+
+    pub fn gamepad(&self) -> Option<crate::gamepad::Handle> {
+        self.gamepad.get().cloned()
     }
 
     /// Whether a controller is attached and the app is set to read one.
@@ -823,6 +874,64 @@ mod tests {
         assert_eq!(state.games().await.unwrap()[0].title, "Celeste");
         assert_eq!(state.title(1).await, "Celeste");
         assert_eq!(state.title(2).await, "Game 2");
+    }
+
+    #[tokio::test]
+    async fn callers_arriving_together_share_one_catalogue_fetch() {
+        let mut server = mockito::Server::new_async().await;
+        let list = server
+            .mock("POST", "/connect/GameEndpoint/getAll")
+            .with_body(
+                serde_json::json!([{
+                    "id": 1,
+                    "title": "Celeste",
+                    "libraryId": 1,
+                    "platforms": [],
+                    "genres": [],
+                    "developers": [],
+                    "publishers": [],
+                    "metadata": { "fileSize": 0 },
+                }])
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let state = AppState::default();
+        state
+            .connect_with_token(&server.url(), "gyf_t".into(), HashMap::new())
+            .unwrap();
+
+        let (a, b, c) = tokio::join!(state.games(), state.games(), state.games());
+        for games in [a, b, c] {
+            assert_eq!(games.unwrap()[0].title, "Celeste");
+        }
+        list.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn a_session_check_is_shared_until_the_client_changes() {
+        let mut server = mockito::Server::new_async().await;
+        let info = server
+            .mock("POST", "/connect/UserEndpoint/getUserInfo")
+            .with_body(USER)
+            .expect(2)
+            .create_async()
+            .await;
+        let state = AppState::default();
+        state
+            .connect_with_token(&server.url(), "gyf_a".into(), HashMap::new())
+            .unwrap();
+
+        let (a, b) = tokio::join!(state.check_session(true), state.check_session(true));
+        assert_eq!((a, b), ((true, false), (true, false)));
+
+        // Another sign-in must be asked about afresh.
+        state
+            .connect_with_token(&server.url(), "gyf_b".into(), HashMap::new())
+            .unwrap();
+        assert_eq!(state.check_session(true).await, (true, false));
+        info.assert_async().await;
     }
 
     #[tokio::test]

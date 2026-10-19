@@ -24,18 +24,18 @@ export function AboutSection() {
       <Row
         label="Latest release"
         value={
-          update.isLoading
+          update.checking
             ? "Checking…"
             : status?.error
               ? "Could not check"
-              : (status?.latestVersion ?? "Unknown")
+              : (status?.latestVersion ?? "Not checked")
         }
         tone={status?.available ? "bad" : undefined}
       />
 
       <div className="flex flex-wrap gap-2 pt-1">
-        <Button disabled={update.isFetching} onClick={() => void update.refetch()}>
-          {update.isFetching ? "Checking…" : "Check now"}
+        <Button disabled={update.checking} onClick={() => void update.checkNow()}>
+          {update.checking ? "Checking…" : "Check now"}
         </Button>
         {outcome?.restartNeeded ? (
           <Button variant="primary" disabled={busy} onClick={() => void restart()}>

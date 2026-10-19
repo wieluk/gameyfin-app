@@ -1062,6 +1062,22 @@ impl SyncWatch {
             // sync the user never asked to stop.
             crate::state::lock(&self.skips).remove(&self.game_id);
         }
+        // The window shows these too, but a game that just closed may have left it hidden.
+        let (app, game_id, title) = (self.app.clone(), self.game_id, self.title.clone());
+        match &phase {
+            SaveSyncPhase::Failed { message } => {
+                let message = message.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::notify::save_sync_failed(&app, game_id, &title, &message).await
+                });
+            }
+            SaveSyncPhase::Asking => {
+                tauri::async_runtime::spawn(async move {
+                    crate::notify::save_choice_needed(&app, game_id, &title, None).await
+                });
+            }
+            _ => {}
+        }
         let _ = self.app.emit(
             "save-sync-progress",
             SaveSyncProgress {
@@ -2853,12 +2869,20 @@ pub async fn retry_pending_uploads(app: AppHandle) {
                 }
                 match do_backup(&app, &state, game_id, false, None).await {
                     Ok(next) => {
-                        tracing::info!(game_id, ?next, "uploaded a save left from playing offline")
+                        tracing::info!(game_id, ?next, "uploaded a save left from playing offline");
+                        if save_sync::needs_attention(&next) {
+                            let title = state.title(game_id).await;
+                            let route = Some("/saves".to_string());
+                            crate::notify::save_choice_needed(&app, game_id, &title, route).await;
+                        }
                     }
                     // Still out of reach: the rest would only fail the same way.
                     Err(e) if unreachable(&e) => break,
                     Err(e) => {
                         tracing::warn!(game_id, error = %e, "a waiting upload failed; not retrying it");
+                        let title = state.title(game_id).await;
+                        crate::notify::save_sync_failed(&app, game_id, &title, &e.to_string())
+                            .await;
                         state
                             .library()
                             .update_record(game_id, |r| r.saves.upload_pending = false)

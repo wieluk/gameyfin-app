@@ -14,7 +14,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "sync", "time", "io-util"] }
 tracing = "0.1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "rustls-no-provider", "cookies"] }
+# `gzip`: the catalogue is JSON that shrinks several times over, where a server or proxy compresses.
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "rustls-no-provider", "cookies", "gzip"] }
 # The crypto provider reqwest leaves to the app: ring, as the updater plugin uses.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 url = "2"
@@ -28,6 +29,13 @@ opt-level = "s"
 lto = "thin"
 codegen-units = 16
 strip = true
+
+# Pixel loops are where "s" costs most: scaling a cover takes a sixth of the time at 3.
+[profile.release.package.image]
+opt-level = 3
+
+[profile.release.package.zune-jpeg]
+opt-level = 3
 
 [profile.dev]
 debug = "line-tables-only"
