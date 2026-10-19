@@ -65,7 +65,7 @@ describe("an installed game with work in progress", () => {
 
   it("offers Play again once only a failure is left", () => {
     const state = fixture.installed({
-      busy: { kind: "failed", message: "the installer exited with code 1" },
+      busy: { kind: "failed", message: "the installer exited with code 1", elevationRequired: false },
     });
     expect(primaryAction(state).label).toBe("Play");
     expect(primaryAction(state).disabled).toBe(false);

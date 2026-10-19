@@ -260,6 +260,8 @@ pub enum InstalledBusy {
     },
     Failed {
         message: String,
+        /// The retry that helps is "as administrator", not a plain retry.
+        elevation_required: bool,
     },
 }
 
@@ -544,7 +546,7 @@ impl LibraryState {
         };
 
         if record.is_installed() {
-            if let Some(busy) = busy_for(&activity) {
+            if let Some(busy) = busy_for(&activity, &record) {
                 return installed_state(record, Some(busy));
             }
         }
@@ -699,7 +701,7 @@ fn resting_state(record: GameRecord) -> GameState {
 }
 
 /// Downloading and extracting stay Downloads-side work even for an installed game.
-fn busy_for(activity: &Activity) -> Option<InstalledBusy> {
+fn busy_for(activity: &Activity, record: &GameRecord) -> Option<InstalledBusy> {
     match activity {
         Activity::Preparing { message, progress } => Some(InstalledBusy::Preparing {
             message: message.clone(),
@@ -711,9 +713,10 @@ fn busy_for(activity: &Activity) -> Option<InstalledBusy> {
         }),
         Activity::Failed {
             message,
-            stage: Stage::Install | Stage::Launch,
+            stage: stage @ (Stage::Install | Stage::Launch),
         } => Some(InstalledBusy::Failed {
             message: message.clone(),
+            elevation_required: *stage == Stage::Install && record.elevation_program.is_some(),
         }),
         _ => None,
     }
@@ -840,6 +843,21 @@ mod tests {
             state.state_of(4),
             GameState::Installed {
                 busy: Some(InstalledBusy::Failed { .. }),
+                ..
+            }
+        ));
+        state
+            .update_record(4, |r| r.elevation_program = Some(dir.join("setup.exe")))
+            .await;
+        state.fail(4, Stage::Install, "needs administrator");
+        // Installed reruns setups too, so it needs the same way out as Downloads.
+        assert!(matches!(
+            state.state_of(4),
+            GameState::Installed {
+                busy: Some(InstalledBusy::Failed {
+                    elevation_required: true,
+                    ..
+                }),
                 ..
             }
         ));

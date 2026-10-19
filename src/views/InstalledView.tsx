@@ -112,6 +112,12 @@ const InstalledRow = memo(function InstalledRow({ entry, focused }: { entry: Lib
 
   const play = () => run(() => backend.launch(entry.game.id));
   const runSetup = (setup: string) => run(() => backend.installSetups(entry.game.id, [setup]));
+  // The setup Windows refused, rerun through the shell so Windows shows its consent dialog.
+  const runAsAdministrator = () =>
+    run(async () => {
+      await backend.runSetupElevated(entry.game.id);
+      await queryClient.invalidateQueries({ queryKey: keys.entries });
+    });
 
   function uninstall(options: UninstallOptions) {
     uninstallPrompt.close();
@@ -280,13 +286,23 @@ const InstalledRow = memo(function InstalledRow({ entry, focused }: { entry: Lib
               : "border-primary/30 bg-primary/10 text-foreground/70"
           }`}
         >
-          <p>
+          <p className="whitespace-pre-line wrap-break-word">
             {busy.kind === "installing"
               ? busy.step
                 ? `Installing ${busy.step}…`
                 : "Running a setup program…"
               : busy.message}
           </p>
+          {busy.kind === "failed" && busy.elevationRequired && (
+            <Button
+              className="mt-2"
+              size="sm"
+              variant="primary"
+              onClick={() => void runAsAdministrator()}
+            >
+              Run as administrator
+            </Button>
+          )}
           {busy.kind === "preparing" && busy.progress && (
             <div className="mt-2">
               <TransferProgress {...busy.progress} />

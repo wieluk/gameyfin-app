@@ -163,7 +163,7 @@ pub async fn run_capturing_limited(
     address_space: Option<u64>,
 ) -> CoreResult<CapturedRun> {
     let mut cmd = Command::new(&command.program);
-    cmd.args(&command.args);
+    add_args(&mut cmd, &command.args);
     clean_for_host(&mut cmd);
     for (key, value) in &command.env {
         cmd.env(key, value);
@@ -255,7 +255,7 @@ pub async fn run_capturing_stoppable(
     stop: &Stopper,
 ) -> CoreResult<CapturedRun> {
     let mut cmd = Command::new(&command.program);
-    cmd.args(&command.args);
+    add_args(&mut cmd, &command.args);
     clean_for_host(&mut cmd);
     for (key, value) in &command.env {
         cmd.env(key, value);
@@ -490,14 +490,10 @@ fn elevation_script(command: &ResolvedCommand) -> String {
         String::from("$ErrorActionPreference = 'Stop'; try { $process = Start-Process -FilePath ");
     script.push_str(&ps_quote(&command.program.to_string_lossy()));
 
+    // One string: Windows PowerShell joins an array here without quoting, splitting paths at spaces.
     if !command.args.is_empty() {
-        let args: Vec<String> = command
-            .args
-            .iter()
-            .map(|arg| ps_quote(&arg.to_string_lossy()))
-            .collect();
         script.push_str(" -ArgumentList ");
-        script.push_str(&args.join(","));
+        script.push_str(&ps_quote(&windows_command_line(&command.args)));
     }
 
     if let Some(dir) = &command.working_dir {
@@ -511,6 +507,67 @@ fn elevation_script(command: &ResolvedCommand) -> String {
         " catch {{ exit {EXIT_UAC_REFUSED} }}; if ($null -eq $process.ExitCode) {{ exit 0 }}; exit $process.ExitCode"
     ));
     script
+}
+
+/// Adds the arguments, with NSIS's `/D=` left unquoted where Windows would quote a path with spaces.
+fn add_args(cmd: &mut Command, args: &[std::ffi::OsString]) {
+    #[cfg(windows)]
+    if let Some((last, rest)) = args.split_last() {
+        if is_verbatim(&last.to_string_lossy(), true) {
+            cmd.args(rest);
+            cmd.raw_arg(last);
+            return;
+        }
+    }
+    cmd.args(args);
+}
+
+#[cfg(any(windows, test))]
+/// NSIS reads `/D=` to the end of the line and keeps quotes as part of the folder name.
+fn is_verbatim(arg: &str, last: bool) -> bool {
+    last && arg.starts_with("/D=")
+}
+
+#[cfg(any(windows, test))]
+/// Quoted the way `CommandLineToArgvW` and the C runtime split a command line back up.
+fn windows_quote(arg: &str) -> String {
+    if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        return arg.to_string();
+    }
+    let mut quoted = String::from('"');
+    let mut backslashes = 0;
+    for c in arg.chars() {
+        if c == '\\' {
+            backslashes += 1;
+        } else {
+            // Backslashes count as escapes only before a quote.
+            if c == '"' {
+                quoted.extend(std::iter::repeat_n('\\', backslashes + 1));
+            }
+            backslashes = 0;
+        }
+        quoted.push(c);
+    }
+    quoted.extend(std::iter::repeat_n('\\', backslashes));
+    quoted.push('"');
+    quoted
+}
+
+#[cfg(any(windows, test))]
+/// The arguments as the one command line a Windows program receives.
+fn windows_command_line(args: &[std::ffi::OsString]) -> String {
+    args.iter()
+        .enumerate()
+        .map(|(index, arg)| {
+            let arg = arg.to_string_lossy();
+            if is_verbatim(&arg, index + 1 == args.len()) {
+                arg.into_owned()
+            } else {
+                windows_quote(&arg)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(any(windows, test))]
@@ -576,7 +633,7 @@ const ERROR_TAIL_LINES: usize = 40;
 impl Supervisor {
     pub fn spawn(command: &ResolvedCommand) -> CoreResult<Self> {
         let mut cmd = Command::new(&command.program);
-        cmd.args(&command.args);
+        add_args(&mut cmd, &command.args);
         clean_for_host(&mut cmd);
         for (key, value) in &command.env {
             cmd.env(key, value);
@@ -1119,8 +1176,9 @@ mod tests {
         let script = elevation_script(&command);
         assert!(script.contains("-Verb RunAs"), "got: {script}");
         assert!(script.contains("-Wait"), "got: {script}");
+        // A single string, or Windows PowerShell splits the folder at its space.
         assert!(
-            script.contains("-ArgumentList '/SP-','/DIR=C:\\Games\\(76) Game'"),
+            script.contains("-ArgumentList '/SP- \"/DIR=C:\\Games\\(76) Game\"'"),
             "got: {script}"
         );
         assert!(
@@ -1133,6 +1191,30 @@ mod tests {
             "got: {script}"
         );
         assert!(script.contains("exit $process.ExitCode"), "got: {script}");
+    }
+
+    #[test]
+    fn arguments_are_quoted_the_way_windows_splits_them() {
+        let line = |args: &[&str]| {
+            windows_command_line(
+                &args
+                    .iter()
+                    .map(std::ffi::OsString::from)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            line(&["/SP-", "/DIR=C:\\Users\\Me\\(59) Risk of Rain 2"]),
+            "/SP- \"/DIR=C:\\Users\\Me\\(59) Risk of Rain 2\""
+        );
+        assert_eq!(line(&["C:\\a b\\", ""]), "\"C:\\a b\\\\\" \"\"");
+        assert_eq!(line(&["say \"hi\""]), "\"say \\\"hi\\\"\"");
+        // NSIS takes `/D=` up to the end of the line, quotes included.
+        assert_eq!(
+            line(&["/S", "/D=C:\\Games\\(59) Risk of Rain 2"]),
+            "/S /D=C:\\Games\\(59) Risk of Rain 2"
+        );
+        assert_eq!(line(&["/D=C:\\a b", "/S"]), "\"/D=C:\\a b\" /S");
     }
 
     #[test]
