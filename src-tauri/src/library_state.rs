@@ -54,6 +54,9 @@ pub struct GameRecord {
     pub save_redirects: Vec<(String, String)>,
     /// A download stopped part way, by a pause, a failure or quitting, kept so it can resume.
     pub partial_download: Option<PartialDownload>,
+    /// The server's size for the game when it was downloaded, so a change can be noticed.
+    /// Zero is unknown.
+    pub source_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

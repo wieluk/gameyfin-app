@@ -59,6 +59,36 @@ export function NotificationSection() {
         checked={settings.data?.notifyProton ?? true}
         onChange={(next) => save({ notifyProton: next })}
       />
+      <SwitchField
+        label="Signed out"
+        hint="When the server stops accepting your sign-in. Shown even while you are looking at the window."
+        checked={settings.data?.notifySignIn ?? true}
+        onChange={(next) => save({ notifySignIn: next })}
+      />
+      <SwitchField
+        label="Server connection"
+        hint="When the server stops answering, and when it is back."
+        checked={settings.data?.notifyConnection ?? true}
+        onChange={(next) => save({ notifyConnection: next })}
+      />
+      <SwitchField
+        label="Save sync"
+        hint="When a save cannot sync, or a save needs your choice."
+        checked={settings.data?.notifySaves ?? true}
+        onChange={(next) => save({ notifySaves: next })}
+      />
+      <SwitchField
+        label="New games"
+        hint="When games are added to the server."
+        checked={settings.data?.notifyNewGames ?? true}
+        onChange={(next) => save({ notifyNewGames: next })}
+      />
+      <SwitchField
+        label="Updated games"
+        hint="When an installed game has new files on the server."
+        checked={settings.data?.notifyGameUpdates ?? true}
+        onChange={(next) => save({ notifyGameUpdates: next })}
+      />
       <p className={`${HINT} mt-1 border-t border-default-200/60 pt-2`}>
         Held back while you are looking at the window, apart from failures. Every notification is
         also listed behind the bell in the title bar.

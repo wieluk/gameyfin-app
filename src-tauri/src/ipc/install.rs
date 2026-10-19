@@ -1409,7 +1409,7 @@ pub async fn auto_install_download(
                     "{title} is a {}. Choose how to install it in Downloads.",
                     payload.label()
                 ),
-                route: Some("/downloads"),
+                route: Some("/downloads".into()),
                 game_id: Some(game_id),
             };
             crate::notify::send(app, note).await;

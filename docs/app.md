@@ -16,9 +16,27 @@
 
 ## Notifications
 
-Four switches: downloads and installs, failures, new versions of Gameyfin, and new Proton
-versions. Failures are always shown; the others stay quiet while you are looking at the
+Each kind has its own switch in **Settings, Interface**, all on by default:
+
+| Switch | Tells you |
+| --- | --- |
+| Downloads and installs | A download is ready to install, or a game is ready to play. |
+| Failures | A download, install or launch went wrong. |
+| New versions of Gameyfin | A new release of the app. |
+| New Proton versions | A newer build of a Proton you have downloaded. |
+| Signed out | The server stopped accepting your sign-in. |
+| Server connection | The server stopped answering for a few minutes, and when it is back. |
+| Save sync | A save could not sync, or a save needs your choice. |
+| New games | Games were added to the server, also while Gameyfin was closed. |
+| Updated games | An installed game has new files on the server. |
+
+Failures and sign-outs are always shown; the others stay quiet while you are looking at the
 window.
+
+While you are signed in, Gameyfin checks the server every two minutes and the library every
+ten. A game counts as updated when its size on the server changes from the size you
+downloaded, which any Gameyfin server reports. Renaming a game's file or folder on the server
+makes it a new game instead.
 
 Proton builds do not update by themselves, since a new build can break a game that ran.
 Gameyfin checks twice a day for a newer UMU-Proton, GE-Proton or Proton-CachyOS, only for the

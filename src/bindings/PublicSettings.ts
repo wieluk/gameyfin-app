@@ -35,7 +35,19 @@ notifyFailures: boolean, notifyUpdates: boolean,
 /**
  * New builds of a Proton family that is installed.
  */
-notifyProton: boolean, closeToTray: boolean, 
+notifyProton: boolean, notifySignIn: boolean, 
+/**
+ * Losing the server and getting it back.
+ */
+notifyConnection: boolean, 
+/**
+ * Save sync failures, and the questions it waits on.
+ */
+notifySaves: boolean, notifyNewGames: boolean, 
+/**
+ * An installed game whose files changed on the server.
+ */
+notifyGameUpdates: boolean, closeToTray: boolean, 
 /**
  * Hides the window on a login start only. Starting Gameyfin by hand always shows it.
  */
