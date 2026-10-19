@@ -1,11 +1,15 @@
 import { Alert } from "@/components/Alert";
 import { Trailers } from "@/components/Trailers";
 import { useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { GameSaves } from "./GameSaves";
 import { Icon } from "./Icon";
 import { ShortcutOptions } from "./ShortcutOptions";
 import { isInstalled, primaryAction } from "@/lib/actions";
+import { backend } from "@/lib/backend";
+import { messageOf } from "@/lib/errors";
+import { keys } from "@/lib/queries";
 import { formatBytes, formatPlaytime, formatRelative } from "@/lib/format";
 import { useLibraryView, type FacetKey } from "@/state/libraryView";
 import type { LibraryEntry } from "@/types";
@@ -24,6 +28,7 @@ export function GameDetail({
   onPrimaryAction: (entry: LibraryEntry) => void;
 }) {
   const { game, state } = entry;
+  const [stopError, setStopError] = useState<string | null>(null);
 
   // Through the shared stack, so Escape closes this dialog rather than every open one.
   useDismissOnEscape(onClose);
@@ -69,13 +74,18 @@ export function GameDetail({
 
         <div className={PANEL_BODY}>
           <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-3">
-            <PrimaryButton entry={entry} onClick={() => onPrimaryAction(entry)} />
+            {state.kind === "running" ? (
+              <StopButton gameId={game.id} onError={setStopError} />
+            ) : (
+              <PrimaryButton entry={entry} onClick={() => onPrimaryAction(entry)} />
+            )}
             {isInstalled(entry) && <ShortcutOptions gameId={game.id} inline />}
           </div>
 
           {state.kind === "failed" && (
             <Alert className="mb-5">{state.message}</Alert>
           )}
+          {stopError && <Alert className="mb-5">{stopError}</Alert>}
 
           {/* Side by side where there is room, as on the web interface; stacked when narrow. */}
           <div className="mb-5 flex flex-col gap-5 lg:flex-row lg:gap-8">
@@ -171,6 +181,43 @@ function PrimaryButton({
       disabled={action.disabled}
     >
       {action.label}
+    </Button>
+  );
+}
+
+/** As on the Installed row: a game that will not close would otherwise stay Running for good. */
+function StopButton({
+  gameId,
+  onError,
+}: {
+  gameId: number;
+  onError: (message: string | null) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [stopping, setStopping] = useState(false);
+
+  async function stop() {
+    setStopping(true);
+    onError(null);
+    try {
+      await backend.stopGame(gameId);
+      await queryClient.invalidateQueries({ queryKey: keys.entries });
+    } catch (e) {
+      onError(messageOf(e));
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  return (
+    <Button
+      variant="destructive"
+      size="lg"
+      icon="close"
+      disabled={stopping}
+      onClick={() => void stop()}
+    >
+      {stopping ? "Stopping…" : "Stop"}
     </Button>
   );
 }
