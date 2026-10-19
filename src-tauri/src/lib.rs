@@ -341,6 +341,7 @@ pub fn run() {
             ipc::install::find_game_uninstaller,
             ipc::install::uninstall_game,
             ipc::launch::launch_game,
+            ipc::launch::launch_game_elevated,
             ipc::launch::stop_game,
             proton::proton_status,
             proton::install_proton,

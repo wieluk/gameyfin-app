@@ -18,7 +18,31 @@ pub async fn launch_game(
     state: State<'_, AppState>,
     game_id: i64,
 ) -> CommandResult<()> {
-    tracing::info!(game_id, "launch requested");
+    start(&app, &state, game_id, false).await
+}
+
+/// Only offered once the game would not start without administrator rights.
+#[tauri::command]
+pub async fn launch_game_elevated(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    game_id: i64,
+) -> CommandResult<()> {
+    if !cfg!(windows) {
+        return Err(CommandError::msg(
+            "Running as administrator only applies on Windows.",
+        ));
+    }
+    start(&app, &state, game_id, true).await
+}
+
+async fn start(
+    app: &AppHandle,
+    state: &AppState,
+    game_id: i64,
+    elevated: bool,
+) -> CommandResult<()> {
+    tracing::info!(game_id, elevated, "launch requested");
     let Some(claim) = state
         .library()
         .claim(game_id, Activity::preparing("Starting"))
@@ -26,12 +50,12 @@ pub async fn launch_game(
         tracing::info!(game_id, "already busy; ignoring the launch request");
         return Ok(());
     };
-    notify(&app);
-    let result = launch(&app, &state, game_id, claim).await;
+    notify(app);
+    let result = launch(app, state, game_id, claim, elevated).await;
     if let Err(e) = &result {
         tracing::error!(game_id, "could not launch: {e}");
     }
-    notify(&app);
+    notify(app);
     result
 }
 
@@ -40,6 +64,7 @@ async fn launch(
     state: &AppState,
     game_id: i64,
     claim: crate::library_state::Claim,
+    elevated: bool,
 ) -> CommandResult<()> {
     let record = state.library().record(game_id);
     let install_dir = record
@@ -124,19 +149,34 @@ async fn launch(
         let _claim = claim;
         let state = app.state::<AppState>();
         let library = state.library().clone();
-        let supervisor = match gameyfin_core::Supervisor::spawn(&command) {
-            Ok(supervisor) => supervisor,
-            Err(e) => {
-                state.processes.finish(game_id);
-                library.fail(game_id, Stage::Launch, e.to_string());
-                return notify(&app);
-            }
+        library
+            .update_record(game_id, |r| r.launch_elevation = false)
+            .await;
+        let started = || {
+            library.set_activity(game_id, running);
+            notify(&app);
+            crate::tray::game_started(&app);
         };
-        library.set_activity(game_id, running);
-        notify(&app);
-        crate::tray::game_started(&app);
-
-        let ended = supervisor.wait_or_stop(&stopper, teardown).await;
+        let (ended, lowered) = if elevated {
+            started();
+            (run_as_administrator(&command).await, false)
+        } else {
+            let (spawned, lowered) =
+                spawn_without_elevation(&library, game_id, &command, &executable).await;
+            let supervisor = match spawned {
+                Ok(supervisor) => supervisor,
+                Err(e) => {
+                    state.processes.finish(game_id);
+                    if matches!(e, gameyfin_core::CoreError::ElevationRequired { .. }) {
+                        offer_elevation(&library, game_id).await;
+                    }
+                    library.fail(game_id, Stage::Launch, e.to_string());
+                    return notify(&app);
+                }
+            };
+            started();
+            (supervisor.wait_or_stop(&stopper, teardown).await, lowered)
+        };
         crate::tray::game_ended();
         state.processes.finish(game_id);
         // Back to Gameyfin, where the save upload and any failure to start are shown.
@@ -162,7 +202,14 @@ async fn launch(
             Ok(session) => {
                 let verbs = gameyfin_core::diagnose::winetricks_for(&session.error_output);
                 match failed_to_start(&session, &verbs) {
-                    Some(message) => {
+                    Some(mut message) => {
+                        if lowered {
+                            offer_elevation(&library, game_id).await;
+                            message.push_str(
+                                "\n\nIt was started without the administrator rights its settings ask for. \
+                                 If it needs them, run it as administrator.",
+                            );
+                        }
                         tracing::error!(
                             game_id,
                             duration = ?session.duration,
@@ -182,11 +229,85 @@ async fn launch(
                     None => library.clear_activity(game_id),
                 }
             }
-            Err(e) => library.fail(game_id, Stage::Launch, e.to_string()),
+            Err(e) => {
+                // A dismissed consent dialog, which the same button retries.
+                if elevated {
+                    offer_elevation(&library, game_id).await;
+                }
+                library.fail(game_id, Stage::Launch, e.to_string());
+            }
         }
         notify(&app);
     });
     Ok(())
+}
+
+/// Installers often tick "Run as administrator" on a game that does not need it, and Windows
+/// then refuses to start it from here. Returns whether it started without those rights.
+async fn spawn_without_elevation(
+    library: &crate::library_state::LibraryState,
+    game_id: i64,
+    command: &gameyfin_core::ResolvedCommand,
+    executable: &Path,
+) -> (gameyfin_core::CoreResult<gameyfin_core::Supervisor>, bool) {
+    use gameyfin_core::compat_flags;
+
+    let refused = |spawned: &gameyfin_core::CoreResult<_>| {
+        matches!(
+            spawned,
+            Err(gameyfin_core::CoreError::ElevationRequired { .. })
+        )
+    };
+    let spawned = gameyfin_core::Supervisor::spawn(command);
+    if !refused(&spawned) {
+        // Unticked by us earlier, so a game that fails now may be one that needed it after all.
+        return (spawned, library.record(game_id).run_as_admin_cleared);
+    }
+
+    let mut invoker = command.clone();
+    let (key, value) = compat_flags::RUN_AS_INVOKER;
+    invoker.env.insert(key.to_string(), value.to_string());
+    let spawned = gameyfin_core::Supervisor::spawn(&invoker);
+    if !refused(&spawned) {
+        tracing::info!(
+            game_id,
+            "started without the administrator rights it asks for"
+        );
+        return (spawned, true);
+    }
+
+    // What unticking the box on the Compatibility tab does, which the variable did not override.
+    if !compat_flags::clear_run_as_admin(executable) {
+        return (spawned, false);
+    }
+    tracing::info!(
+        game_id,
+        ?executable,
+        "unticked Run as administrator in its compatibility settings"
+    );
+    library
+        .update_record(game_id, |r| r.run_as_admin_cleared = true)
+        .await;
+    (gameyfin_core::Supervisor::spawn(command), true)
+}
+
+/// Started by the shell, which waits for it, so only its run time and exit code come back.
+async fn run_as_administrator(
+    command: &gameyfin_core::ResolvedCommand,
+) -> gameyfin_core::CoreResult<gameyfin_core::Session> {
+    let since = std::time::Instant::now();
+    let run = gameyfin_core::run_elevated(command).await?;
+    Ok(gameyfin_core::Session {
+        duration: since.elapsed(),
+        end: gameyfin_core::SessionEnd::Exited { code: run.status },
+        error_output: run.stderr,
+    })
+}
+
+async fn offer_elevation(library: &crate::library_state::LibraryState, game_id: i64) {
+    library
+        .update_record(game_id, |r| r.launch_elevation = true)
+        .await;
 }
 
 /// Stops an installer or a game, including a repack installer frozen out of memory.

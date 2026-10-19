@@ -112,10 +112,11 @@ const InstalledRow = memo(function InstalledRow({ entry, focused }: { entry: Lib
 
   const play = () => run(() => backend.launch(entry.game.id));
   const runSetup = (setup: string) => run(() => backend.installSetups(entry.game.id, [setup]));
-  // The setup Windows refused, rerun through the shell so Windows shows its consent dialog.
-  const runAsAdministrator = () =>
+  // Rerun through the shell so Windows shows its consent dialog: the setup it refused, or the game.
+  const runAsAdministrator = (stage: string) =>
     run(async () => {
-      await backend.runSetupElevated(entry.game.id);
+      if (stage === "launch") await backend.launchElevated(entry.game.id);
+      else await backend.runSetupElevated(entry.game.id);
       await queryClient.invalidateQueries({ queryKey: keys.entries });
     });
 
@@ -298,7 +299,7 @@ const InstalledRow = memo(function InstalledRow({ entry, focused }: { entry: Lib
               className="mt-2"
               size="sm"
               variant="primary"
-              onClick={() => void runAsAdministrator()}
+              onClick={() => void runAsAdministrator(busy.stage)}
             >
               Run as administrator
             </Button>

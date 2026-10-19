@@ -65,7 +65,12 @@ describe("an installed game with work in progress", () => {
 
   it("offers Play again once only a failure is left", () => {
     const state = fixture.installed({
-      busy: { kind: "failed", message: "the installer exited with code 1", elevationRequired: false },
+      busy: {
+        kind: "failed",
+        message: "the installer exited with code 1",
+        stage: "install",
+        elevationRequired: false,
+      },
     });
     expect(primaryAction(state).label).toBe("Play");
     expect(primaryAction(state).disabled).toBe(false);
@@ -85,6 +90,11 @@ describe("a game that fails to start", () => {
 
   it("offers Play rather than Retry download", () => {
     expect(primaryAction(failedLaunch).label).toBe("Play");
+  });
+
+  it("offers administrator rights once it would not start without them", () => {
+    const refused = fixture.failed({ stage: "launch", elevationRequired: true });
+    expect(primaryAction(refused).label).toBe("Run as administrator");
   });
 
   it("leaves the other failures where they were", () => {

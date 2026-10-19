@@ -48,6 +48,10 @@ pub struct GameRecord {
     pub suggested_winetricks: Vec<String>,
     /// A setup program Windows refused without elevation, so the retry runs that exact file.
     pub elevation_program: Option<PathBuf>,
+    /// The game would not start without administrator rights, so its retry asks for them.
+    pub launch_elevation: bool,
+    /// Gameyfin unticked "Run as administrator" on it, so a failed start may need it back.
+    pub run_as_admin_cleared: bool,
     pub saves: gameyfin_core::LocalSaveState,
     pub save_restore_strategy: SaveRestoreStrategy,
     /// Hand-entered `(source, target)` path mappings.
@@ -260,6 +264,8 @@ pub enum InstalledBusy {
     },
     Failed {
         message: String,
+        /// Says whether the administrator retry reruns the setup or starts the game.
+        stage: Stage,
         /// The retry that helps is "as administrator", not a plain retry.
         elevation_required: bool,
     },
@@ -577,9 +583,9 @@ impl LibraryState {
             Activity::Failed { message, stage } => GameState::Failed {
                 message,
                 stage,
+                elevation_required: offers_elevation(&record, stage),
                 path: record.install_dir.as_deref().map(display),
                 executable: record.executable,
-                elevation_required: stage == Stage::Install && record.elevation_program.is_some(),
             },
         }
     }
@@ -716,9 +722,18 @@ fn busy_for(activity: &Activity, record: &GameRecord) -> Option<InstalledBusy> {
             stage: stage @ (Stage::Install | Stage::Launch),
         } => Some(InstalledBusy::Failed {
             message: message.clone(),
-            elevation_required: *stage == Stage::Install && record.elevation_program.is_some(),
+            stage: *stage,
+            elevation_required: offers_elevation(record, *stage),
         }),
         _ => None,
+    }
+}
+
+fn offers_elevation(record: &GameRecord, stage: Stage) -> bool {
+    match stage {
+        Stage::Install => record.elevation_program.is_some(),
+        Stage::Launch => record.launch_elevation,
+        _ => false,
     }
 }
 
@@ -807,6 +822,13 @@ mod tests {
 
         state.fail(8, Stage::Install, "exit code 1");
         assert!(!elevation_offered(&state, 8));
+
+        // A game that would not start without the rights gets the same way out.
+        state.update_record(9, |r| r.launch_elevation = true).await;
+        state.fail(9, Stage::Launch, "needs administrator");
+        assert!(elevation_offered(&state, 9));
+        state.fail(9, Stage::Install, "exit code 1");
+        assert!(!elevation_offered(&state, 9));
     }
 
     #[tokio::test]

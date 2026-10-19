@@ -5,6 +5,7 @@
 pub mod arguments;
 pub mod checkpoint;
 mod checksum;
+pub mod compat_flags;
 pub mod diagnose;
 pub mod download;
 pub mod environment;
@@ -20,6 +21,8 @@ pub mod payload;
 pub mod prefix;
 pub mod process;
 pub mod proton;
+#[cfg(windows)]
+mod registry;
 pub mod runtime;
 pub mod save_migration;
 pub mod save_store;

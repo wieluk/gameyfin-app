@@ -661,6 +661,11 @@ impl Supervisor {
         }
 
         let mut child = cmd.spawn().map_err(|source| {
+            if source.raw_os_error() == Some(ERROR_ELEVATION_REQUIRED) {
+                return CoreError::ElevationRequired {
+                    program: command.program.to_string_lossy().into_owned(),
+                };
+            }
             CoreError::Other(format!(
                 "could not launch {}: {source}",
                 command.program.to_string_lossy()

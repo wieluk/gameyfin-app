@@ -122,6 +122,8 @@ export const backend = {
   /** Retry the setup program Windows refused to start, as administrator. */
   runSetupElevated: (gameId: number) => invoke<void>("run_setup_elevated", { gameId }),
   launch: (gameId: number) => invoke<void>("launch_game", { gameId }),
+  /** Start a game that would not start without administrator rights, through Windows' consent. */
+  launchElevated: (gameId: number) => invoke<void>("launch_game_elevated", { gameId }),
   /** Stop whatever the game is running, an installer or the game itself. */
   stopGame: (gameId: number) => invoke<void>("stop_game", { gameId }),
   listExecutables: (gameId: number) => invoke<string[]>("list_executables", { gameId }),

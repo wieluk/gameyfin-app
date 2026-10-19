@@ -378,8 +378,8 @@ fn roots(_home: &Path) -> Vec<PathBuf> {
 
     distinct_roots(
         [
-            registry_string(HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
-            registry_string(
+            crate::registry::string(HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+            crate::registry::string(
                 HKEY_LOCAL_MACHINE,
                 r"SOFTWARE\WOW6432Node\Valve\Steam",
                 "InstallPath",
@@ -410,53 +410,6 @@ fn distinct_roots(candidates: impl IntoIterator<Item = String>) -> Vec<PathBuf> 
         }
     }
     roots
-}
-
-#[cfg(windows)]
-fn registry_string(
-    root: windows_sys::Win32::System::Registry::HKEY,
-    key: &str,
-    value: &str,
-) -> Option<String> {
-    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
-    use windows_sys::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_SZ};
-
-    let key: Vec<u16> = key.encode_utf16().chain([0]).collect();
-    let value: Vec<u16> = value.encode_utf16().chain([0]).collect();
-    let mut size = 0u32;
-    // SAFETY: both names are NUL-terminated, and a null buffer asks only for the size.
-    let status = unsafe {
-        RegGetValueW(
-            root,
-            key.as_ptr(),
-            value.as_ptr(),
-            RRF_RT_REG_SZ,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &mut size,
-        )
-    };
-    if status != ERROR_SUCCESS || size == 0 {
-        return None;
-    }
-    let mut buffer = vec![0u16; (size as usize).div_ceil(2)];
-    // SAFETY: `size` is the byte length of `buffer`, which the call writes no further than.
-    let status = unsafe {
-        RegGetValueW(
-            root,
-            key.as_ptr(),
-            value.as_ptr(),
-            RRF_RT_REG_SZ,
-            std::ptr::null_mut(),
-            buffer.as_mut_ptr().cast(),
-            &mut size,
-        )
-    };
-    if status != ERROR_SUCCESS {
-        return None;
-    }
-    let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
-    Some(String::from_utf16_lossy(&buffer[..len]))
 }
 
 /// Every `shortcuts.vdf` under `home`, one per Steam account, since a shared machine has

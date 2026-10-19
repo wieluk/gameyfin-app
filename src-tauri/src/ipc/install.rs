@@ -1042,9 +1042,11 @@ async fn prepare_installer(
             .extend(state.settings().unattended_args(kind));
     }
     let own = gameyfin_core::arguments::split(&state.library().record(game_id).installer_arguments);
-    config
-        .arguments
-        .extend(with_destination(kind, &destination, own));
+    let mut args = with_destination(kind, &destination, own);
+    if game_link.is_some() {
+        args = nsis_folder_for_wine(args);
+    }
+    config.arguments.extend(args);
 
     let command =
         gameyfin_core::resolve_command(&config).context("could not build the installer command")?;
@@ -1302,6 +1304,23 @@ fn with_destination(
         Some(chosen) => rest.into_iter().chain([chosen]).collect(),
         None => rest.into_iter().chain(args).collect(),
     }
+}
+
+/// Wine quotes an argument with a space in it, and NSIS ignores a quoted `/D=`. As separate
+/// words, Wine joins them with single spaces, which NSIS reads to the end of the line.
+fn nsis_folder_for_wine(mut args: Vec<String>) -> Vec<String> {
+    match args.pop() {
+        Some(last) if last.starts_with("/D=") => {
+            args.extend(
+                last.split(' ')
+                    .filter(|w| !w.is_empty())
+                    .map(str::to_string),
+            );
+        }
+        Some(last) => args.push(last),
+        None => {}
+    }
+    args
 }
 
 /// Files, bytes and the newest change under a folder, to tell whether a program touched it.
@@ -1755,6 +1774,8 @@ pub async fn uninstall_game(
             r.setup_candidates.clear();
             r.installed_setups.clear();
             r.elevation_program = None;
+            r.launch_elevation = false;
+            r.run_as_admin_cleared = false;
         })
         .await;
     // After the record, so a prefix that will not go leaves the game uninstalled regardless.
@@ -1835,6 +1856,17 @@ mod tests {
             with_destination(InnoSetup, "C:\\Games\\Game", own(&["/VERYSILENT"])),
             own(&["/SP-", "/DIR=C:\\Games\\Game", "/VERYSILENT"])
         );
+    }
+
+    #[test]
+    fn wine_gets_the_nsis_folder_as_words_it_will_not_quote() {
+        let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            nsis_folder_for_wine(args(&["/S", "/D=C:\\Games\\Risk of Rain 2"])),
+            args(&["/S", "/D=C:\\Games\\Risk", "of", "Rain", "2"])
+        );
+        let inno = args(&["/SP-", "/DIR=C:\\Games\\Risk of Rain 2"]);
+        assert_eq!(nsis_folder_for_wine(inno.clone()), inno);
     }
 
     #[test]
