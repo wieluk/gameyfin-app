@@ -39,6 +39,8 @@ inotify = "0.11"
 [target.'cfg(windows)'.dependencies]
 # UnRAR itself: Windows has no RAR tool to fall back on, and its tar.exe fails on many archives.
 unrar = "0.5.8"
+# Reads where Steam is installed, which on Windows only the registry knows.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Registry"] }
 
 [dev-dependencies]
 unrar = "0.5.8"

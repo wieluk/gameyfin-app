@@ -236,7 +236,15 @@ impl Shortcut {
         set(&mut entries, "AppName", Value::Str(self.app_name.clone()));
         set(&mut entries, "Exe", Value::Str(self.exe.clone()));
         set(&mut entries, "StartDir", Value::Str(self.start_dir.clone()));
-        set(&mut entries, "icon", Value::Str(self.icon.clone()));
+        // An icon the user chose in Steam wins over ours.
+        let icon_is_unset = entries
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("icon"))
+            .and_then(|(_, v)| v.as_str())
+            .is_none_or(str::is_empty);
+        if icon_is_unset {
+            set(&mut entries, "icon", Value::Str(self.icon.clone()));
+        }
         set(
             &mut entries,
             "LaunchOptions",
@@ -347,8 +355,9 @@ fn shortcuts_map(document: &mut Value) -> &mut Vec<(String, Value)> {
         .expect("just ensured it is a map")
 }
 
-/// Where Steam might be, relative to home. The Flatpak path is listed because that install
-/// keeps `userdata` inside its sandbox and has no native path at all.
+/// Where Steam might be on Linux, relative to home. The Flatpak path is listed because that
+/// install keeps `userdata` inside its sandbox and has no native path at all.
+#[cfg(not(windows))]
 const STEAM_ROOTS: [&str; 4] = [
     ".local/share/Steam",
     ".steam/steam",
@@ -356,12 +365,110 @@ const STEAM_ROOTS: [&str; 4] = [
     ".var/app/com.valvesoftware.Steam/data/Steam",
 ];
 
+/// Every folder Steam might be installed in, most likely first.
+#[cfg(not(windows))]
+fn roots(home: &Path) -> Vec<PathBuf> {
+    STEAM_ROOTS.iter().map(|root| home.join(root)).collect()
+}
+
+/// Windows Steam lives outside the profile, wherever its installer was pointed.
+#[cfg(windows)]
+fn roots(_home: &Path) -> Vec<PathBuf> {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
+    distinct_roots(
+        [
+            registry_string(HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+            registry_string(
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Valve\Steam",
+                "InstallPath",
+            ),
+            Some(r"C:\Program Files (x86)\Steam".to_string()),
+        ]
+        .into_iter()
+        .flatten(),
+    )
+}
+
+/// `SteamPath` is written lower case with forward slashes, so the same folder arrives spelled
+/// several ways and is compared the way Windows would.
+#[cfg(any(windows, test))]
+fn distinct_roots(candidates: impl IntoIterator<Item = String>) -> Vec<PathBuf> {
+    let mut seen = Vec::new();
+    let mut roots = Vec::new();
+    for candidate in candidates {
+        let path = candidate.trim().replace('/', "\\");
+        let path = path.trim_end_matches('\\');
+        if path.is_empty() {
+            continue;
+        }
+        let key = path.to_lowercase();
+        if !seen.contains(&key) {
+            seen.push(key);
+            roots.push(PathBuf::from(path));
+        }
+    }
+    roots
+}
+
+#[cfg(windows)]
+fn registry_string(
+    root: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+    value: &str,
+) -> Option<String> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_SZ};
+
+    let key: Vec<u16> = key.encode_utf16().chain([0]).collect();
+    let value: Vec<u16> = value.encode_utf16().chain([0]).collect();
+    let mut size = 0u32;
+    // SAFETY: both names are NUL-terminated, and a null buffer asks only for the size.
+    let status = unsafe {
+        RegGetValueW(
+            root,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut size,
+        )
+    };
+    if status != ERROR_SUCCESS || size == 0 {
+        return None;
+    }
+    let mut buffer = vec![0u16; (size as usize).div_ceil(2)];
+    // SAFETY: `size` is the byte length of `buffer`, which the call writes no further than.
+    let status = unsafe {
+        RegGetValueW(
+            root,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+    Some(String::from_utf16_lossy(&buffer[..len]))
+}
+
 /// Every `shortcuts.vdf` under `home`, one per Steam account, since a shared machine has
 /// one each and the game should reach all of them.
 pub fn shortcut_files(home: &Path) -> Vec<PathBuf> {
+    shortcut_files_in(roots(home))
+}
+
+fn shortcut_files_in(roots: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    for root in STEAM_ROOTS {
-        let userdata = home.join(root).join("userdata");
+    for root in roots {
+        let userdata = root.join("userdata");
         let Ok(accounts) = std::fs::read_dir(&userdata) else {
             continue;
         };
@@ -384,16 +491,97 @@ pub fn shortcut_files(home: &Path) -> Vec<PathBuf> {
 /// Steam's own folder, the one holding `steamapps` and `userdata`. A save scanner wants it
 /// because Proton keeps each game's prefix under `steamapps/compatdata`.
 pub fn root(home: &Path) -> Option<PathBuf> {
-    STEAM_ROOTS
-        .iter()
-        .map(|root| home.join(root))
+    roots(home)
+        .into_iter()
         .find(|root| root.join("userdata").is_dir())
 }
 
 pub fn is_installed(home: &Path) -> bool {
-    STEAM_ROOTS
+    root(home).is_some()
+}
+
+/// Custom artwork Steam shows for a shortcut, kept in each account's `config/grid` folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Artwork {
+    /// The library grid tile.
+    Portrait,
+    /// The recent games row.
+    Wide,
+    /// The banner across the top of the game's page.
+    Hero,
+    Icon,
+}
+
+impl Artwork {
+    pub const ALL: [Artwork; 4] = [
+        Artwork::Portrait,
+        Artwork::Wide,
+        Artwork::Hero,
+        Artwork::Icon,
+    ];
+
+    /// The name without an extension: Steam keeps whichever format the user picked.
+    fn stem(self, app_id: u32) -> String {
+        match self {
+            Artwork::Portrait => format!("{app_id}p"),
+            Artwork::Wide => format!("{app_id}"),
+            Artwork::Hero => format!("{app_id}_hero"),
+            Artwork::Icon => format!("{app_id}_icon"),
+        }
+    }
+
+    pub fn path(self, grid: &Path, app_id: u32) -> PathBuf {
+        grid.join(format!("{}.png", self.stem(app_id)))
+    }
+}
+
+/// The artwork folder belonging to the same account as `shortcuts_file`.
+pub fn grid_dir(shortcuts_file: &Path) -> PathBuf {
+    shortcuts_file.with_file_name("grid")
+}
+
+/// Formats Steam saves custom artwork in, so art the user chose is found whatever its type.
+const ARTWORK_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
+
+pub fn has_artwork(grid: &Path, app_id: u32, kind: Artwork) -> bool {
+    let stem = kind.stem(app_id);
+    ARTWORK_EXTENSIONS
         .iter()
-        .any(|root| home.join(root).join("userdata").is_dir())
+        .any(|extension| grid.join(format!("{stem}.{extension}")).is_file())
+}
+
+/// Server images arrive as JPEG or WebP, and Steam only reliably reads PNG.
+pub fn decode_artwork(bytes: &[u8]) -> Option<image::DynamicImage> {
+    image::load_from_memory(bytes).ok()
+}
+
+pub fn encode_artwork(image: &image::DynamicImage) -> Option<Vec<u8>> {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .ok()
+        .map(|()| bytes.into_inner())
+}
+
+/// Writes one piece of artwork unless some is already there, which may be the user's own
+/// choice from Steam. True when it was written.
+pub fn write_artwork(grid: &Path, app_id: u32, kind: Artwork, png: &[u8]) -> std::io::Result<bool> {
+    if has_artwork(grid, app_id, kind) {
+        return Ok(false);
+    }
+    std::fs::create_dir_all(grid)?;
+    let path = kind.path(grid, app_id);
+    let temporary = path.with_extension("gameyfin-tmp");
+    std::fs::write(&temporary, png)?;
+    std::fs::rename(&temporary, &path)?;
+    Ok(true)
+}
+
+/// Removes the PNGs this app writes. Art the user saved in another format is left alone.
+pub fn remove_artwork(grid: &Path, app_id: u32) {
+    for kind in Artwork::ALL {
+        let _ = std::fs::remove_file(kind.path(grid, app_id));
+    }
 }
 
 /// Read a `shortcuts.vdf`, treating a missing or unreadable file as an empty document
@@ -700,25 +888,130 @@ mod tests {
 
     #[test]
     fn every_signed_in_account_is_found() {
-        let home = std::env::temp_dir().join(format!("gameyfin-steam-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&home);
+        let root = std::env::temp_dir().join(format!("gameyfin-steam-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         for account in ["0", "1234", "5678"] {
-            std::fs::create_dir_all(
-                home.join(".local/share/Steam/userdata")
-                    .join(account)
-                    .join("config"),
-            )
-            .unwrap();
+            std::fs::create_dir_all(root.join("userdata").join(account).join("config")).unwrap();
         }
 
-        let files = shortcut_files(&home);
+        let files = shortcut_files_in(vec![root.clone(), root.join("missing")]);
         assert_eq!(files.len(), 2, "the `0` placeholder is not an account");
         assert!(files.iter().all(|p| p.ends_with("shortcuts.vdf")));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn steam_is_found_under_home_on_linux() {
+        let home = std::env::temp_dir().join(format!("gameyfin-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".local/share/Steam/userdata/1234/config")).unwrap();
+
+        assert_eq!(shortcut_files(&home).len(), 1);
+        assert_eq!(root(&home), Some(home.join(".local/share/Steam")));
         assert!(is_installed(&home));
 
         std::fs::remove_dir_all(&home).unwrap();
     }
 
+    #[test]
+    fn windows_spellings_of_one_folder_count_once() {
+        let roots = distinct_roots([
+            "c:/program files (x86)/steam".to_string(),
+            r"C:\Program Files (x86)\Steam\".to_string(),
+            "  ".to_string(),
+            r"D:\Games\Steam".to_string(),
+        ]);
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from(r"c:\program files (x86)\steam"),
+                PathBuf::from(r"D:\Games\Steam"),
+            ]
+        );
+    }
+
+    #[test]
+    fn artwork_is_named_after_the_shortcut_beside_its_account() {
+        let file = Path::new("/s/userdata/1234/config/shortcuts.vdf");
+        let grid = grid_dir(file);
+        assert_eq!(grid, Path::new("/s/userdata/1234/config/grid"));
+        let names: Vec<_> = Artwork::ALL
+            .iter()
+            .map(|kind| kind.path(&grid, 2284631436))
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "2284631436p.png",
+                "2284631436.png",
+                "2284631436_hero.png",
+                "2284631436_icon.png"
+            ]
+        );
+    }
+
+    #[test]
+    fn artwork_the_user_chose_is_never_replaced_or_removed() {
+        let grid = std::env::temp_dir().join(format!("gameyfin-grid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&grid);
+        std::fs::create_dir_all(&grid).unwrap();
+        // Steam keeps the user's pick in its own format.
+        std::fs::write(grid.join("7_hero.jpg"), b"theirs").unwrap();
+
+        assert!(write_artwork(&grid, 7, Artwork::Portrait, b"ours").unwrap());
+        assert!(!write_artwork(&grid, 7, Artwork::Portrait, b"newer").unwrap());
+        assert!(!write_artwork(&grid, 7, Artwork::Hero, b"ours").unwrap());
+        assert_eq!(std::fs::read(grid.join("7p.png")).unwrap(), b"ours");
+
+        remove_artwork(&grid, 7);
+        assert!(!grid.join("7p.png").exists());
+        assert_eq!(std::fs::read(grid.join("7_hero.jpg")).unwrap(), b"theirs");
+
+        std::fs::remove_dir_all(&grid).unwrap();
+    }
+
+    #[test]
+    fn artwork_is_converted_to_png() {
+        let image = image::DynamicImage::new_rgb8(4, 2);
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut jpeg, image::ImageFormat::Jpeg).unwrap();
+
+        let png = encode_artwork(&decode_artwork(jpeg.get_ref()).unwrap()).unwrap();
+        assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+        assert!(decode_artwork(b"not an image").is_none());
+    }
+
+    #[test]
+    fn an_icon_the_user_set_in_steam_survives_an_update() {
+        let mut document = Value::Map(Vec::new());
+        let mut ours = a_shortcut("Celeste");
+        ours.icon = "/grid/ours.png".to_string();
+        upsert(&mut document, &ours);
+        let icon = |document: &Value| {
+            document
+                .get("shortcuts")
+                .unwrap()
+                .get("0")
+                .unwrap()
+                .get("icon")
+                .cloned()
+        };
+        assert_eq!(icon(&document), Some(Value::Str("/grid/ours.png".into())));
+
+        {
+            let list = shortcuts_map(&mut document);
+            let entry = list[0].1.entries_mut().unwrap();
+            set(entry, "icon", Value::Str("/theirs.ico".into()));
+        }
+        upsert(&mut document, &ours);
+        assert_eq!(icon(&document), Some(Value::Str("/theirs.ico".into())));
+    }
+
+    // Windows looks in the registry, which a test machine may fill with a real Steam.
+    #[cfg(not(windows))]
     #[test]
     fn no_steam_means_no_files_and_no_error() {
         let home = std::env::temp_dir().join(format!("gameyfin-nosteam-{}", std::process::id()));

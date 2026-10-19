@@ -5,7 +5,10 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use image::imageops::FilterType;
-use image::{DynamicImage, ImageFormat, RgbaImage};
+use image::{DynamicImage, ImageFormat};
+
+/// Re-exported so callers can hold an icon without depending on `image` themselves.
+pub use image::RgbaImage;
 
 /// The largest edge an icon is kept at: all an `.ico` entry can hold, and as large as a
 /// desktop draws one.

@@ -81,7 +81,8 @@ In a game's options in **Installed**, add it to:
 - **Applications menu** (**Start menu** on Windows)
 - **Desktop**
 - **Steam**, as a non-Steam game, for every Steam account on this PC. Restart Steam to see it.
-  Handy for Big Picture and the Steam Deck.
+  It comes with the game's cover, banner and icon, unless you already picked your own in
+  Steam. Handy for Big Picture and the Steam Deck.
 
 Shortcuts start the game through Gameyfin, so the prefix, playtime tracking and save sync
 still apply.

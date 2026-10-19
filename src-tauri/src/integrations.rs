@@ -123,8 +123,27 @@ pub async fn set_shortcut(
     Ok(())
 }
 
-/// The icon the executable carries, else the game's cover, else Gameyfin's own.
 async fn write_shortcut_icon(state: &AppState, game_id: i64, path: PathBuf) -> Option<PathBuf> {
+    let (image, source) = shortcut_icon(state, game_id).await?;
+    let written = path.clone();
+    match tokio::task::spawn_blocking(move || gameyfin_core::icon::write(&image, &written)).await {
+        Ok(Ok(())) => {
+            tracing::info!(game_id, source, ?path, "wrote a shortcut icon");
+            Some(path)
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(game_id, ?path, error = %e, "could not write a shortcut icon");
+            None
+        }
+        Err(_) => None,
+    }
+}
+
+/// The icon the executable carries, else the game's cover, else Gameyfin's own.
+async fn shortcut_icon(
+    state: &AppState,
+    game_id: i64,
+) -> Option<(gameyfin_core::icon::RgbaImage, &'static str)> {
     let record = state.library().record(game_id);
     let executable = record
         .install_dir
@@ -162,19 +181,7 @@ async fn write_shortcut_icon(state: &AppState, game_id: i64, path: PathBuf) -> O
             .flatten()?
         }
     };
-
-    let written = path.clone();
-    match tokio::task::spawn_blocking(move || gameyfin_core::icon::write(&image, &written)).await {
-        Ok(Ok(())) => {
-            tracing::info!(game_id, source, ?path, "wrote a shortcut icon");
-            Some(path)
-        }
-        Ok(Err(e)) => {
-            tracing::warn!(game_id, ?path, error = %e, "could not write a shortcut icon");
-            None
-        }
-        Err(_) => None,
-    }
+    Some((image, source))
 }
 
 /// Steam stores the program quoted and runs it with the arguments that follow.
@@ -221,8 +228,9 @@ pub async fn set_steam_shortcut(
     enabled: bool,
 ) -> CommandResult<String> {
     let home = home()?;
-    let title = state.game(game_id).await?.title;
-    let shortcut = steam_shortcut_for(game_id, &title)?;
+    let game = state.game(game_id).await?;
+    let shortcut = steam_shortcut_for(game_id, &game.title)?;
+    let app_id = shortcut.app_id();
 
     let files = gameyfin_core::steam::shortcut_files(&home);
     if files.is_empty() {
@@ -230,14 +238,33 @@ pub async fn set_steam_shortcut(
             "No Steam account was found on this machine. Sign in to Steam once, then try again.",
         ));
     }
+    let artwork = if enabled {
+        steam_artwork(&state, &game).await
+    } else {
+        Vec::new()
+    };
     let mut written = 0usize;
     let mut failures = Vec::new();
     for path in &files {
+        let grid = gameyfin_core::steam::grid_dir(path);
         let mut document = gameyfin_core::steam::read_document(path);
         if enabled {
+            write_steam_artwork(&grid, app_id, &artwork);
+            let icon = gameyfin_core::steam::Artwork::Icon.path(&grid, app_id);
+            let shortcut = gameyfin_core::steam::Shortcut {
+                icon: if icon.is_file() {
+                    icon.display().to_string()
+                } else {
+                    String::new()
+                },
+                ..shortcut.clone()
+            };
             gameyfin_core::steam::upsert(&mut document, &shortcut);
-        } else if !gameyfin_core::steam::remove(&mut document, shortcut.app_id()) {
-            continue;
+        } else {
+            gameyfin_core::steam::remove_artwork(&grid, app_id);
+            if !gameyfin_core::steam::remove(&mut document, app_id) {
+                continue;
+            }
         }
         match gameyfin_core::steam::write_document(path, &document) {
             Ok(()) => written += 1,
@@ -261,6 +288,62 @@ pub async fn set_steam_shortcut(
     } else {
         "Removed from Steam. Restart Steam for the change to show.".to_string()
     })
+}
+
+/// PNGs for Steam's artwork slots: the cover as the grid tile, the header or else a
+/// screenshot for both wide ones.
+async fn steam_artwork(
+    state: &AppState,
+    game: &gameyfin_api::models::Game,
+) -> Vec<(gameyfin_core::steam::Artwork, Vec<u8>)> {
+    use gameyfin_core::steam::{decode_artwork, encode_artwork, Artwork};
+
+    let banner = game.header.as_ref().or(game.images.first());
+    let slots: [(_, &'static [Artwork]); 2] = [
+        (game.cover.as_ref(), &[Artwork::Portrait]),
+        (banner, &[Artwork::Wide, Artwork::Hero]),
+    ];
+    let mut sources = Vec::new();
+    for (image, kinds) in slots {
+        let Some(image) = image else { continue };
+        match crate::images::artwork(state, &image.path()).await {
+            Ok((bytes, _)) => sources.push((bytes, kinds)),
+            Err((_, reason)) => {
+                tracing::warn!(game_id = game.id, reason, "could not fetch Steam artwork")
+            }
+        }
+    }
+    let icon = shortcut_icon(state, game.id).await.map(|(image, _)| image);
+
+    // Decoding and encoding are CPU work.
+    tokio::task::spawn_blocking(move || {
+        let mut out = Vec::new();
+        for (bytes, kinds) in sources {
+            let Some(png) = decode_artwork(&bytes).as_ref().and_then(encode_artwork) else {
+                continue;
+            };
+            out.extend(kinds.iter().map(|kind| (*kind, png.clone())));
+        }
+        if let Some(png) = icon.and_then(|icon| encode_artwork(&icon.into())) {
+            out.push((Artwork::Icon, png));
+        }
+        out
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Best effort per slot: a missing banner should not cost the game its shortcut.
+fn write_steam_artwork(
+    grid: &Path,
+    app_id: u32,
+    artwork: &[(gameyfin_core::steam::Artwork, Vec<u8>)],
+) {
+    for (kind, png) in artwork {
+        if let Err(e) = gameyfin_core::steam::write_artwork(grid, app_id, *kind, png) {
+            tracing::warn!(?grid, ?kind, error = %e, "could not write Steam artwork");
+        }
+    }
 }
 
 #[derive(Debug, Serialize, ts_rs::TS)]
