@@ -1,5 +1,5 @@
 import { Icon } from "./Icon";
-import { primaryAction } from "@/lib/actions";
+import { isInstalled, primaryAction } from "@/lib/actions";
 import {
   formatBytes,
   formatEta,
@@ -7,6 +7,7 @@ import {
   formatPlaytime,
   formatSpeed,
 } from "@/lib/format";
+import { titleGradient } from "@/lib/ui";
 import type { LibraryEntry, TransferProgress } from "@/types";
 
 /** A library tile; 2:3 cover art so the grid reads as a shelf, not a table. */
@@ -78,21 +79,17 @@ export function GameCard({
         <h3 className="truncate text-sm font-medium text-foreground" title={game.title}>
           {game.title}
         </h3>
-        <p className="truncate text-xs text-foreground/50">{subtitle(entry)}</p>
+        <p className="truncate text-xs text-foreground/50">{cardSubtitle(entry)}</p>
       </div>
     </article>
   );
 }
 
-/** Deterministic gradient keyed off the title, so a coverless game still looks placed. */
 function PlaceholderArt({ title }: { title: string }) {
-  const hue = [...title].reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) % 360, 7);
   return (
     <div
       className="flex h-full w-full items-center justify-center p-3"
-      style={{
-        background: `linear-gradient(145deg, hsl(${hue} 45% 28%), hsl(${(hue + 40) % 360} 40% 16%))`,
-      }}
+      style={{ background: titleGradient(title) }}
     >
       <span className="line-clamp-3 text-center text-sm font-semibold text-white/85">{title}</span>
     </div>
@@ -233,8 +230,8 @@ function StateBadge({ entry }: { entry: LibraryEntry }) {
   return null;
 }
 
-
-function subtitle(entry: LibraryEntry): string {
+/** The line under a tile. Each form says what its number is, since they sit side by side. */
+export function cardSubtitle(entry: LibraryEntry): string {
   if (entry.state.kind === "downloading") {
     return `${formatBytes(entry.state.receivedBytes)} of ${formatBytes(entry.state.totalBytes)}`;
   }
@@ -244,6 +241,9 @@ function subtitle(entry: LibraryEntry): string {
   if (entry.state.kind === "downloaded") {
     return `Downloaded (${formatBytes(entry.state.bytes)})`;
   }
-  if (entry.minutesPlayed > 0) return formatPlaytime(entry.minutesPlayed);
-  return formatBytes(entry.game.metadata.fileSize);
+  if (entry.state.kind === "installing") return "Installing";
+  if (entry.minutesPlayed > 0) return `${formatPlaytime(entry.minutesPlayed)} played`;
+  if (isInstalled(entry)) return "Not played yet";
+  const size = entry.game.metadata.fileSize;
+  return size > 0 ? `${formatBytes(size)} download` : "Not installed";
 }

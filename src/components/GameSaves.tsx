@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/Alert";
+import { Icon } from "@/components/Icon";
 import { SaveVersionList } from "@/components/SaveVersionList";
 import { Button } from "@/components/ui";
 import { backend } from "@/lib/backend";
@@ -27,6 +28,9 @@ const SHOWN_STATES: SaveSyncState["kind"][] = [
   "failed",
 ];
 
+/** States where the answer is likely a restore, so the versions start unfolded. */
+const OPEN_STATES: SaveSyncState["kind"][] = ["remote-newer", "conflict"];
+
 /** A game's synced saves in its detail popup, against whichever location is configured. */
 export function GameSaves({ entry }: { entry: LibraryEntry }) {
   const gameId = entry.game.id;
@@ -35,6 +39,13 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null);
+  // Null until the user folds or unfolds it, so the default can follow the state.
+  const [expanded, setExpanded] = useState<boolean | null>(null);
+  // The same query the list runs, read here only for the count on the toggle.
+  const versions = useQuery({
+    queryKey: keys.saveVersions(gameId),
+    queryFn: () => backend.listSaveVersions(gameId),
+  });
 
   // Numbered, so a slow answer for the previous game cannot overwrite a newer one.
   const request = useRef(0);
@@ -81,6 +92,8 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
   if (!state || !SHOWN_STATES.includes(state.kind)) return null;
 
   const summary = describe(state);
+  const open = expanded ?? OPEN_STATES.includes(state.kind);
+  const count = versions.data?.length;
 
   return (
     <section className="mt-6">
@@ -91,6 +104,18 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
       <div className="rounded-xl border border-default-200/60 bg-content1 px-4 py-3">
         <div className="flex items-center gap-3">
           <p className={`min-w-0 flex-1 text-xs ${summary.tone}`}>{summary.text}</p>
+          <Button
+            variant="ghost"
+            aria-expanded={open}
+            aria-controls={`save-versions-${gameId}`}
+            onClick={() => setExpanded(!open)}
+          >
+            {count === undefined ? "Versions" : count === 1 ? "1 version" : `${count} versions`}
+            <Icon
+              name="chevron"
+              className={`h-3.5 w-3.5 transition-transform ${open ? "-rotate-90" : "rotate-90"}`}
+            />
+          </Button>
           <Button disabled={busy} onClick={() => act(() => backend.backupSaves(gameId, false))}>
             {busy ? "Working…" : "Back up now"}
           </Button>
@@ -108,14 +133,19 @@ export function GameSaves({ entry }: { entry: LibraryEntry }) {
           </p>
         )}
 
-        <div className="mt-3 border-t border-default-200/60 pt-3">
-          <SaveVersionList
-            gameId={gameId}
-            busy={busy}
-            onRestore={(saveId) => act(() => backend.restoreSaves(gameId, saveId))}
-            onChanged={() => void load()}
-          />
-        </div>
+        {open && (
+          <div
+            id={`save-versions-${gameId}`}
+            className="mt-3 border-t border-default-200/60 pt-3"
+          >
+            <SaveVersionList
+              gameId={gameId}
+              busy={busy}
+              onRestore={(saveId) => act(() => backend.restoreSaves(gameId, saveId))}
+              onChanged={() => void load()}
+            />
+          </div>
+        )}
       </div>
     </section>
   );

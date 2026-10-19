@@ -11,7 +11,14 @@ import { isWindows } from "@/lib/platform";
  * Where an installed game can be launched from. Shortcuts run Gameyfin with `--launch <id>`,
  * not the `.exe`, so prefix, runtime and playtime tracking still apply.
  */
-export function ShortcutOptions({ gameId }: { gameId: number }) {
+export function ShortcutOptions({
+  gameId,
+  inline = false,
+}: {
+  gameId: number;
+  /** Label beside the toggles rather than above, to sit in a row of buttons. */
+  inline?: boolean;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -51,36 +58,48 @@ export function ShortcutOptions({ gameId }: { gameId: number }) {
   }
 
   const data = status.data;
+  const size = inline ? "md" : "sm";
 
   return (
     <div>
-      <p className="mb-1 text-xs text-foreground/55">Add to</p>
-      <div className="flex flex-wrap gap-1.5">
-        <Toggle
-          label={isWindows ? "Start menu" : "Applications menu"}
-          on={data?.menu ?? false}
-          busy={busy === "menu"}
-          disabled={!data}
-          onClick={() => void toggle("menu", !data?.menu)}
-        />
-        <Toggle
-          label="Desktop"
-          on={data?.desktop ?? false}
-          busy={busy === "desktop"}
-          disabled={!data}
-          onClick={() => void toggle("desktop", !data?.desktop)}
-        />
-        {/* Only offered where Steam exists; a button that can only ever fail is worse
-            than no button. */}
-        {data?.steamAvailable && (
+      <div
+        role="group"
+        aria-label="Add to"
+        className={inline ? "flex flex-wrap items-center gap-1.5" : "flex flex-col gap-1"}
+      >
+        <span className={`text-xs ${inline ? "mr-0.5 text-foreground/45" : "text-foreground/55"}`}>
+          Add to
+        </span>
+        <div className="flex flex-wrap gap-1.5">
           <Toggle
-            label="Steam"
-            on={data.steam}
-            busy={busy === "steam"}
-            disabled={false}
-            onClick={() => void toggleSteam(!data.steam)}
+            size={size}
+            label={isWindows ? "Start menu" : "Applications menu"}
+            on={data?.menu ?? false}
+            busy={busy === "menu"}
+            disabled={!data}
+            onClick={() => void toggle("menu", !data?.menu)}
           />
-        )}
+          <Toggle
+            size={size}
+            label="Desktop"
+            on={data?.desktop ?? false}
+            busy={busy === "desktop"}
+            disabled={!data}
+            onClick={() => void toggle("desktop", !data?.desktop)}
+          />
+          {/* Only offered where Steam exists; a button that can only ever fail is worse
+              than no button. */}
+          {data?.steamAvailable && (
+            <Toggle
+              size={size}
+              label="Steam"
+              on={data.steam}
+              busy={busy === "steam"}
+              disabled={false}
+              onClick={() => void toggleSteam(!data.steam)}
+            />
+          )}
+        </div>
       </div>
 
       {note && <p className="mt-1.5 text-[0.6875rem] text-foreground/50">{note}</p>}
@@ -94,12 +113,14 @@ export function ShortcutOptions({ gameId }: { gameId: number }) {
 }
 
 function Toggle({
+  size,
   label,
   on,
   busy,
   disabled,
   onClick,
 }: {
+  size: "sm" | "md";
   label: string;
   on: boolean;
   busy: boolean;
@@ -107,7 +128,13 @@ function Toggle({
   onClick: () => void;
 }) {
   return (
-    <Button size="sm" pressed={on} onClick={onClick} disabled={busy || disabled}>
+    <Button
+      size={size}
+      pressed={on}
+      icon={on && !busy ? "check" : undefined}
+      onClick={onClick}
+      disabled={busy || disabled}
+    >
       {busy ? "…" : label}
     </Button>
   );
