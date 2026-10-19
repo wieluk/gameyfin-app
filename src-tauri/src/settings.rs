@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 #[ts(export, optional_fields)]
 pub struct SettingsPatch {
+    pub notify_enabled: Option<bool>,
     pub notify_transfers: Option<bool>,
     pub notify_failures: Option<bool>,
     pub notify_updates: Option<bool>,
@@ -77,6 +78,7 @@ impl SettingsPatch {
             )+};
         }
         set!(
+            notify_enabled,
             notify_transfers,
             notify_failures,
             notify_updates,
@@ -180,6 +182,8 @@ pub struct Settings {
     pub installer_memory_limit: InstallerMemoryLimit,
     /// `None` is the server's highest-priority provider.
     pub download_provider: Option<String>,
+    /// Over every kind below: off keeps the list behind the bell but shows no popups.
+    pub notify_enabled: bool,
     pub notify_transfers: bool,
     /// Separate so failures stay audible with the routine chatter off.
     pub notify_failures: bool,
@@ -250,6 +254,7 @@ impl Default for Settings {
             download_limit_kib: 0,
             installer_memory_limit: InstallerMemoryLimit::default(),
             download_provider: None,
+            notify_enabled: true,
             notify_transfers: true,
             notify_failures: true,
             notify_updates: true,
@@ -684,6 +689,7 @@ mod tests {
 
     /// The names `src/lib/backend.ts` sends; a drifted name would change nothing silently.
     const CLIENT_FIELDS: &[(&str, &str)] = &[
+        ("notifyEnabled", "false"),
         ("notifyTransfers", "false"),
         ("notifyFailures", "false"),
         ("notifyUpdates", "false"),

@@ -33,6 +33,10 @@ pub enum Category {
 
 impl Category {
     fn enabled_in(self, settings: &Settings) -> bool {
+        settings.notify_enabled && self.enabled_alone(settings)
+    }
+
+    fn enabled_alone(self, settings: &Settings) -> bool {
         match self {
             Category::Transfer | Category::Action => settings.notify_transfers,
             Category::Failure => settings.notify_failures,
@@ -577,6 +581,17 @@ mod tests {
             route: Some("/downloads".into()),
             game_id: None,
         }
+    }
+
+    #[test]
+    fn the_main_switch_silences_every_kind() {
+        let settings = Settings {
+            notify_enabled: false,
+            ..Settings::default()
+        };
+        assert!(!Category::Failure.enabled_in(&settings));
+        assert!(!Category::SignedOut.enabled_in(&settings));
+        assert!(!Category::Transfer.enabled_in(&settings));
     }
 
     #[test]

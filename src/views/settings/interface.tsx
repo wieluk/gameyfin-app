@@ -33,70 +33,88 @@ export function AppearanceSection() {
 export function NotificationSection() {
   const settings = useAppSettings();
   const { save, error } = useSettingSaver();
+  const enabled = settings.data?.notifyEnabled ?? true;
+
+  // Each kind, in the order they are listed under the main switch.
+  const kinds: Array<{ key: NotifyKey; label: string; hint?: string }> = [
+    {
+      key: "notifyTransfers",
+      label: "Downloads and installs",
+      hint: "When a download is ready to install, and when a game is ready to play.",
+    },
+    {
+      key: "notifyFailures",
+      label: "Failures",
+      hint: "When a download, install or launch goes wrong. Shown even while you are looking at the window.",
+    },
+    { key: "notifyUpdates", label: "New versions of Gameyfin" },
+    {
+      key: "notifyProton",
+      label: "New Proton versions",
+      hint: "For the Proton builds you have downloaded.",
+    },
+    {
+      key: "notifySignIn",
+      label: "Signed out",
+      hint: "When the server stops accepting your sign-in. Shown even while you are looking at the window.",
+    },
+    {
+      key: "notifyConnection",
+      label: "Server connection",
+      hint: "When the server stops answering, and when it is back.",
+    },
+    {
+      key: "notifySaves",
+      label: "Save sync",
+      hint: "When a save cannot sync, or a save needs your choice.",
+    },
+    { key: "notifyNewGames", label: "New games", hint: "When games are added to the server." },
+    {
+      key: "notifyGameUpdates",
+      label: "Updated games",
+      hint: "When an installed game has new files on the server.",
+    },
+  ];
 
   return (
     <Section title="Notifications" help="notifications">
       <SwitchField
-        label="Downloads and installs"
-        hint="When a download is ready to install, and when a game is ready to play."
-        checked={settings.data?.notifyTransfers ?? true}
-        onChange={(next) => save({ notifyTransfers: next })}
-      />
-      <SwitchField
-        label="Failures"
-        hint="When a download, install or launch goes wrong. Shown even while you are looking at the window."
-        checked={settings.data?.notifyFailures ?? true}
-        onChange={(next) => save({ notifyFailures: next })}
-      />
-      <SwitchField
-        label="New versions of Gameyfin"
-        checked={settings.data?.notifyUpdates ?? true}
-        onChange={(next) => save({ notifyUpdates: next })}
-      />
-      <SwitchField
-        label="New Proton versions"
-        hint="For the Proton builds you have downloaded."
-        checked={settings.data?.notifyProton ?? true}
-        onChange={(next) => save({ notifyProton: next })}
-      />
-      <SwitchField
-        label="Signed out"
-        hint="When the server stops accepting your sign-in. Shown even while you are looking at the window."
-        checked={settings.data?.notifySignIn ?? true}
-        onChange={(next) => save({ notifySignIn: next })}
-      />
-      <SwitchField
-        label="Server connection"
-        hint="When the server stops answering, and when it is back."
-        checked={settings.data?.notifyConnection ?? true}
-        onChange={(next) => save({ notifyConnection: next })}
-      />
-      <SwitchField
-        label="Save sync"
-        hint="When a save cannot sync, or a save needs your choice."
-        checked={settings.data?.notifySaves ?? true}
-        onChange={(next) => save({ notifySaves: next })}
-      />
-      <SwitchField
-        label="New games"
-        hint="When games are added to the server."
-        checked={settings.data?.notifyNewGames ?? true}
-        onChange={(next) => save({ notifyNewGames: next })}
-      />
-      <SwitchField
-        label="Updated games"
-        hint="When an installed game has new files on the server."
-        checked={settings.data?.notifyGameUpdates ?? true}
-        onChange={(next) => save({ notifyGameUpdates: next })}
-      />
+        label="Show notifications"
+        hint="Turn off to keep them only in the list behind the bell."
+        checked={enabled}
+        onChange={(next) => save({ notifyEnabled: next })}
+      >
+        {kinds.map((kind) => (
+          <SwitchField
+            key={kind.key}
+            label={kind.label}
+            hint={kind.hint}
+            checked={settings.data?.[kind.key] ?? true}
+            disabled={!enabled}
+            onChange={(next) => save({ [kind.key]: next })}
+          />
+        ))}
+      </SwitchField>
       <p className={`${HINT} mt-1 border-t border-default-200/60 pt-2`}>
-        Held back while you are looking at the window, apart from failures. Every notification is
-        also listed behind the bell in the title bar.
+        Held back while you are looking at the window, apart from failures and sign-outs. Every
+        notification is also listed behind the bell in the title bar.
       </p>
       <SaveError error={error} />
     </Section>
   );
 }
+
+/** The per-kind notification switches, which all share the main one. */
+type NotifyKey =
+  | "notifyTransfers"
+  | "notifyFailures"
+  | "notifyUpdates"
+  | "notifyProton"
+  | "notifySignIn"
+  | "notifyConnection"
+  | "notifySaves"
+  | "notifyNewGames"
+  | "notifyGameUpdates";
 
 /** The tray, and what the close button does. */
 export function WindowSection() {

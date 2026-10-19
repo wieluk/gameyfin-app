@@ -23,7 +23,9 @@ the tray. Without a tray icon the window stays loaded.
 
 ## Notifications
 
-Each kind has its own switch in **Settings, Interface**, all on by default:
+**Settings, Interface** has a main switch, **Show notifications**, and under it a switch per
+kind, all on by default. Turning the main switch off stops every popup and keeps your choices
+below it for when you turn it back on.
 
 | Switch | Tells you |
 | --- | --- |

@@ -27,7 +27,11 @@ installerMemoryLimit: InstallerMemoryLimit,
 /**
  * `None` is the server's highest-priority provider.
  */
-downloadProvider: string | null, notifyTransfers: boolean, 
+downloadProvider: string | null, 
+/**
+ * Over every kind below: off keeps the list behind the bell but shows no popups.
+ */
+notifyEnabled: boolean, notifyTransfers: boolean, 
 /**
  * Separate so failures stay audible with the routine chatter off.
  */
