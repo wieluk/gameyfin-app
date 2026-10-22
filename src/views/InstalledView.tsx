@@ -37,7 +37,7 @@ export function InstalledView() {
     <ViewHeader
       title="Installed"
       help="installed"
-      error={error}
+      error={error ?? (entries.error ? messageOf(entries.error) : null)}
       actions={<FolderActions folder="installations" onError={setError} />}
     />
   );

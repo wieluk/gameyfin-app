@@ -351,14 +351,25 @@ impl AppState {
             }
             Err(e) if e.is_unreachable() => {
                 self.set_reachable(false);
-                let stale = read(&self.catalog)
-                    .as_ref()
-                    .map(|(_, games)| games.clone())
-                    .or_else(|| self.cached_games());
-                stale.ok_or(e)
+                self.stale_games().ok_or(e)
             }
-            Err(e) => Err(e),
+            // A server that answers but cannot list (an API change, a fault on its side) must
+            // not hide the installed games, which play without it.
+            Err(e) => {
+                tracing::warn!("could not list the library, showing the cached one: {e}");
+                let stale = self.stale_games().ok_or(e)?;
+                // Held like a fresh list, so a transfer's refreshes do not retry a failing server.
+                *write(&self.catalog) = Some((Instant::now(), stale.clone()));
+                Ok(stale)
+            }
         }
+    }
+
+    fn stale_games(&self) -> Option<Vec<Game>> {
+        read(&self.catalog)
+            .as_ref()
+            .map(|(_, games)| games.clone())
+            .or_else(|| self.cached_games())
     }
 
     pub async fn libraries(&self) -> gameyfin_api::ApiResult<Vec<Library>> {
@@ -372,11 +383,14 @@ impl AppState {
                     .await;
                 Ok(libraries)
             }
-            Err(e) if e.is_unreachable() => {
-                self.set_reachable(false);
+            Err(e) => {
+                if e.is_unreachable() {
+                    self.set_reachable(false);
+                } else {
+                    tracing::warn!("could not list the libraries, showing the cached ones: {e}");
+                }
                 Ok(read(&self.offline_catalog).libraries.clone())
             }
-            Err(e) => Err(e),
         }
     }
 
@@ -954,6 +968,31 @@ mod tests {
             .unwrap();
         assert_eq!(state.check_session(true).await, (true, false));
         info.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn a_server_that_answers_with_an_error_still_shows_the_cached_library() {
+        let mut server = mockito::Server::new_async().await;
+        let sync = server
+            .mock("POST", "/connect/GameEndpoint/sync")
+            .with_status(500)
+            .expect(2)
+            .create_async()
+            .await;
+        let state = AppState::default();
+        state
+            .connect_with_token(&server.url(), "gyf_t".into(), HashMap::new())
+            .unwrap();
+        assert!(state.games().await.is_err());
+
+        state
+            .remember(|c| c.games = vec![a_game(1, "Celeste")])
+            .await;
+        assert_eq!(state.games().await.unwrap()[0].title, "Celeste");
+        // The server answered, so it is not offline, and the failure is not retried at once.
+        assert!(!state.is_unreachable());
+        assert_eq!(state.games().await.unwrap()[0].title, "Celeste");
+        sync.assert_async().await;
     }
 
     #[tokio::test]
