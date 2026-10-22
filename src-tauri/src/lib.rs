@@ -76,15 +76,16 @@ fn dirs_log_dir() -> Option<std::path::PathBuf> {
 }
 
 /// Tauri's `app_config_dir`, for what must be read before the app exists.
+/// Only Linux reads it, so elsewhere it is never resolved.
 fn early_config_dir() -> std::path::PathBuf {
     #[cfg(target_os = "linux")]
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .unwrap_or_else(std::env::temp_dir);
     #[cfg(not(target_os = "linux"))]
-    let base: Option<std::path::PathBuf> = None;
-    base.unwrap_or_else(std::env::temp_dir)
-        .join("org.gameyfin.gameyfin-app")
+    let base = std::env::temp_dir();
+    base.join("org.gameyfin.gameyfin-app")
 }
 
 /// Console and rolling file logging. The guard must live for the process, or buffered lines
