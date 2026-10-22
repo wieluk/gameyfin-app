@@ -81,9 +81,8 @@ finish-args:
   # Vulkan layers from runtime extensions, and pressure-vessel's own graphics overrides.
   - --env=XDG_DATA_DIRS=/app/share:/usr/lib/extensions/vulkan/share:/usr/share:/usr/share/runtime/share:/run/host/user-share:/run/host/share:/usr/lib/pressure-vessel/overrides/share
 
-  # WebKitGTK's DMA-BUF renderer crashes some Wayland compositors (Error 71) before the
-  # window appears. Override per machine with `flatpak override --user --unset-env=...`.
-  - --env=WEBKIT_DISABLE_DMABUF_RENDERER=1
+  # WEBKIT_DISABLE_DMABUF_RENDERER is not set here: forcing it draws the whole UI without the GPU.
+  # The app turns it on by itself after a start that crashed before drawing (rendering.rs).
 
 modules:
   # Tauri's tray aborts without appindicator, which the GNOME runtime lacks, so it is built here.

@@ -15,6 +15,9 @@
 - **Bring Gameyfin back when a game closes** (on by default): raises the window once a game
   quits, where its save upload and any error are shown.
 - **Appearance**: dark, light or match your system.
+  - **Draw with the graphics card** (Linux, on by default): smoother scrolling. If Gameyfin
+    ever closes before its window draws, it turns this off by itself for the next start.
+    Changing it takes a restart.
 
 While a game runs and the Gameyfin window has been in the background for a minute, the window
 is unloaded so the game gets its memory. Playtime, save sync and notifications carry on. It

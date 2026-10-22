@@ -17,6 +17,7 @@ mod open;
 mod persist;
 mod progress;
 mod proton;
+mod rendering;
 mod saves;
 mod server_watch;
 mod settings;
@@ -72,6 +73,18 @@ fn dirs_log_dir() -> Option<std::path::PathBuf> {
         std::env::var_os("HOME")
             .map(|h| std::path::PathBuf::from(h).join("Library/Logs/org.gameyfin.gameyfin-app"))
     }
+}
+
+/// Tauri's `app_config_dir`, for what must be read before the app exists.
+fn early_config_dir() -> std::path::PathBuf {
+    #[cfg(target_os = "linux")]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    #[cfg(not(target_os = "linux"))]
+    let base: Option<std::path::PathBuf> = None;
+    base.unwrap_or_else(std::env::temp_dir)
+        .join("org.gameyfin.gameyfin-app")
 }
 
 /// Console and rolling file logging. The guard must live for the process, or buffered lines
@@ -234,6 +247,7 @@ pub fn run() {
     }
     // A packaged app's stdout goes nowhere, so a failure in the field needs a log file.
     let _log_guard = init_logging();
+    rendering::prepare(early_config_dir());
     let launched_hidden = args.iter().any(|arg| arg == "--hidden");
     let activation_token = cli::activation_token(&args);
 
@@ -387,10 +401,16 @@ pub fn run() {
             notify::list_notifications,
             notify::dismiss_notification,
             notify::mark_notifications_read,
+            rendering::rendering_status,
+            rendering::set_gpu_rendering,
+            rendering::confirm_rendering,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gameyfin")
         .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                rendering::settled();
+            }
             // A window let go in the tray is the last one closing, which is no reason to quit.
             if let tauri::RunEvent::ExitRequested {
                 code: None, api, ..

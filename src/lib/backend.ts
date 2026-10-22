@@ -28,6 +28,7 @@ import type { ProtonFamily } from "@/bindings/ProtonFamily";
 import type { ProtonStatus } from "@/bindings/ProtonStatus";
 import type { ProviderChoice } from "@/bindings/ProviderChoice";
 import type { PublicSettings } from "@/bindings/PublicSettings";
+import type { RenderingStatus } from "@/bindings/RenderingStatus";
 import type { RestoreReport } from "@/bindings/RestoreReport";
 import type { SaveBackend } from "@/bindings/SaveBackend";
 import type { SaveFind } from "@/bindings/SaveFind";
@@ -268,6 +269,11 @@ export const backend = {
   installUpdate: () => invoke<UpdateOutcome>("install_update"),
   /** Quits and starts the freshly installed version. */
   restartApp: () => invoke<void>("restart_app"),
+  /** Null where there is no renderer to choose, which is anywhere but Linux. */
+  renderingStatus: () => invoke<RenderingStatus | null>("rendering_status"),
+  setGpuRendering: (on: boolean) => invoke<RenderingStatus | null>("set_gpu_rendering", { on }),
+  /** The page has drawn, so the GPU renderer did not kill this start. */
+  confirmRendering: () => invoke<void>("confirm_rendering"),
 
   async copyToClipboard(text: string): Promise<void> {
     if (isMockBackend) return;
