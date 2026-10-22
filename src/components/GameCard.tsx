@@ -39,6 +39,7 @@ export const GameCard = memo(function GameCard({
 
   return (
     // `content-visibility` skips offscreen cards; keeps scrolling smooth in the CPU-composited Flatpak webview.
+    // So hover is not animated and adds no shadow: each frame of either is a full repaint there.
     <article className="group relative flex flex-col gap-2 [contain-intrinsic-size:auto_320px] [content-visibility:auto]">
       <div
         role="button"
@@ -52,7 +53,7 @@ export const GameCard = memo(function GameCard({
             onOpen(entry);
           }
         }}
-        className="relative aspect-2/3 cursor-pointer overflow-hidden rounded-xl bg-default-200 shadow-xs ring-1 ring-default-300/40 transition-transform duration-200 group-hover:-translate-y-1 group-hover:shadow-xl focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary"
+        className="relative aspect-2/3 cursor-pointer overflow-hidden rounded-xl bg-default-200 shadow-xs ring-1 ring-default-300/40 group-hover:-translate-y-1 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary"
       >
         {coverUrl ? (
           <img
@@ -70,7 +71,7 @@ export const GameCard = memo(function GameCard({
         <StateBadge entry={entry} />
 
         {/* `focus-within` as well as hover: a controller focuses the button without a pointer. */}
-        <div className="absolute inset-0 flex items-end justify-center bg-linear-to-t from-black/80 via-black/10 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <div className="absolute inset-0 flex items-end justify-center bg-linear-to-t from-black/80 via-black/10 to-transparent p-3 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
           <button
             type="button"
             disabled={action.disabled}

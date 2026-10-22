@@ -91,7 +91,8 @@ export function SettingsView({ onSignedOut }: { onSignedOut: () => void }) {
         ))}
       </div>
 
-      <div className={PANEL_BODY}>
+      {/* Keyed so each pane opens at the top instead of keeping the last pane's scroll. */}
+      <div key={tab} className={PANEL_BODY}>
         <div className="mx-auto flex max-w-3xl flex-col gap-5">
           {tab === "account" && <AccountSection onSignedOut={onSignedOut} />}
           {tab === "library" && (

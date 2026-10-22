@@ -30,6 +30,7 @@ export const keys = {
   prefixes: ["prefix-list"] as const,
   update: ["update-status"] as const,
   memory: ["memory-info"] as const,
+  rendering: ["rendering-status"] as const,
   diagnostics: ["diagnostics"] as const,
 };
 

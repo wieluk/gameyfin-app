@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button, FormField, Select, SwitchField } from "@/components/ui";
 import { backend } from "@/lib/backend";
-import { useAppSettings } from "@/lib/queries";
+import { keys, useAppSettings } from "@/lib/queries";
+import { useAction } from "@/lib/useAction";
 import { HINT } from "@/lib/ui";
 import { useCouch } from "@/state/couch";
 import type { Theme } from "@/types";
@@ -26,7 +28,46 @@ export function AppearanceSection() {
         </Select>
       </FormField>
       <SaveError error={error} />
+      <GpuRendering />
     </Section>
+  );
+}
+
+/** WebKitGTK's GPU renderer, which the app turns off by itself after a start it killed. */
+function GpuRendering() {
+  const queryClient = useQueryClient();
+  const status = useQuery({ queryKey: keys.rendering, queryFn: () => backend.renderingStatus() });
+  const action = useAction();
+  const s = status.data;
+  if (!s) return null;
+
+  const hint = s.fromEnvironment
+    ? "Set by WEBKIT_DISABLE_DMABUF_RENDERER in the environment, which wins over this switch."
+    : s.fellBack
+      ? "Turned off because Gameyfin closed before its window could draw. Turn it on to try again."
+      : "Smoother scrolling. Turns itself off if Gameyfin ever closes before its window draws.";
+
+  return (
+    <>
+      <SwitchField
+        label="Draw with the graphics card"
+        hint={hint}
+        checked={s.preferGpu}
+        disabled={s.fromEnvironment}
+        onChange={(on) =>
+          action.run(async () => {
+            queryClient.setQueryData(keys.rendering, await backend.setGpuRendering(on));
+          })
+        }
+      />
+      {s.preferGpu !== s.gpu && (
+        <div className="flex items-center justify-between gap-3">
+          <p className={HINT}>Takes effect after a restart.</p>
+          <Button onClick={() => void action.run(() => backend.restartApp())}>Restart now</Button>
+        </div>
+      )}
+      <SaveError error={action.error} />
+    </>
   );
 }
 
