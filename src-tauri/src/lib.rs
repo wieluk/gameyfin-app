@@ -275,6 +275,7 @@ pub fn run() {
     tauri::Builder::default()
         // Registered first: it only stops the duplicate during its own setup.
         .plugin(single_instance.build())
+        .plugin(rendering::plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
