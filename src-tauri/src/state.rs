@@ -19,11 +19,13 @@ const SETTINGS_FILE: &str = "settings.json";
 const USER_AGENT: &str = concat!("Gameyfin-App/", env!("CARGO_PKG_VERSION"));
 
 /// The last catalogue the server returned, so the library renders offline.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CachedCatalog {
     pub games: Vec<Game>,
     pub libraries: Vec<Library>,
+    /// Where the next delta sync starts, on a server that has one.
+    pub games_synced_at: Option<String>,
 }
 
 /// A one-way flag that tasks can wait on, for "startup has read the settings file".
@@ -327,11 +329,24 @@ impl AppState {
             }
         }
 
-        match client.games().await {
-            Ok(games) => {
+        // A delta needs the games it applies to, so an empty mirror starts over.
+        let previous = {
+            let cached = read(&self.offline_catalog);
+            (!cached.games.is_empty()).then(|| gameyfin_api::GameCatalog {
+                games: cached.games.clone(),
+                synced_at: cached.games_synced_at.clone(),
+            })
+        };
+        match client.game_catalog(previous.as_ref()).await {
+            Ok(catalog) => {
                 self.set_reachable(true);
+                let games = catalog.games;
                 *write(&self.catalog) = Some((Instant::now(), games.clone()));
-                self.remember(|cached| cached.games = games.clone()).await;
+                self.remember(|cached| {
+                    cached.games = games.clone();
+                    cached.games_synced_at = catalog.synced_at;
+                })
+                .await;
                 Ok(games)
             }
             Err(e) if e.is_unreachable() => {
@@ -395,9 +410,9 @@ impl AppState {
         let _writer = self.catalog_writer.lock().await;
         let snapshot = {
             let mut cached = write(&self.offline_catalog);
-            let before = (cached.games.clone(), cached.libraries.clone());
+            let before = cached.clone();
             change(&mut cached);
-            (before != (cached.games.clone(), cached.libraries.clone())).then(|| cached.clone())
+            (before != *cached).then(|| cached.clone())
         };
         let (Some(snapshot), Some(dir)) = (snapshot, self.config_dir.get()) else {
             return;
@@ -879,6 +894,13 @@ mod tests {
     #[tokio::test]
     async fn callers_arriving_together_share_one_catalogue_fetch() {
         let mut server = mockito::Server::new_async().await;
+        // A server before 2.5.1 refuses the unknown method, as it does an unknown endpoint.
+        server
+            .mock("POST", "/connect/GameEndpoint/sync")
+            .with_status(403)
+            .expect(1)
+            .create_async()
+            .await;
         let list = server
             .mock("POST", "/connect/GameEndpoint/getAll")
             .with_body(
@@ -942,6 +964,44 @@ mod tests {
             .remember(|c| c.libraries = vec![shelf(3, "Shelf")])
             .await;
         assert_eq!(state.libraries().await.unwrap()[0].name, "Shelf");
+    }
+
+    #[tokio::test]
+    async fn a_refresh_on_a_syncing_server_sends_where_the_last_sync_ended() {
+        let mut server = mockito::Server::new_async().await;
+        let first = server
+            .mock("POST", "/connect/GameEndpoint/sync")
+            .match_body(mockito::Matcher::Json(serde_json::json!({ "since": null })))
+            .with_body(r#"{"serverTime":"T1","full":true,"games":[{"id":1}],"allIds":[]}"#)
+            .create_async()
+            .await;
+        let delta = server
+            .mock("POST", "/connect/GameEndpoint/sync")
+            .match_body(mockito::Matcher::Json(serde_json::json!({ "since": "T1" })))
+            .with_body(r#"{"serverTime":"T2","full":false,"games":[],"allIds":[1]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("POST", "/connect/GameEndpoint/getByIds")
+            .with_body(r#"[{"id":1,"title":"Celeste","summary":"Climb"}]"#)
+            .create_async()
+            .await;
+        let state = AppState::default();
+        state
+            .connect_with_token(&server.url(), "gyf_t".into(), HashMap::new())
+            .unwrap();
+
+        assert_eq!(state.games().await.unwrap()[0].title, "Celeste");
+        first.assert_async().await;
+        state.invalidate_catalog();
+        // Nothing changed, so the delta keeps the full game it already had.
+        let games = state.games().await.unwrap();
+        assert_eq!(games[0].summary.as_deref(), Some("Climb"));
+        delta.assert_async().await;
+        assert_eq!(
+            read(&state.offline_catalog).games_synced_at.as_deref(),
+            Some("T2")
+        );
     }
 
     #[tokio::test]

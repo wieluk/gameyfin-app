@@ -1,12 +1,14 @@
 //! Client for the Gameyfin server API, targeting Gameyfin 2.4.0+.
 
 pub mod auth;
+pub mod catalog;
 pub mod client;
 pub mod error;
 pub mod models;
 pub mod saves;
 
 pub use auth::{cookie_header, AuthStrategy, CookieSessionAuth, DeviceTokenAuth};
+pub use catalog::GameCatalog;
 pub use client::{http_client, GameyfinClient};
 pub use error::{ApiError, ApiResult};
 pub use models::{DownloadProvider, Game, GameMetadata, Image, Library, UserInfo};

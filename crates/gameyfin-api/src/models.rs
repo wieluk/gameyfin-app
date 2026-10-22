@@ -110,15 +110,15 @@ pub struct Game {
     pub keywords: Vec<String>,
     #[serde(default, deserialize_with = "string_list")]
     pub perspectives: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub collection_ids: Vec<i64>,
     #[serde(default)]
     pub cover: Option<Image>,
     #[serde(default)]
     pub header: Option<Image>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub images: Vec<Image>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub video_urls: Vec<String>,
     #[serde(default)]
     pub metadata: GameMetadata,
@@ -192,6 +192,16 @@ where
     })
 }
 
+/// A list the server may send as null: 2.5.1 declares them nullable, and one null would
+/// otherwise fail the whole catalogue.
+fn null_as_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// A list whose items are plain strings or enum DTOs: Gameyfin sends genres and platforms
 /// as objects carrying a constant and a `displayName`, and the UI wants one shape.
 fn string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -226,6 +236,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn null_lists_read_as_empty() {
+        let game: Game = serde_json::from_str(
+            r#"{"id":1,"title":"Celeste","images":null,"videoUrls":null,"collectionIds":null,"genres":null}"#,
+        )
+        .unwrap();
+        assert!(game.images.is_empty() && game.video_urls.is_empty() && game.genres.is_empty());
+    }
 
     #[test]
     fn image_paths_follow_type() {
