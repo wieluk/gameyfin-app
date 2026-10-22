@@ -44,7 +44,12 @@ export const GameCard = memo(function GameCard({
       <div
         role="button"
         tabIndex={0}
-        onClick={() => onOpen(entry)}
+        onClick={(e) => {
+          // A mouse click focuses the tile too, and the Escape that closes the game would then
+          // light its keyboard ring. Keyboard and controller opens (detail 0) keep their place.
+          if (e.detail > 0) e.currentTarget.blur();
+          onOpen(entry);
+        }}
         onKeyDown={(e) => {
           // Only the tile itself: a press on the action button inside it is that button's.
           if (e.target !== e.currentTarget) return;

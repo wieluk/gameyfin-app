@@ -196,7 +196,8 @@ export function LibraryView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ViewHeader help="library">
+      {/* Without it a failed list reads as an empty library. */}
+      <ViewHeader help="library" error={entries.error ? messageOf(entries.error) : null}>
         <TextInput
           icon="search"
           value={search}

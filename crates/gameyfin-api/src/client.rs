@@ -7,8 +7,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use crate::auth::AuthStrategy;
+use crate::catalog::Listing;
 use crate::error::{ApiError, ApiResult};
-use crate::models::{DownloadProvider, Game, Library, UserInfo};
+use crate::models::{DownloadProvider, Game, UserInfo};
 
 const HILLA_PREFIX: &str = "/connect";
 
@@ -28,6 +29,8 @@ pub struct GameyfinClient {
     base_url: String,
     http: reqwest::Client,
     auth: Arc<dyn AuthStrategy>,
+    /// Shared by clones, so the server's kind is learned once.
+    listing: Arc<Listing>,
 }
 
 impl GameyfinClient {
@@ -47,6 +50,7 @@ impl GameyfinClient {
             base_url,
             http,
             auth,
+            listing: Arc::default(),
         })
     }
 
@@ -65,6 +69,7 @@ impl GameyfinClient {
             base_url,
             http,
             auth,
+            listing: Arc::default(),
         })
     }
 
@@ -79,6 +84,10 @@ impl GameyfinClient {
 
     pub(crate) fn auth(&self) -> &Arc<dyn AuthStrategy> {
         &self.auth
+    }
+
+    pub(crate) fn listing(&self) -> &Listing {
+        &self.listing
     }
 
     /// Absolute URL for a REST path such as `/images/cover/7`.
@@ -132,14 +141,6 @@ impl GameyfinClient {
         }
 
         unreachable!("loop returns on its final iteration")
-    }
-
-    pub async fn games(&self) -> ApiResult<Vec<Game>> {
-        self.call("GameEndpoint", "getAll", json!({})).await
-    }
-
-    pub async fn libraries(&self) -> ApiResult<Vec<Library>> {
-        self.call("LibraryEndpoint", "getAll", json!({})).await
     }
 
     /// Download providers, highest priority first.

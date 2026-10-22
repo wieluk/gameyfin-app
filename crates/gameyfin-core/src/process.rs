@@ -864,9 +864,24 @@ async fn wait_for_empty_group(group: u32) {
     }
 }
 
-/// Strip AppImage paths before starting a host program, or python3 and the Steam Runtime
-/// load the image's libraries instead of the system's.
+/// Variables the app set for its own window, which the programs it starts must not inherit.
+static OWN_ENV: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+/// Keeps `name` out of every program [`clean_for_host`] prepares.
+pub fn keep_from_children(name: &'static str) {
+    if let Ok(mut own) = OWN_ENV.lock() {
+        own.push(name);
+    }
+}
+
+/// Strip what the app set for itself, and AppImage paths before starting a host program, or
+/// python3 and the Steam Runtime load the image's libraries instead of the system's.
 pub fn clean_for_host(cmd: &mut Command) {
+    if let Ok(own) = OWN_ENV.lock() {
+        for name in own.iter() {
+            cmd.env_remove(name);
+        }
+    }
     let (Ok(appdir), Some(_)) = (std::env::var("APPDIR"), std::env::var_os("APPIMAGE")) else {
         return;
     };
@@ -957,6 +972,18 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::ffi::OsString;
+
+    #[test]
+    fn what_the_app_set_for_itself_is_kept_from_children() {
+        keep_from_children("GAMEYFIN_TEST_OWN_ONLY");
+        let mut cmd = Command::new("true");
+        clean_for_host(&mut cmd);
+        let removed = cmd
+            .as_std()
+            .get_envs()
+            .any(|(key, value)| key == "GAMEYFIN_TEST_OWN_ONLY" && value.is_none());
+        assert!(removed);
+    }
 
     fn command(program: &str, args: &[&str]) -> ResolvedCommand {
         ResolvedCommand {
