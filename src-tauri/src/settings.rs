@@ -172,6 +172,7 @@ pub struct Settings {
     #[ts(skip)]
     pub cookies: HashMap<String, String>,
     /// A login that outlives the web session, from servers that issue one. Wins over the cookies.
+    /// A fork device token (`gyf_`) or a Gameyfin 2.6 API key (`gf_pat_`), told apart by prefix.
     #[ts(skip)]
     pub device_token: Option<String>,
     pub username: Option<String>,
@@ -353,6 +354,9 @@ pub struct Credentials {
 impl Credentials {
     pub fn apply(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         let request = match &self.token {
+            Some(key) if gameyfin_api::is_api_key(key) => {
+                request.header(gameyfin_api::API_KEY_HEADER, key)
+            }
             Some(token) => request.bearer_auth(token),
             None => request,
         };
@@ -614,6 +618,25 @@ mod tests {
         s.clear_session();
         assert!(!s.has_session());
         assert_eq!(s.credentials(), Credentials::default());
+    }
+
+    #[test]
+    fn each_kind_of_token_goes_in_its_own_header() {
+        let headers = |token: &str| {
+            let credentials = Credentials {
+                token: Some(token.into()),
+                cookies: None,
+            };
+            let http = gameyfin_api::http_client().build().unwrap();
+            let request = credentials.apply(http.get("http://host/"));
+            request.build().unwrap().headers().clone()
+        };
+        let device = headers("gyf_abc");
+        assert_eq!(device["authorization"], "Bearer gyf_abc");
+        assert!(!device.contains_key("x-api-key"));
+        let key = headers("gf_pat_id.secret");
+        assert_eq!(key["x-api-key"], "gf_pat_id.secret");
+        assert!(!key.contains_key("authorization"));
     }
 
     #[test]

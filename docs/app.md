@@ -79,6 +79,9 @@ depends on how you installed it:
 ## Account
 
 **Settings, Account** shows the server, who you are signed in as and the connection status.
+On Gameyfin 2.6 or newer the app keeps you signed in with an API key, listed on the server
+under your personal access tokens by this device's name. Signing out removes it while the
+server still knows your browser session; otherwise delete it there.
 It also holds **This device's name**, shown beside every save this PC uploads, and
 **Sign out**.
 

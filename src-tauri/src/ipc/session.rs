@@ -16,6 +16,8 @@ use crate::state::AppState;
 #[ts(export)]
 pub enum LoginKind {
     DeviceToken,
+    /// A Gameyfin 2.6 personal access token.
+    ApiKey,
     Session,
 }
 
@@ -42,7 +44,13 @@ pub async fn connection_status(state: State<'_, AppState>) -> CommandResult<Conn
     }
     let settings = state.settings();
     let (authenticated, offline) = state.check_session(settings.has_session()).await;
-    let login = if settings.device_token.is_some() {
+    let login = if settings
+        .device_token
+        .as_deref()
+        .is_some_and(gameyfin_api::is_api_key)
+    {
+        Some(LoginKind::ApiKey)
+    } else if settings.device_token.is_some() {
         Some(LoginKind::DeviceToken)
     } else if !settings.cookies.is_empty() {
         Some(LoginKind::Session)
@@ -153,6 +161,16 @@ pub async fn poll_login(app: AppHandle, state: State<'_, AppState>) -> CommandRe
         ))));
     };
 
+    // An API key this sign-in replaces would otherwise stay listed on the server.
+    let replaced = state
+        .settings()
+        .device_token
+        .filter(|t| gameyfin_api::is_api_key(t));
+    if let (Some(old), Some(client)) = (replaced, state.client()) {
+        if let Err(e) = client.delete_api_token(&old).await {
+            tracing::debug!("could not revoke the replaced API key: {e}");
+        }
+    }
     state
         .set_settings(|s| {
             s.cookies = cookies;

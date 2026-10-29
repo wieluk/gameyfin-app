@@ -3,4 +3,4 @@
 /**
  * What the stored login is, which decides whether it can outlive the server's session.
  */
-export type LoginKind = "device-token" | "session";
+export type LoginKind = "device-token" | "api-key" | "session";
