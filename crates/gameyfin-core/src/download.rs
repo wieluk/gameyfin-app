@@ -516,6 +516,20 @@ impl Downloader {
         let response = request.send().await?.error_for_status()?;
         let status = response.status();
         let headers = response.headers().clone();
+        // Gameyfin sends games as octet streams. A lapsed session is redirected to the sign-in
+        // page, and the REST API answers a link provider with JSON: neither is the game.
+        let content_type = headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        if content_type.starts_with("text/html") {
+            return Err(CoreError::SignInRequired);
+        }
+        if content_type.starts_with("application/json") {
+            return Err(CoreError::Other(
+                "the server offers this game as a link, not a file".into(),
+            ));
+        }
 
         // A weak validator cannot vouch for a byte range.
         let etag = headers
