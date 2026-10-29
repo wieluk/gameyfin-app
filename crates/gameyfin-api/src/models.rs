@@ -13,6 +13,10 @@ pub struct Image {
     pub r#type: String,
     #[serde(default)]
     pub blurhash: Option<String>,
+    /// Where the REST API serves it, for a client signed in with an API key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub url: Option<String>,
 }
 
 fn default_image_type() -> String {
@@ -20,8 +24,12 @@ fn default_image_type() -> String {
 }
 
 impl Image {
-    /// Where the server serves this image: `/images/<kind>/<id>`, relative to its root.
+    /// Where the server serves this image, relative to its root: `/images/<kind>/<id>`, or the
+    /// REST API's route, which takes an API key.
     pub fn path(&self) -> String {
+        if let Some(url) = &self.url {
+            return url.clone();
+        }
         let kind = match self.r#type.to_ascii_uppercase().as_str() {
             "HEADER" => "header",
             "SCREENSHOT" => "screenshot",
@@ -145,6 +153,15 @@ impl Game {
     pub fn download_path(&self, provider_key: &str) -> String {
         format!("/download/{}?provider={}", self.id, urlencode(provider_key))
     }
+
+    /// The same through Gameyfin 2.6's REST API, which takes an API key.
+    pub fn v1_download_path(&self, provider_key: &str) -> String {
+        format!(
+            "/v1/games/{}/download?provider={}",
+            self.id,
+            urlencode(provider_key)
+        )
+    }
 }
 
 /// A `UserInfoDto` / `ExtendedUserInfoDto` from `UserEndpoint.getUserInfo()`.
@@ -259,6 +276,7 @@ mod tests {
                 id,
                 r#type: kind.into(),
                 blurhash: None,
+                url: None,
             };
             assert_eq!(image.path(), expected, "{kind}");
         }

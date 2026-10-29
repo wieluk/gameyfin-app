@@ -84,6 +84,9 @@ fn merged(previous: &[Game], changed: Vec<Game>, all_ids: &[i64]) -> Vec<Game> {
 impl GameyfinClient {
     /// Every game in full. On a server with `sync`, only what changed since `previous` is fetched.
     pub async fn game_catalog(&self, previous: Option<&GameCatalog>) -> ApiResult<GameCatalog> {
+        if self.rest_only() {
+            return self.v1_game_catalog(previous).await;
+        }
         if self.listing().get() != GET_ALL {
             let since = previous.and_then(|p| p.synced_at.as_deref());
             match self
@@ -138,6 +141,9 @@ impl GameyfinClient {
 
     /// Libraries are few, so they are listed whole every time.
     pub async fn libraries(&self) -> ApiResult<Vec<Library>> {
+        if self.rest_only() {
+            return self.v1_libraries().await;
+        }
         if self.listing().get() != GET_ALL {
             match self
                 .call::<Sync<Library>>("LibraryEndpoint", "sync", json!({ "since": null }))

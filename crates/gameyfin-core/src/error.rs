@@ -41,6 +41,10 @@ pub enum CoreError {
     #[error("{program} will only run with administrator rights")]
     ElevationRequired { program: String },
 
+    /// The server answered with its sign-in page, which a lapsed web session gets.
+    #[error("the server wants you to sign in again before downloading")]
+    SignInRequired,
+
     #[error(transparent)]
     Api(#[from] gameyfin_api::ApiError),
 

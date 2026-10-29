@@ -87,7 +87,7 @@ pub async fn artwork(
         .map_err(|_| (StatusCode::FORBIDDEN, "not an image path"))?;
     let base =
         url::Url::parse(client.base_url()).map_err(|_| (StatusCode::FORBIDDEN, "no server"))?;
-    if url.origin() != base.origin() || !url.path().starts_with("/images/") {
+    if url.origin() != base.origin() || !is_image_path(url.path()) {
         return Err((StatusCode::FORBIDDEN, "only image paths are served here"));
     }
 
@@ -120,6 +120,16 @@ pub async fn artwork(
             Err((StatusCode::BAD_GATEWAY, "could not reach the server"))
         }
     }
+}
+
+/// `/images/**`, or the REST API's `/v1/games/<id>/images/<id>` and nothing else under `/v1`.
+fn is_image_path(path: &str) -> bool {
+    let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    path.starts_with("/images/")
+        || matches!(
+            path.split('/').collect::<Vec<_>>().as_slice(),
+            ["", "v1", "games", game, "images", image] if numeric(game) && numeric(image)
+        )
 }
 
 /// Artwork scaled down to `width`, cached beside the original. A decoded cover costs its full
@@ -228,6 +238,21 @@ mod tests {
     fn a_cover_is_never_scaled_up() {
         assert!(scale(&jpeg(300, 450), 320).is_none());
         assert!(scale(b"not an image", 320).is_none());
+    }
+
+    #[test]
+    fn serves_image_routes_and_nothing_else() {
+        assert!(is_image_path("/images/cover/7"));
+        assert!(is_image_path("/v1/games/7/images/11"));
+        for other in [
+            "/v1/games/7/download",
+            "/v1/games/7/images/11/x",
+            "/v1/games/x/images/11",
+            "/v1/me",
+            "/connect/UserEndpoint/getUserInfo",
+        ] {
+            assert!(!is_image_path(other), "{other}");
+        }
     }
 
     #[test]

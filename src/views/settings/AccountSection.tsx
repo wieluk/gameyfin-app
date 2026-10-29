@@ -19,11 +19,13 @@ export function AccountSection({ onSignedOut }: { onSignedOut: () => void }) {
       ? { value: "Connected", tone: "good" as const }
       : { value: "Disconnected", tone: "bad" as const };
 
-  // Which login is in use: a device token survives restarts, a session cookie does not.
+  // Which login is in use: a token survives restarts, a session cookie does not.
   const login =
     status.data?.login === "device-token"
       ? "Device token, kept until you sign out"
-      : status.data?.login === "session"
+      : status.data?.login === "api-key"
+        ? "API key, kept until you sign out"
+        : status.data?.login === "session"
         ? "Browser session, ends when the server's session expires"
         : "None stored";
 

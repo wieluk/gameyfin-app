@@ -52,6 +52,57 @@ async fn downloads_a_whole_file() {
 }
 
 #[tokio::test]
+async fn a_link_descriptor_is_refused_rather_than_saved_as_the_game() {
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("GET", "/game")
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"kind":"link","url":"https://example.com/game.zip"}"#)
+        .create_async()
+        .await;
+
+    let dest = scratch("link");
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
+    let err = downloader
+        .download(&format!("{}/game", server.url()), &dest, |r| r, |_| {})
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, CoreError::Other(ref m) if m.contains("link")),
+        "got {err:?}"
+    );
+    assert!(!dest.exists());
+}
+
+#[tokio::test]
+async fn a_sign_in_page_is_refused_rather_than_saved_as_the_game() {
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("GET", "/game")
+        .with_status(302)
+        .with_header("location", "/login")
+        .create_async()
+        .await;
+    server
+        .mock("GET", "/login")
+        .with_header("content-type", "text/html;charset=utf-8")
+        .with_body("<!doctype html><title>Sign in</title>")
+        .create_async()
+        .await;
+
+    let dest = scratch("login");
+    let downloader = Downloader::new(gameyfin_api::http_client().build().unwrap());
+    let err = downloader
+        .download(&format!("{}/game", server.url()), &dest, |r| r, |_| {})
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, CoreError::SignInRequired), "got {err:?}");
+    assert!(!dest.exists());
+}
+
+#[tokio::test]
 async fn resumes_from_a_checkpoint_when_the_server_honours_range() {
     let payload = body(4096);
     let already_have = 1024usize;

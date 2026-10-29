@@ -1,5 +1,5 @@
-//! Gameyfin 2.4 has no token auth, so [`CookieSessionAuth`] reuses a webview's session cookies
-//! and derives CSRF like Hilla's client. [`DeviceTokenAuth`] waits on server support.
+//! [`CookieSessionAuth`] reuses a webview's session cookies and derives CSRF like Hilla's client.
+//! Tokens outlive that session: the fork's [`DeviceTokenAuth`], or 2.6's [`ApiKeyAuth`] for `/v1`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +21,11 @@ pub trait AuthStrategy: Send + Sync + std::fmt::Debug {
     }
 
     fn describe(&self) -> &'static str;
+
+    /// True when only the `/v1` REST API accepts this, not Hilla.
+    fn rest_only(&self) -> bool {
+        false
+    }
 }
 
 /// Bearer-token auth against the device-token endpoints.
@@ -66,6 +71,50 @@ impl AuthStrategy for DeviceTokenAuth {
         "device-token"
     }
 }
+
+/// A Gameyfin 2.6 personal access token, which the server accepts only on `/v1`.
+#[derive(Debug, Clone)]
+pub struct ApiKeyAuth {
+    key: String,
+    /// For a reverse proxy in front of Gameyfin, as with [`DeviceTokenAuth`].
+    cookies: HashMap<String, String>,
+}
+
+impl ApiKeyAuth {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self::with_cookies(key, HashMap::new())
+    }
+
+    pub fn with_cookies(key: impl Into<String>, cookies: HashMap<String, String>) -> Self {
+        Self {
+            key: key.into(),
+            cookies,
+        }
+    }
+}
+
+#[async_trait]
+impl AuthStrategy for ApiKeyAuth {
+    async fn apply(&self, req: RequestBuilder) -> ApiResult<RequestBuilder> {
+        let req = req.header(API_KEY_HEADER, &self.key);
+        let cookies = cookie_header(&self.cookies);
+        Ok(if cookies.is_empty() {
+            req
+        } else {
+            req.header(reqwest::header::COOKIE, cookies)
+        })
+    }
+
+    fn describe(&self) -> &'static str {
+        "api-key"
+    }
+
+    fn rest_only(&self) -> bool {
+        true
+    }
+}
+
+pub const API_KEY_HEADER: &str = "X-API-Key";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CsrfToken {

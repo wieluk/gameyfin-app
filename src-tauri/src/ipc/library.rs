@@ -152,7 +152,12 @@ pub async fn start_download(
         .update_record(game_id, |r| r.partial_download = Some(partial.clone()))
         .await;
 
-    let url = client.download_url(&game, &provider.key);
+    let mut url = client.download_url(&game, &provider.key);
+    // Gameyfin 2.6.0's REST API fails every file download, so an API key falls back to the
+    // web session, which works while the server still knows it.
+    let mut fallback = client
+        .rest_only()
+        .then(|| client.url_for(&game.download_path(&provider.key)));
     let destination = partial.destination.clone();
     let expected_bytes = game.metadata.file_size;
     let credentials = settings.credentials();
@@ -202,6 +207,16 @@ pub async fn start_download(
                 {
                     tracing::info!(game_id, %reason, "saving the download as a file instead");
                     partial.unpack_into = None;
+                }
+                Err(gameyfin_core::CoreError::Http(e))
+                    if e.status() == Some(reqwest::StatusCode::INTERNAL_SERVER_ERROR)
+                        && fallback.is_some() =>
+                {
+                    tracing::info!(
+                        game_id,
+                        "the REST API failed the download, using the web session"
+                    );
+                    url = fallback.take().unwrap_or(url);
                 }
                 result => break result,
             }

@@ -1,5 +1,6 @@
 //! The Gameyfin HTTP client: Hilla RPC (`POST /connect/<Endpoint>/<method>`) for nearly
-//! everything, plain REST for the byte-serving `/images/**` and `/download/{gameId}`.
+//! everything, plain REST for the byte-serving `/images/**` and `/download/{gameId}`. Signed in
+//! with a 2.6 API key, it speaks the `/v1` REST API instead (see [`crate::v1`]).
 
 use std::sync::Arc;
 
@@ -96,7 +97,16 @@ impl GameyfinClient {
     }
 
     pub fn download_url(&self, game: &Game, provider_key: &str) -> String {
-        self.url_for(&game.download_path(provider_key))
+        if self.rest_only() {
+            self.url_for(&game.v1_download_path(provider_key))
+        } else {
+            self.url_for(&game.download_path(provider_key))
+        }
+    }
+
+    /// Signed in with an API key, which Hilla does not accept.
+    pub fn rest_only(&self) -> bool {
+        self.auth.rest_only()
     }
 
     /// Invokes a Hilla method. Retried once when the strategy says it refreshed something,
@@ -108,6 +118,14 @@ impl GameyfinClient {
         params: Value,
     ) -> ApiResult<T> {
         let label = format!("{endpoint}.{method}");
+        // Answered as a server without the method would, since its 401 would read as signed out.
+        if self.rest_only() {
+            return Err(ApiError::Status {
+                endpoint: label,
+                status: 404,
+                body: "not offered through the REST API".into(),
+            });
+        }
         let url = format!("{}{HILLA_PREFIX}/{endpoint}/{method}", self.base_url);
 
         for attempt in 0..2u8 {
@@ -145,6 +163,9 @@ impl GameyfinClient {
 
     /// Download providers, highest priority first.
     pub async fn download_providers(&self) -> ApiResult<Vec<DownloadProvider>> {
+        if self.rest_only() {
+            return self.v1_download_providers().await;
+        }
         let mut providers: Vec<DownloadProvider> = self
             .call("DownloadProviderEndpoint", "getProviders", json!({}))
             .await?;
@@ -166,12 +187,18 @@ impl GameyfinClient {
     /// The current user, `None` when the caller is anonymous. `getUserInfo` is
     /// `@AnonymousAllowed`, which makes it the natural session probe.
     pub async fn user_info(&self) -> ApiResult<Option<UserInfo>> {
+        if self.rest_only() {
+            return self.v1_user_info().await;
+        }
         self.call("UserEndpoint", "getUserInfo", json!({})).await
     }
 
     /// What the server is running. Null on a server built without build info, and refused
     /// (403) by servers that do not report it at all.
     pub async fn server_version(&self) -> ApiResult<Option<String>> {
+        if self.rest_only() {
+            return self.v1_server_version().await;
+        }
         self.call("VersionEndpoint", "getVersion", json!({})).await
     }
 
@@ -208,7 +235,7 @@ fn answered_by_a_portal(response: &reqwest::Response, base_url: &str) -> Option<
         .then(|| answered.host_str().unwrap_or("the server").to_string())
 }
 
-fn interpret<T: DeserializeOwned>(label: &str, status: u16, body: &str) -> ApiResult<T> {
+pub(crate) fn interpret<T: DeserializeOwned>(label: &str, status: u16, body: &str) -> ApiResult<T> {
     if status == 401 || status == 403 {
         return Err(ApiError::Unauthenticated(format!(
             "{label} rejected with HTTP {status}"

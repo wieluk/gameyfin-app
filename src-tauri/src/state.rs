@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use gameyfin_api::{ApiError, CookieSessionAuth, DeviceTokenAuth, Game, GameyfinClient, Library};
+use gameyfin_api::{
+    ApiError, ApiKeyAuth, CookieSessionAuth, DeviceTokenAuth, Game, GameyfinClient, Library,
+};
 use gameyfin_core::umu::GameFix;
 use serde::{Deserialize, Serialize};
 
@@ -175,6 +177,17 @@ impl SessionAnswer {
     }
 }
 
+/// A client on the web session, which Hilla and token management need.
+async fn cookie_client(
+    base_url: &str,
+    cookies: HashMap<String, String>,
+) -> gameyfin_api::ApiResult<GameyfinClient> {
+    let http = api_http()?;
+    let auth = Arc::new(CookieSessionAuth::new(base_url, http.clone()));
+    auth.set_cookies(cookies).await;
+    GameyfinClient::with_http(base_url, auth, http)
+}
+
 /// For API calls. A connect timeout keeps an offline start from hanging on the splash.
 fn api_http() -> reqwest::Result<reqwest::Client> {
     gameyfin_api::http_client()
@@ -190,10 +203,7 @@ impl AppState {
         base_url: &str,
         cookies: HashMap<String, String>,
     ) -> gameyfin_api::ApiResult<()> {
-        let http = api_http()?;
-        let auth = Arc::new(CookieSessionAuth::new(base_url, http.clone()));
-        auth.set_cookies(cookies).await;
-        *write(&self.client) = Some(GameyfinClient::with_http(base_url, auth, http)?);
+        *write(&self.client) = Some(cookie_client(base_url, cookies).await?);
         self.client_generation.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -206,14 +216,19 @@ impl AppState {
         token: String,
         cookies: HashMap<String, String>,
     ) -> gameyfin_api::ApiResult<()> {
-        let auth = Arc::new(DeviceTokenAuth::with_cookies(token, cookies));
+        let auth: Arc<dyn gameyfin_api::AuthStrategy> = if gameyfin_api::is_api_key(&token) {
+            Arc::new(ApiKeyAuth::with_cookies(token, cookies))
+        } else {
+            Arc::new(DeviceTokenAuth::with_cookies(token, cookies))
+        };
         *write(&self.client) = Some(GameyfinClient::with_http(base_url, auth, api_http()?)?);
         self.client_generation.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
     /// Swaps a cookie session for a device token where the server offers one, so the login
-    /// survives the session's idle timeout. Servers without device tokens keep the cookies.
+    /// survives the session's idle timeout. Gameyfin 2.6 without them issues an API key, and
+    /// older servers keep the cookies.
     pub async fn adopt_device_token(&self, base_url: &str) {
         let Some(client) = self.client() else {
             return;
@@ -223,17 +238,31 @@ impl AppState {
             .device_name
             .or_else(crate::saves::hostname)
             .unwrap_or_else(|| "Gameyfin app".to_string());
+        // The session was just accepted, so a refusal means the endpoint does not exist.
+        let lacks = |e: &ApiError| e.is_auth() || matches!(e, ApiError::Status { status: 404, .. });
         let token = match client.create_device_token(&name).await {
             Ok(token) => token,
-            // The session was just accepted, so a refusal means the endpoint does not exist.
-            Err(e) if e.is_auth() || matches!(e, ApiError::Status { status: 404, .. }) => {
-                tracing::debug!("the server does not issue device tokens");
-                return;
-            }
+            // A device token keeps Hilla, so the fork's saves and resumable downloads, and wins.
+            Err(e) if lacks(&e) => match client.create_api_token(&name).await {
+                Ok(key) => key,
+                Err(e) if lacks(&e) => {
+                    tracing::debug!("the server issues no tokens");
+                    return;
+                }
+                Err(e) => {
+                    tracing::info!("could not get an API key, staying on the session: {e}");
+                    return;
+                }
+            },
             Err(e) => {
                 tracing::info!("could not get a device token, staying on the session: {e}");
                 return;
             }
+        };
+        let kind = if gameyfin_api::is_api_key(&token) {
+            "an API key"
+        } else {
+            "a device token"
         };
         // Stored before use: a token only in memory would be lost on the next start. The
         // cookies stay: a reverse proxy in front of Gameyfin still checks its own session.
@@ -241,25 +270,37 @@ impl AppState {
             .set_settings(|s| s.device_token = Some(token.clone()))
             .await;
         if let Err(e) = stored {
-            tracing::warn!("could not store the device token: {e}");
+            tracing::warn!("could not store {kind}: {e}");
             return;
         }
         if let Err(e) = self.connect_with_token(base_url, token, self.settings().cookies) {
-            tracing::warn!("could not switch to the device token: {e}");
+            tracing::warn!("could not switch to {kind}: {e}");
             return;
         }
-        tracing::info!("signed in with a device token");
+        tracing::info!("signed in with {kind}");
     }
 
     /// Best effort, and bounded so signing out offline is not held up by the server.
     pub async fn revoke_device_token(&self) {
-        let (Some(client), true) = (self.client(), self.settings().device_token.is_some()) else {
+        let settings = self.settings();
+        let (Some(client), Some(token)) = (self.client(), settings.device_token) else {
             return;
         };
-        match tokio::time::timeout(Duration::from_secs(5), client.revoke_device_token()).await {
-            Ok(Ok(())) => tracing::info!("revoked the device token"),
-            Ok(Err(e)) => tracing::info!("could not revoke the device token: {e}"),
-            Err(_) => tracing::info!("the server did not answer the device token revocation"),
+        let revoke = async {
+            if gameyfin_api::is_api_key(&token) {
+                // Only a web session may revoke an API key, and it has often expired by now.
+                cookie_client(client.base_url(), settings.cookies)
+                    .await?
+                    .delete_api_token(&token)
+                    .await
+            } else {
+                client.revoke_device_token().await
+            }
+        };
+        match tokio::time::timeout(Duration::from_secs(5), revoke).await {
+            Ok(Ok(())) => tracing::info!("revoked the sign-in token"),
+            Ok(Err(e)) => tracing::info!("could not revoke the sign-in token: {e}"),
+            Err(_) => tracing::info!("the server did not answer the token revocation"),
         }
     }
 
@@ -821,11 +862,13 @@ mod tests {
             .with_body(USER)
             .create_async()
             .await;
-        server
-            .mock("POST", "/connect/DeviceTokenEndpoint/create")
-            .with_status(403)
-            .create_async()
-            .await;
+        for endpoint in ["DeviceTokenEndpoint", "CredentialEndpoint"] {
+            server
+                .mock("POST", format!("/connect/{endpoint}/create").as_str())
+                .with_status(403)
+                .create_async()
+                .await;
+        }
         let dir = stored_cookie_session("device-token-unsupported", &server.url()).await;
 
         let state = AppState::default();
@@ -837,6 +880,73 @@ mod tests {
             settings.cookies.get("JSESSIONID").map(String::as_str),
             Some("abc")
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn gameyfin_2_6_without_device_tokens_signs_in_with_an_api_key() {
+        const KEY: &str = "gf_pat_k1.secret";
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/connect/UserEndpoint/getUserInfo")
+            .match_header("cookie", "JSESSIONID=abc")
+            .with_body(USER)
+            .create_async()
+            .await;
+        server
+            .mock("POST", "/connect/DeviceTokenEndpoint/create")
+            .with_status(403)
+            .create_async()
+            .await;
+        server
+            .mock("POST", "/connect/CredentialEndpoint/create")
+            .match_header("cookie", "JSESSIONID=abc")
+            .match_body(mockito::Matcher::PartialJsonString(
+                r#"{"service":false}"#.into(),
+            ))
+            .with_body(format!(
+                r#"{{"credential":{{"id":"k1"}},"secret":"{KEY}"}}"#
+            ))
+            .create_async()
+            .await;
+        let me = server
+            .mock("GET", "/v1/me")
+            .match_header("x-api-key", KEY)
+            .with_body(r#"{"id":"1","username":"alice","permissions":[]}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let dir = stored_cookie_session("api-key-adopt", &server.url()).await;
+
+        let state = AppState::default();
+        assert!(state.restore(dir.clone()).await);
+
+        assert_eq!(state.settings().device_token.as_deref(), Some(KEY));
+        assert!(state.client().unwrap().rest_only());
+        assert!(state.check_session(true).await.0);
+        me.assert_async().await;
+
+        // Revoking a key takes the web session, which the stored cookies may still hold.
+        let mut revoked = Vec::new();
+        for method in ["revoke", "delete"] {
+            revoked.push(
+                server
+                    .mock(
+                        "POST",
+                        format!("/connect/CredentialEndpoint/{method}").as_str(),
+                    )
+                    .match_header("cookie", "JSESSIONID=abc")
+                    .match_body(mockito::Matcher::PartialJsonString(
+                        r#"{"id":"k1","service":false}"#.into(),
+                    ))
+                    .create_async()
+                    .await,
+            );
+        }
+        state.revoke_device_token().await;
+        for mock in revoked {
+            mock.assert_async().await;
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
