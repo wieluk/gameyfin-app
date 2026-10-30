@@ -15,8 +15,17 @@ pub enum ArchiveKind {
     Rar,
     /// A tar, optionally compressed. How Linux builds of a game usually arrive.
     Tar(TarCompression),
-    /// A plain file that is not an archive, a bare executable or disk image.
+    /// An ISO 9660 or UDF disc image. Unpacked by 7-Zip elsewhere, and by mounting it on Windows.
+    DiscImage,
+    /// A plain file that is not an archive, such as a bare executable.
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscFormat {
+    Iso9660,
+    /// Also a bridge disc carrying both: only UDF holds long names and files over 4 GiB.
+    Udf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +48,7 @@ impl ArchiveKind {
             ArchiveKind::Tar(TarCompression::Xz) => "tar.xz",
             ArchiveKind::Tar(TarCompression::Zstd) => "tar.zst",
             ArchiveKind::Tar(TarCompression::Bzip2) => "tar.bz2",
+            ArchiveKind::DiscImage => "disc image",
             ArchiveKind::None => "not an archive",
         }
     }
@@ -61,10 +71,44 @@ pub fn detect(path: &Path) -> CoreResult<ArchiveKind> {
         }
     }
 
+    if is_disc_image(&mut file)? {
+        return Ok(ArchiveKind::DiscImage);
+    }
     Ok(ArchiveKind::None)
 }
 
 const TAR_MAGIC_OFFSET: u64 = 257;
+
+/// A disc's volume descriptors start at sector 16, one per 2 KiB sector.
+const VOLUME_DESCRIPTORS_OFFSET: u64 = 0x8000;
+const SECTOR: usize = 2048;
+/// Enough sectors for a bridge disc's ISO descriptors, Joliet's and then UDF's.
+const DESCRIPTOR_SECTORS: u64 = 16;
+
+pub(crate) fn is_disc_image(file: &mut File) -> CoreResult<bool> {
+    Ok(disc_format(file)?.is_some())
+}
+
+/// ISO 9660 names its descriptors `CD001`. A pure UDF disc has none, only `NSR02` or `NSR03`.
+fn disc_format(file: &mut File) -> CoreResult<Option<DiscFormat>> {
+    file.seek(SeekFrom::Start(VOLUME_DESCRIPTORS_OFFSET))?;
+    let mut descriptors = Vec::new();
+    file.by_ref()
+        .take(DESCRIPTOR_SECTORS * SECTOR as u64)
+        .read_to_end(&mut descriptors)?;
+
+    let ids: Vec<&[u8]> = descriptors
+        .chunks(SECTOR)
+        .filter_map(|sector| sector.get(1..6))
+        .collect();
+    Ok(if ids.iter().any(|id| *id == b"NSR02" || *id == b"NSR03") {
+        Some(DiscFormat::Udf)
+    } else if ids.contains(&&b"CD001"[..]) {
+        Some(DiscFormat::Iso9660)
+    } else {
+        None
+    })
+}
 
 pub(crate) fn detect_bytes(magic: &[u8]) -> ArchiveKind {
     // Local file header, or an empty/spanned archive.
@@ -234,6 +278,7 @@ where
         ArchiveKind::Tar(compression) => {
             extract_tar(archive, destination, compression, &mut on_progress)
         }
+        ArchiveKind::DiscImage => extract_disc_image(archive, destination, &mut on_progress),
         ArchiveKind::None => Err(CoreError::UnsupportedArchive {
             path: archive.display().to_string(),
         }),
@@ -777,7 +822,7 @@ where
     let has_unar = tools.iter().any(|(name, _)| *name == "unar");
     let mut first_failure: Option<String> = None;
     for (tool, flags) in tools {
-        match run_rar_tool(tool, flags, archive, destination, on_progress) {
+        match run_unpack_tool(tool, flags, archive, destination, on_progress) {
             Ok(written) => return Ok(written),
             Err(e) => {
                 tracing::warn!(tool, error = %e, "RAR tool could not unpack the archive");
@@ -796,9 +841,10 @@ where
     }))
 }
 
-/// Unpack a RAR with one named tool. See [`extract_rar`], which tries these in turn.
+/// Unpack with one named external tool, a RAR or a disc image. See [`extract_rar`], which
+/// tries several in turn.
 #[cfg(not(windows))]
-fn run_rar_tool<F>(
+fn run_unpack_tool<F>(
     tool: &str,
     flags: &[&str],
     archive: &Path,
@@ -808,8 +854,8 @@ fn run_rar_tool<F>(
 where
     F: FnMut(ExtractProgress),
 {
-    let program =
-        crate::runtime::find_program(tool).ok_or_else(|| CoreError::Other(rar_tool_hint()))?;
+    let program = crate::runtime::find_program(tool)
+        .ok_or_else(|| CoreError::Other(format!("{tool} is not installed")))?;
 
     let mut command = std::process::Command::new(&program);
     // Piped so the child does not inherit our stdio, and so failures can be reported.
@@ -835,7 +881,7 @@ where
         tool,
         ?archive,
         ?destination,
-        "unpacking RAR with an external tool"
+        "unpacking with an external tool"
     );
 
     // Last in `RAR_TOOLS` because libarchive's RAR support is partial: it can unpack
@@ -857,6 +903,12 @@ where
             .spawn()
             .and_then(|child| child.wait_with_output())
             .map_err(|e| CoreError::Other(format!("could not run {tool}: {e}")))?;
+        // 7-Zip exits with 1 for a warning, such as padding after the end of a disc image.
+        if tool.starts_with("7z") && output.status.code() == Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!(tool, warning = %stderr.trim(), "unpacked with warnings");
+            return Ok(());
+        }
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(CoreError::Other(format!(
@@ -866,6 +918,193 @@ where
         }
         Ok(())
     })
+}
+
+/// 7-Zip reads both formats. bsdtar and unar miss UDF, which most DVD-sized games use.
+#[cfg(not(windows))]
+const DISC_IMAGE_TOOLS: &[&str] = &["7zz", "7z"];
+
+#[cfg(not(windows))]
+fn disc_image_tool_hint() -> String {
+    format!(
+        "Disc images need 7-Zip. Install it, for example `{}`.",
+        crate::runtime::install_command("7zip")
+    )
+}
+
+/// Named explicitly, since a file without an extension leaves 7-Zip guessing, and on a bridge
+/// disc it may pick the ISO side with its short names.
+#[cfg(not(windows))]
+fn extract_disc_image<F>(image: &Path, destination: &Path, on_progress: &mut F) -> CoreResult<u64>
+where
+    F: FnMut(ExtractProgress),
+{
+    let tool = DISC_IMAGE_TOOLS
+        .iter()
+        .copied()
+        .find(|tool| crate::runtime::find_program(tool).is_some())
+        .ok_or_else(|| CoreError::Other(disc_image_tool_hint()))?;
+    let format = match disc_format(&mut File::open(image)?)? {
+        Some(DiscFormat::Udf) => "-tudf",
+        _ => "-tiso",
+    };
+    let written = run_unpack_tool(
+        tool,
+        &["x", "-y", format, "-o"],
+        image,
+        destination,
+        on_progress,
+    )?;
+    make_writable(destination)?;
+    Ok(written)
+}
+
+/// Windows reads ISO and UDF itself, so the image is mounted and its files copied out.
+#[cfg(windows)]
+fn extract_disc_image<F>(image: &Path, destination: &Path, on_progress: &mut F) -> CoreResult<u64>
+where
+    F: FnMut(ExtractProgress),
+{
+    let mounted = MountedImage::mount(image)?;
+    let expected = directory_size(&mounted.root).unwrap_or(0);
+    let (source, target) = (mounted.root.clone(), destination.to_path_buf());
+    let written = with_sampled_progress(destination, expected, on_progress, move || {
+        copy_tree(&source, &target)
+    })?;
+    drop(mounted);
+    make_writable(destination)?;
+    Ok(written)
+}
+
+#[cfg(windows)]
+fn copy_tree(source: &Path, destination: &Path) -> CoreResult<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// A disc image mounted for unpacking, dismounted again when dropped. One the user had
+/// already mounted is read where it is and left mounted.
+#[cfg(windows)]
+struct MountedImage {
+    image: PathBuf,
+    root: PathBuf,
+    ours: bool,
+}
+
+#[cfg(windows)]
+impl MountedImage {
+    fn mount(image: &Path) -> CoreResult<Self> {
+        // `-StorageType ISO` covers UDF too, and lets a file without the `.iso` extension mount.
+        // The drive letter can lag the mount by a moment.
+        const SCRIPT: &str = "$ErrorActionPreference = 'Stop'
+$image = Get-DiskImage -ImagePath $env:GAMEYFIN_IMAGE -StorageType ISO
+$ours = -not $image.Attached
+if ($ours) {
+    $image = Mount-DiskImage -ImagePath $env:GAMEYFIN_IMAGE -StorageType ISO -Access ReadOnly -PassThru
+}
+$letter = ''
+for ($i = 0; $i -lt 20 -and -not $letter; $i++) {
+    $letter = ($image | Get-Volume).DriveLetter
+    if (-not $letter) { Start-Sleep -Milliseconds 250 }
+}
+[string]$letter + ' ' + $ours";
+
+        let image = std::path::absolute(image)?;
+        let output = run_powershell(SCRIPT, &image).map_err(|e| {
+            CoreError::Other(format!("Windows could not mount the disc image: {e}"))
+        })?;
+        let mut words = output.split_whitespace();
+        let (letter, ours) = match (words.next(), words.next()) {
+            (Some(letter), Some(ours)) => (letter, ours.eq_ignore_ascii_case("true")),
+            // No letter: PowerShell printed only the flag.
+            (Some(ours), None) => ("", ours.eq_ignore_ascii_case("true")),
+            _ => ("", false),
+        };
+        let mounted = MountedImage {
+            image,
+            root: PathBuf::from(format!("{letter}:\\")),
+            ours,
+        };
+        if letter.is_empty() {
+            return Err(CoreError::Other(
+                "Windows mounted the disc image without a drive letter".to_string(),
+            ));
+        }
+        Ok(mounted)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for MountedImage {
+    fn drop(&mut self) {
+        if !self.ours {
+            return;
+        }
+        const SCRIPT: &str = "$ErrorActionPreference = 'Stop'
+Dismount-DiskImage -ImagePath $env:GAMEYFIN_IMAGE -StorageType ISO | Out-Null";
+        if let Err(e) = run_powershell(SCRIPT, &self.image) {
+            tracing::warn!(image = ?self.image, error = %e, "could not dismount the disc image");
+        }
+    }
+}
+
+/// The image path goes in through the environment, so no quoting can turn it into code.
+#[cfg(windows)]
+fn run_powershell(script: &str, image: &Path) -> CoreResult<String> {
+    use std::os::windows::process::CommandExt;
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("GAMEYFIN_IMAGE", image)
+        .creation_flags(crate::process::CREATE_NO_WINDOW)
+        .output()?;
+    if !output.status.success() {
+        return Err(CoreError::Other(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// A disc marks everything read-only, which would stop patches, saves and uninstalling.
+// Windows has only the one read-only flag, so clearing it grants nothing beyond the owner.
+#[cfg_attr(windows, allow(clippy::permissions_set_readonly_false))]
+fn make_writable(dir: &Path) -> CoreResult<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let meta = path.symlink_metadata()?;
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if meta.is_dir() {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+            } else {
+                set_mode(&path, meta.permissions().mode());
+            }
+        }
+        #[cfg(windows)]
+        {
+            let mut permissions = meta.permissions();
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&path, permissions)?;
+        }
+        if meta.is_dir() {
+            make_writable(&path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Run an unpack that reports nothing itself on its own thread, sampling the destination's
@@ -1352,6 +1591,71 @@ mod tests {
         std::fs::write(dir.join("a/b/two.bin"), vec![0u8; 50]).unwrap();
 
         assert_eq!(directory_size(&dir).unwrap(), 150);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_bridge_disc_is_read_as_udf() {
+        let dir = scratch("disc");
+        let path = dir.join("game");
+        for (ids, expected) in [
+            (&[b"CD001", b"CD001"][..], Some(DiscFormat::Iso9660)),
+            (&[b"BEA01", b"NSR03", b"TEA01"][..], Some(DiscFormat::Udf)),
+            (
+                &[b"CD001", b"CD001", b"BEA01", b"NSR02", b"TEA01"][..],
+                Some(DiscFormat::Udf),
+            ),
+            (&[b"BEA01", b"TEA01"][..], None),
+        ] {
+            let mut data = vec![0u8; 0x8000 + 2048 * ids.len()];
+            for (i, id) in ids.iter().enumerate() {
+                let at = 0x8000 + 2048 * i + 1;
+                data[at..at + 5].copy_from_slice(*id);
+            }
+            std::fs::write(&path, &data).unwrap();
+            assert_eq!(
+                disc_format(&mut File::open(&path).unwrap()).unwrap(),
+                expected
+            );
+            let kind = detect(&path).unwrap();
+            assert_eq!(
+                kind == ArchiveKind::DiscImage,
+                expected.is_some(),
+                "{ids:?}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn files_from_a_disc_are_made_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch("readonly");
+        std::fs::create_dir_all(dir.join("game/data")).unwrap();
+        std::fs::write(dir.join("game/data/level.pak"), b"x").unwrap();
+        std::fs::write(dir.join("game/start.sh"), b"x").unwrap();
+        let mode = |path: &str, mode| {
+            std::fs::set_permissions(dir.join(path), std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        mode("game/data/level.pak", 0o444);
+        mode("game/start.sh", 0o555);
+        mode("game/data", 0o555);
+        mode("game", 0o555);
+
+        make_writable(&dir).unwrap();
+        let mode_of = |path: &str| {
+            std::fs::metadata(dir.join(path))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode_of("game"), 0o755);
+        assert_eq!(mode_of("game/data"), 0o755);
+        assert_eq!(mode_of("game/data/level.pak"), 0o644);
+        assert_eq!(mode_of("game/start.sh"), 0o755);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

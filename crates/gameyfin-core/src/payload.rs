@@ -1,8 +1,8 @@
-//! Classifying a download (archive, Windows installer, native build, disc image) from its
-//! leading bytes, since extensions are unreliable and the install step differs per kind.
+//! Classifying a download (archive or disc image, Windows installer, native build) from its
+//! own bytes, since extensions are unreliable and the install step differs per kind.
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::Path;
 
 use crate::error::CoreResult;
@@ -16,7 +16,6 @@ pub enum Payload {
     LinuxExecutable,
     /// A shell script, typically a GOG/itch Linux installer.
     ShellScript,
-    DiskImage,
     Unknown,
 }
 
@@ -27,8 +26,7 @@ impl Payload {
             Payload::WindowsExecutable => "Windows program",
             Payload::LinuxExecutable => "Linux program",
             Payload::ShellScript => "shell script",
-            Payload::DiskImage => "disc image",
-            Payload::Unknown => "unrecognised file",
+            Payload::Unknown => "file of an unknown type",
         }
     }
 
@@ -43,9 +41,10 @@ pub fn classify(path: &Path) -> CoreResult<Payload> {
     let read = file.read(&mut head)?;
     let head = &head[..read];
 
-    // ISO 9660 stores its identifier well into the file, so it needs a separate look.
-    if is_iso9660(&mut file)? {
-        return Ok(Payload::DiskImage);
+    // A disc stores its identifier well into the file, so it needs a separate look. First,
+    // since a bootable image's first sector can be anything.
+    if crate::extract::is_disc_image(&mut file)? {
+        return Ok(Payload::Archive(ArchiveKind::DiscImage));
     }
 
     let payload = classify_head(head);
@@ -54,7 +53,7 @@ pub fn classify(path: &Path) -> CoreResult<Payload> {
     }
 
     // An uncompressed tar carries no signature at offset zero either, so it only turns up
-    // on a second look. Checked last, for the same reason as the ISO: it costs a seek.
+    // on a second look. Checked last, for the same reason as the disc: it costs a seek.
     match crate::extract::detect(path)? {
         ArchiveKind::None => Ok(Payload::Unknown),
         kind => Ok(Payload::Archive(kind)),
@@ -81,18 +80,6 @@ fn classify_head(head: &[u8]) -> Payload {
         return Payload::WindowsExecutable;
     }
     Payload::Unknown
-}
-
-/// ISO 9660 puts "CD001" at offset 0x8001, in the primary volume descriptor.
-fn is_iso9660(file: &mut File) -> CoreResult<bool> {
-    if file.seek(SeekFrom::End(0))? < 0x8006 {
-        return Ok(false);
-    }
-    file.seek(SeekFrom::Start(0x8001))?;
-    let mut marker = [0u8; 5];
-    let read = file.read(&mut marker)?;
-    file.rewind()?;
-    Ok(&marker[..read] == b"CD001")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,9 +151,8 @@ pub fn methods_for(payload: Payload, windows_host: bool) -> Vec<InstallMethod> {
                 vec![InstallMethod::CopyExecutable]
             }
         }
-        // Mounting a disc image is not supported yet; offering nothing is clearer than
-        // offering something that will fail.
-        Payload::DiskImage | Payload::Unknown => Vec::new(),
+        // Offering nothing is clearer than offering something that will fail.
+        Payload::Unknown => Vec::new(),
     }
 }
 
@@ -216,7 +202,11 @@ mod tests {
             ),
             (Payload::LinuxExecutable, true, vec![]),
             (Payload::LinuxExecutable, false, vec![CopyExecutable]),
-            (Payload::DiskImage, false, vec![]),
+            (
+                Payload::Archive(ArchiveKind::DiscImage),
+                true,
+                vec![Extract],
+            ),
             (Payload::Unknown, false, vec![]),
         ] {
             assert_eq!(
@@ -247,17 +237,39 @@ mod tests {
         assert_eq!(InstallMethod::from_key("nonsense"), None);
     }
 
+    /// An image whose volume descriptors, from sector 16, carry these identifiers.
+    fn disc(descriptors: &[&[u8; 5]]) -> Vec<u8> {
+        let mut data = vec![0u8; 0x8000 + 2048 * (descriptors.len() + 1)];
+        for (i, id) in descriptors.iter().enumerate() {
+            let at = 0x8000 + 2048 * i + 1;
+            data[at..at + 5].copy_from_slice(*id);
+        }
+        data
+    }
+
     #[test]
-    fn detects_an_iso_by_its_volume_descriptor() {
+    fn detects_iso_and_udf_images_without_an_extension() {
         let dir = std::env::temp_dir().join(format!("gameyfin-iso-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("game.iso");
+        let path = dir.join("Chained Beasts");
+        let disc_image = Payload::Archive(ArchiveKind::DiscImage);
 
-        let mut data = vec![0u8; 0x8006];
-        data[0x8001..0x8006].copy_from_slice(b"CD001");
-        std::fs::write(&path, &data).unwrap();
-
-        assert_eq!(classify(&path).unwrap(), Payload::DiskImage);
+        for (data, expected) in [
+            (disc(&[b"CD001", b"CD001"]), disc_image),
+            // A pure UDF disc has no `CD001` at all, as a DVD burnt from Windows often is.
+            (disc(&[b"BEA01", b"NSR02", b"TEA01"]), disc_image),
+            (disc(&[b"BEA01", b"NSR03", b"TEA01"]), disc_image),
+            (
+                disc(&[b"CD001", b"CD001", b"BEA01", b"NSR03", b"TEA01"]),
+                disc_image,
+            ),
+            (disc(&[b"XXXXX"]), Payload::Unknown),
+            // Too short to reach the descriptors.
+            (vec![0u8; 0x8003], Payload::Unknown),
+        ] {
+            std::fs::write(&path, &data).unwrap();
+            assert_eq!(classify(&path).unwrap(), expected);
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

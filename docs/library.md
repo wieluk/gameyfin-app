@@ -19,11 +19,12 @@ Press **Download** on a game. With more than one games folder, you choose where 
 see the free space on each.
 
 - Zip and tar downloads are unpacked while they arrive, so a game needs only its own size in
-  free space. 7z, rar and other archives are unpacked as soon as the download finishes.
+  free space. 7z, rar, disc images and other archives are unpacked as soon as the download
+  finishes.
 - **Pause** keeps what has arrived and **Resume** carries on from there, also after quitting
   the app. A failed download resumes the same way with **Retry download**. Resuming needs
   `ghcr.io/wieluk/gameyfin:gameyfin-app` as your server; with any other, the download starts over.
-- A setup program or disc image is saved as it is and waits for **Install**.
+- A setup program is saved as it is and waits for **Install**.
 - **Speed limit**: set one on the Downloads page. It is off by default.
 - **Cancel** stops a download and deletes what has arrived; **Delete download** removes a
   finished one.
@@ -52,7 +53,7 @@ Gameyfin looks at what was downloaded and handles it:
 
 | Download | What happens |
 | --- | --- |
-| **Archive** (zip, 7z, rar, tar) | Unpacked into `Gameyfin/Installations`. Encrypted archives use the password from **Settings, Library, Automation**. On Linux, rar needs `unar` installed. |
+| **Archive** (zip, 7z, rar, tar) or **disc image** (iso, udf) | Unpacked into `Gameyfin/Installations`. Encrypted archives use the password from **Settings, Library, Automation**. On Linux outside the Flatpak, rar needs `unar` and disc images need 7-Zip. Windows mounts a disc image to copy its files. |
 | **Setup program** | Run for you, on Linux inside the game's prefix. Common installer types are told where to install, so the game ends up where Gameyfin can find it. The row shows how much it has written. |
 | **Game files** | Moved into place as they are. |
 

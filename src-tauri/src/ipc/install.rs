@@ -309,7 +309,7 @@ fn method_label(
 fn method_description(method: gameyfin_core::InstallMethod) -> &'static str {
     use gameyfin_core::InstallMethod::*;
     match method {
-        Extract => "Unpack the archive so its contents can be inspected and installed.",
+        Extract => "Unpack the download so its contents can be inspected and installed.",
         RunWindowsInstaller => "Start the game's own setup program. Paste the install path when it asks.",
         RunWindowsInstallerViaProton => {
             "Start the game's own setup program in a Windows compatibility layer. Paste the install path when it asks."
