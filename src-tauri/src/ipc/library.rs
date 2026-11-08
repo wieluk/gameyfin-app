@@ -153,8 +153,8 @@ pub async fn start_download(
         .await;
 
     let mut url = client.download_url(&game, &provider.key);
-    // Gameyfin 2.6.0's REST API fails every file download, so an API key falls back to the
-    // web session, which works while the server still knows it.
+    // Gameyfin 2.6.0's REST API fails every file download (fixed in 2.6.1), so an API key
+    // falls back to the web session, which works while the server still knows it.
     let mut fallback = client
         .rest_only()
         .then(|| client.url_for(&game.download_path(&provider.key)));

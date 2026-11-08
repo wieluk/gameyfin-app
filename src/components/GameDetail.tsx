@@ -16,6 +16,7 @@ import type { LibraryEntry } from "@/types";
 import { PANEL_BODY, titleGradient } from "@/lib/ui";
 import { Button } from "@/components/ui";
 import { useDismissOnEscape } from "@/lib/useDismiss";
+import { Summary } from "@/components/Summary";
 
 /** Game details as a dialog over the library, so the grid keeps its scroll and filters. */
 export function GameDetail({
@@ -90,9 +91,10 @@ export function GameDetail({
           {/* Side by side where there is room, as on the web interface; stacked when narrow. */}
           <div className="mb-5 flex flex-col gap-5 lg:flex-row lg:gap-8">
             {game.summary && (
-              <p className="min-w-0 flex-1 whitespace-pre-line text-sm leading-relaxed text-foreground/75">
-                {game.summary}
-              </p>
+              <Summary
+                text={game.summary}
+                className="flex-1 text-sm leading-relaxed text-foreground/75"
+              />
             )}
 
             <dl className="grid shrink-0 grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm lg:max-w-xs">

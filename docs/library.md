@@ -22,8 +22,10 @@ see the free space on each.
   free space. 7z, rar, disc images and other archives are unpacked as soon as the download
   finishes.
 - **Pause** keeps what has arrived and **Resume** carries on from there, also after quitting
-  the app. A failed download resumes the same way with **Retry download**. Resuming needs
-  `ghcr.io/wieluk/gameyfin:gameyfin-app` as your server; with any other, the download starts over.
+  the app. A failed download resumes the same way with **Retry download**. Gameyfin 2.6.1 or
+  newer resumes a single file. A game kept as a folder resumes only on
+  `ghcr.io/wieluk/gameyfin:gameyfin-app`, with **Calculate folder download size** on and
+  compression off in the Direct Download plugin. Otherwise the download starts over.
 - A setup program is saved as it is and waits for **Install**.
 - **Speed limit**: set one on the Downloads page. It is off by default.
 - **Cancel** stops a download and deletes what has arrived; **Delete download** removes a
