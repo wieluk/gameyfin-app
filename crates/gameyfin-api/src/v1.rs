@@ -1,7 +1,7 @@
 //! Gameyfin 2.6's REST API under `/v1`. Its personal access tokens work only there, so a client
 //! signed in with one lists, probes and downloads through these routes instead of Hilla.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
@@ -42,6 +42,16 @@ struct ImageV1 {
     #[serde(deserialize_with = "numeric_id")]
     id: i64,
     url: String,
+    /// From Gameyfin 2.6.1.
+    #[serde(default)]
+    blurhash: Option<String>,
+}
+
+/// One row of `/v1/games/index`, from Gameyfin 2.6.1.
+#[derive(Debug, Deserialize)]
+struct GameIndexEntryV1 {
+    #[serde(deserialize_with = "numeric_id")]
+    id: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,7 +118,7 @@ fn image(image: ImageV1, kind: &str) -> Image {
     Image {
         id: image.id,
         r#type: kind.to_string(),
-        blurhash: None,
+        blurhash: image.blurhash,
         url: Some(image.url),
     }
 }
@@ -325,8 +335,8 @@ impl GameyfinClient {
         unreachable!("pages run out before the counter does")
     }
 
-    /// Every game in full. With a `previous` catalogue only the games changed since are read,
-    /// unless the count shows some were removed, which the API cannot list.
+    /// Every game in full. With a `previous` catalogue only the games changed since are read.
+    /// When the count shows some were removed, the index names them; before 2.6.1 all are read.
     pub(crate) async fn v1_game_catalog(
         &self,
         previous: Option<&GameCatalog>,
@@ -353,7 +363,12 @@ impl GameyfinClient {
                 .filter(|g| newer(g))
                 .map(Game::from)
                 .collect();
-            let games = replaced(&previous.games, changed);
+            let mut games = replaced(&previous.games, changed);
+            if games.len() as u64 != total {
+                if let Some(ids) = self.v1_game_ids().await? {
+                    games.retain(|g| ids.contains(&g.id));
+                }
+            }
             if games.len() as u64 == total {
                 return Ok(GameCatalog {
                     synced_at: newest_update(&games).or_else(|| previous.synced_at.clone()),
@@ -372,6 +387,22 @@ impl GameyfinClient {
             synced_at: newest_update(&games),
             games,
         })
+    }
+
+    /// Every game id, from `/v1/games/index`. `None` before 2.6.1, where `index` reads as a game id.
+    async fn v1_game_ids(&self) -> ApiResult<Option<HashSet<i64>>> {
+        match self
+            .v1_get::<Vec<GameIndexEntryV1>>("/v1/games/index", &[])
+            .await
+        {
+            Ok(index) => Ok(Some(index.into_iter().map(|e| e.id).collect())),
+            // A revoked key is signed out, not a server without the index.
+            Err(e @ ApiError::Unauthenticated(_)) => Err(e),
+            Err(e) => {
+                tracing::debug!(error = %e, "no game index; listing every game");
+                Ok(None)
+            }
+        }
     }
 
     /// A personal access token for this device, from Gameyfin 2.6 on. Needs a cookie session.
@@ -434,7 +465,8 @@ mod tests {
     #[test]
     fn a_v1_game_maps_onto_the_hilla_shape() {
         let mut v1 = game_v1(7, "Celeste", "2026-10-01T10:00:00Z");
-        v1["cover"] = json!({ "id": "11", "url": "/v1/games/7/images/11" });
+        v1["cover"] =
+            json!({ "id": "11", "url": "/v1/games/7/images/11", "blurhash": "LKO2?U%2Tw=w" });
         v1["images"] = json!([{ "id": "12", "url": "/v1/games/7/images/12" }]);
         v1["externalIds"] =
             json!([{ "provider": "org.gameyfin.plugins.metadata.steam", "id": "504230" }]);
@@ -446,7 +478,12 @@ mod tests {
             (7, 1, "Celeste")
         );
         assert_eq!(game.cover.as_ref().unwrap().path(), "/v1/games/7/images/11");
+        assert_eq!(
+            game.cover.as_ref().unwrap().blurhash.as_deref(),
+            Some("LKO2?U%2Tw=w")
+        );
         assert_eq!(game.images[0].r#type, "SCREENSHOT");
+        assert_eq!(game.images[0].blurhash, None, "2.6.0 sends no blurhash");
         assert_eq!(game.steam_app_id(), Some(504230));
         assert_eq!(game.metadata.file_size, 42);
     }
@@ -533,25 +570,58 @@ mod tests {
         assert_eq!(catalog.synced_at.as_deref(), Some("2026-10-03T10:00:00Z"));
     }
 
-    #[tokio::test]
-    async fn a_removed_game_triggers_a_full_listing() {
-        let mut server = mockito::Server::new_async().await;
-        let previous = GameCatalog {
-            games: vec![
-                Game::from(
-                    serde_json::from_value::<GameV1>(game_v1(1, "Celeste", "2026-10-01T10:00:00Z"))
-                        .unwrap(),
-                ),
-                Game::from(
-                    serde_json::from_value::<GameV1>(game_v1(2, "Gone", "2026-10-01T10:00:00Z"))
-                        .unwrap(),
-                ),
-            ],
-            synced_at: Some("2026-10-01T10:00:00Z".into()),
+    fn with_gone(previous_at: &str) -> GameCatalog {
+        let game = |id, title| {
+            Game::from(serde_json::from_value::<GameV1>(game_v1(id, title, previous_at)).unwrap())
         };
+        GameCatalog {
+            games: vec![game(1, "Celeste"), game(2, "Gone")],
+            synced_at: Some(previous_at.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_removed_game_is_found_in_the_index() {
+        let mut server = mockito::Server::new_async().await;
+        let previous = with_gone("2026-10-01T10:00:00Z");
         server
             .mock("GET", "/v1/games?page=0&size=200&sort=updatedAt%2Cdesc")
             .with_body(page(vec![game_v1(1, "Celeste", "2026-10-01T10:00:00Z")], 1))
+            .create_async()
+            .await;
+        let index = server
+            .mock("GET", "/v1/games/index")
+            .with_body(r#"[{"id":"1","updatedAt":"2026-10-01T10:00:00Z"}]"#)
+            .create_async()
+            .await;
+        let full = server
+            .mock("GET", "/v1/games?page=0&size=200&sort=id")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let catalog = client(&server).game_catalog(Some(&previous)).await.unwrap();
+
+        index.assert_async().await;
+        full.assert_async().await;
+        let titles: Vec<&str> = catalog.games.iter().map(|g| g.title.as_str()).collect();
+        assert_eq!(titles, ["Celeste"]);
+    }
+
+    #[tokio::test]
+    async fn a_removed_game_without_an_index_triggers_a_full_listing() {
+        let mut server = mockito::Server::new_async().await;
+        let previous = with_gone("2026-10-01T10:00:00Z");
+        server
+            .mock("GET", "/v1/games?page=0&size=200&sort=updatedAt%2Cdesc")
+            .with_body(page(vec![game_v1(1, "Celeste", "2026-10-01T10:00:00Z")], 1))
+            .create_async()
+            .await;
+        // Gameyfin 2.6.0 reads `index` as a game id.
+        server
+            .mock("GET", "/v1/games/index")
+            .with_status(400)
+            .with_body(r#"{"title":"Invalid request"}"#)
             .create_async()
             .await;
         let full = server

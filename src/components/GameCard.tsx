@@ -10,6 +10,7 @@ import {
 } from "@/lib/format";
 import { titleGradient } from "@/lib/ui";
 import type { LibraryEntry, TransferProgress } from "@/types";
+import { blurhashBackground } from "@/lib/blurhash";
 
 /** A library tile; 2:3 cover art so the grid reads as a shelf, not a table. */
 /** What to call a failure, by the step that failed. */
@@ -59,6 +60,7 @@ export const GameCard = memo(function GameCard({
           }
         }}
         className="relative aspect-2/3 cursor-pointer overflow-hidden rounded-xl bg-default-200 shadow-xs ring-1 ring-default-300/40 group-hover:-translate-y-1 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary"
+        style={coverUrl ? blurhashBackground(game.cover?.blurhash) : undefined}
       >
         {coverUrl ? (
           <img

@@ -17,6 +17,7 @@ import { PANEL_BODY, titleGradient } from "@/lib/ui";
 import { Button } from "@/components/ui";
 import { useDismissOnEscape } from "@/lib/useDismiss";
 import { Summary } from "@/components/Summary";
+import { blurhashBackground } from "@/lib/blurhash";
 
 /** Game details as a dialog over the library, so the grid keeps its scroll and filters. */
 export function GameDetail({
@@ -128,13 +129,14 @@ const HEADER_BUTTON =
 
 function Header({ entry, onClose }: { entry: LibraryEntry; onClose: () => void }) {
   const art = entry.headerUrl ?? entry.coverUrl ?? null;
+  const artHash = entry.headerUrl ? entry.game.header?.blurhash : entry.game.cover?.blurhash;
   const navigate = useNavigate();
 
   return (
     // Without art the band takes the tile's gradient, shorter since there is nothing to show.
     <div
       className={`relative shrink-0 bg-default-200 ${art ? "h-52" : "h-32"}`}
-      style={art ? undefined : { background: titleGradient(entry.game.title) }}
+      style={art ? blurhashBackground(artHash) : { background: titleGradient(entry.game.title) }}
     >
       {art && <img src={art} alt="" className="h-full w-full object-cover" />}
       <div className="absolute inset-0 bg-linear-to-t from-content1 via-content1/70 to-transparent" />
