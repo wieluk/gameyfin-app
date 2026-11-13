@@ -22,7 +22,7 @@ bytes = "1"
 async-trait = "0.1"
 time.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate", "bzip2", "zstd", "lzma"] }
-sevenz-rust2 = "0.24"
+sevenz-rust2 = "0.25"
 tar = "0.4.46"
 liblzma = { version = "0.4.8", features = ["static"] }
 # The other tar wrappers, already in the tree through `zip`.
