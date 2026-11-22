@@ -858,7 +858,9 @@ where
         .ok_or_else(|| CoreError::Other(format!("{tool} is not installed")))?;
 
     let mut command = std::process::Command::new(&program);
-    // Piped so the child does not inherit our stdio, and so failures can be reported.
+    // Piped so the child does not inherit our stdio, and so failures can be reported. No stdin,
+    // so a tool that stops to ask fails instead of waiting forever.
+    command.stdin(std::process::Stdio::null());
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
     for flag in flags {

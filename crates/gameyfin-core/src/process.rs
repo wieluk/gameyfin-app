@@ -877,6 +877,8 @@ pub fn keep_from_children(name: &'static str) {
 /// Strip what the app set for itself, and AppImage paths before starting a host program, or
 /// python3 and the Steam Runtime load the image's libraries instead of the system's.
 pub fn clean_for_host(cmd: &mut Command) {
+    // Our stdin can be a pipe that never closes; a child reading it would wait forever.
+    cmd.stdin(Stdio::null());
     if let Ok(own) = OWN_ENV.lock() {
         for name in own.iter() {
             cmd.env_remove(name);

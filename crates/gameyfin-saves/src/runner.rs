@@ -53,6 +53,9 @@ impl CommandRunner for ProcessRunner {
         command.args(args);
         // Without this the child outlives a timed-out call, still holding its config dir.
         command.kill_on_drop(true);
+        // Ludusavi reads game names from a stdin that is not a terminal, so an inherited pipe
+        // that never closes hangs it.
+        command.stdin(std::process::Stdio::null());
 
         // Suppress the console window Ludusavi would flash on Windows every backup.
         #[cfg(windows)]

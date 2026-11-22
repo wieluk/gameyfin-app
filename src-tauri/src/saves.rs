@@ -1113,6 +1113,13 @@ impl SyncWatch {
     fn skipped(&self) -> bool {
         crate::state::lock(&self.skips).contains(&self.game_id)
     }
+
+    /// Resolves once the user presses Skip, so a step that is free to drop can race it.
+    async fn skip_pressed(&self) {
+        while !self.skipped() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
 }
 
 /// Stops the sync a game is waiting on, if it has not reached the point of no return.
@@ -2275,7 +2282,7 @@ pub async fn migrate_saves(
 async fn bundled_version(app: &AppHandle) -> Option<String> {
     let binary = crate::sidecar::bundled(app, "ludusavi")?;
     let mut command = tokio::process::Command::new(&binary);
-    command.arg("--version");
+    command.arg("--version").stdin(std::process::Stdio::null());
     // Without this the settings screen flashes a console window every time it opens.
     #[cfg(windows)]
     {
@@ -2500,6 +2507,9 @@ fn ask_about_conflict(app: &AppHandle, watch: &SyncWatch, state: &SaveSyncState)
     true
 }
 
+/// How long a launch waits on the save check. Dropping the check stops its Ludusavi run too.
+const LAUNCH_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// What [`before_launch`] decided the launch should do next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchGate {
@@ -2530,17 +2540,38 @@ pub async fn before_launch(app: &AppHandle, state: &AppState, game_id: i64) -> L
     let watch = SyncWatch::new(app, state, game_id, title.clone(), SyncMoment::Launch);
     watch.step(SaveSyncPhase::Checking);
 
-    let view = match state_at_launch(app, state, game_id).await {
-        Ok(view) => view,
-        Err(e) if unreachable(&e) => {
+    // The check only reads, so a Skip drops it right away instead of waiting for it to finish.
+    let checked = tokio::select! {
+        checked = tokio::time::timeout(LAUNCH_CHECK_TIMEOUT, state_at_launch(app, state, game_id)) => checked,
+        () = watch.skip_pressed() => {
+            tracing::info!(game_id, "the save check was skipped; starting with this PC's");
+            watch.finish(SaveSyncPhase::Skipped);
+            return LaunchGate::Proceed;
+        }
+    };
+    let view = match checked {
+        Ok(Ok(view)) => view,
+        Ok(Err(e)) if unreachable(&e) => {
             tracing::info!(game_id, error = %e, "saves are out of reach; playing with this PC's");
             watch.finish(SaveSyncPhase::Offline);
             return LaunchGate::Proceed;
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             tracing::warn!(game_id, error = %e, "could not check saves before launch");
             watch.finish(SaveSyncPhase::Failed {
                 message: e.to_string(),
+            });
+            return LaunchGate::Proceed;
+        }
+        Err(_) => {
+            tracing::warn!(
+                game_id,
+                seconds = LAUNCH_CHECK_TIMEOUT.as_secs(),
+                "checking saves took too long; starting with this PC's"
+            );
+            watch.finish(SaveSyncPhase::Failed {
+                message: "Checking saves took too long, so the game started with this PC's saves."
+                    .into(),
             });
             return LaunchGate::Proceed;
         }

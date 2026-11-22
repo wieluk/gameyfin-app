@@ -335,6 +335,7 @@ async fn host_flatpak(args: &[&str]) -> Result<std::process::Output, String> {
         .arg("--host")
         .arg("flatpak")
         .args(args)
+        .stdin(std::process::Stdio::null())
         .output()
         .await
         .map_err(|e| format!("could not ask the host: {e}"))
