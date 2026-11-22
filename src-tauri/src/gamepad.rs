@@ -28,6 +28,13 @@ const TRIGGER_PRESS: f32 = 0.65;
 /// Below this, it counts as released. The gap stops a half-held trigger chattering.
 const TRIGGER_RELEASE: f32 = 0.45;
 
+/// How long the pad in use must rest before another takes over. A mirrored copy of it
+/// (Steam Input, a streaming host) reports the same input within this, so it never counts.
+const SWITCH_IDLE: Duration = Duration::from_millis(1000);
+
+/// How far another pad's stick must go to take over, so drift or a nudge on the shelf cannot.
+const SWITCH_AXIS: f32 = 0.5;
+
 /// A logical button, named for what the frontend binds rather than for a device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "kebab-case")]
@@ -249,6 +256,55 @@ impl TriggerState {
     }
 }
 
+/// Which pad drives the app. The one in use keeps it until it rests, and only its input counts,
+/// so a copy of it cannot double a press. Generic so the rules are testable without pads.
+struct PadChoice<Id> {
+    current: Option<Id>,
+    /// None while the current pad was only picked as a fallback, so any pad may take over.
+    last_input: Option<Instant>,
+}
+
+impl<Id: Copy + PartialEq> PadChoice<Id> {
+    fn new() -> Self {
+        Self {
+            current: None,
+            last_input: None,
+        }
+    }
+
+    /// Input from `id`: whether it counts. It makes `id` the current pad when that one rests.
+    fn input(&mut self, id: Id, now: Instant) -> bool {
+        let resting = self
+            .last_input
+            .is_none_or(|at| now.duration_since(at) >= SWITCH_IDLE);
+        if self.current != Some(id) && !resting {
+            return false;
+        }
+        self.current = Some(id);
+        self.last_input = Some(now);
+        true
+    }
+
+    /// The current pad is still held, which sends no events but is use all the same.
+    fn held(&mut self, now: Instant) {
+        if self.current.is_some() {
+            self.last_input = Some(now);
+        }
+    }
+
+    fn disconnected(&mut self, id: Id) {
+        if self.current == Some(id) {
+            *self = Self::new();
+        }
+    }
+
+    /// A pad to read before any is used. Unused, so the first pad touched takes over.
+    fn fallback(&mut self, id: Id) {
+        self.current = Some(id);
+        self.last_input = None;
+    }
+}
+
 /// Starts the polling thread. A plain thread, not a task: `gilrs` is not `Send` and wants
 /// polling rather than awaiting.
 pub fn spawn(app: AppHandle, handle: Handle) {
@@ -288,10 +344,9 @@ fn run(app: AppHandle, handle: Handle) {
     let mut left_trigger = TriggerState::default();
     let mut right_trigger = TriggerState::default();
     let mut connected = false;
-    // The pad last used. A container or remote session can keep idle virtual pads connected
-    // ahead of the one in the player's hands, so the first connected pad is only the fallback.
-    let mut last_used: Option<gilrs::GamepadId> = None;
-    let mut current: Option<gilrs::GamepadId> = None;
+    let mut choice = PadChoice::new();
+    // The pad the frontend was last told about, so a switch updates the name only.
+    let mut announced: Option<gilrs::GamepadId> = None;
 
     loop {
         let active = connected && handle.enabled() && handle.focused();
@@ -304,11 +359,22 @@ fn run(app: AppHandle, handle: Handle) {
 
         // Events must be drained even while disabled, or the queue grows without bound
         // and re-enabling replays every press made in between.
-        let mut pressed = Vec::new();
+        let mut events = Vec::new();
         while let Some(event) = gilrs.next_event() {
+            events.push(event);
+        }
+        // The current pad first, so its mirrored copy in the same batch cannot take over.
+        events.sort_by_key(|event| choice.current != Some(event.id));
+
+        let now = Instant::now();
+        let deadzone = handle.deadzone();
+        let mut pressed = Vec::new();
+        for event in events {
             match event.event {
                 gilrs::EventType::ButtonPressed(button, _) => {
-                    last_used = Some(event.id);
+                    if !choice.input(event.id, now) {
+                        continue;
+                    }
                     if let Some(mapped) = map_button(button) {
                         // Directions are driven by the held-state scan below so the d-pad and
                         // the stick repeat identically; a raw press here would double them up.
@@ -317,10 +383,19 @@ fn run(app: AppHandle, handle: Handle) {
                         }
                     }
                 }
-                gilrs::EventType::AxisChanged(_, value, _) if value.abs() >= handle.deadzone() => {
-                    last_used = Some(event.id);
+                gilrs::EventType::AxisChanged(axis, value, _) => {
+                    let threshold = if choice.current == Some(event.id) {
+                        deadzone
+                    } else if takes_over(axis) {
+                        SWITCH_AXIS.max(deadzone)
+                    } else {
+                        continue;
+                    };
+                    if value.abs() >= threshold {
+                        choice.input(event.id, now);
+                    }
                 }
-                gilrs::EventType::Disconnected if last_used == Some(event.id) => last_used = None,
+                gilrs::EventType::Disconnected => choice.disconnected(event.id),
                 _ => {}
             }
         }
@@ -328,6 +403,7 @@ fn run(app: AppHandle, handle: Handle) {
         if !handle.enabled() {
             if connected {
                 connected = false;
+                announced = None;
                 handle.set_connected(false);
                 let _ = app.emit(
                     "gamepad-connection",
@@ -340,15 +416,23 @@ fn run(app: AppHandle, handle: Handle) {
             continue;
         }
 
-        // The last-used pad wins, else the first connected one.
-        let active = last_used
-            .and_then(|id| gilrs.connected_gamepad(id).map(|pad| (id, pad)))
-            .or_else(|| gilrs.gamepads().find(|(_, pad)| pad.is_connected()));
+        if choice
+            .current
+            .is_none_or(|id| gilrs.connected_gamepad(id).is_none())
+        {
+            match gilrs.gamepads().find(|(_, pad)| pad.is_connected()) {
+                Some((id, _)) => choice.fallback(id),
+                None => choice = PadChoice::new(),
+            }
+        }
+        let active = choice
+            .current
+            .and_then(|id| gilrs.connected_gamepad(id).map(|pad| (id, pad)));
 
         let Some((id, pad)) = active else {
             if connected {
                 connected = false;
-                current = None;
+                announced = None;
                 handle.set_connected(false);
                 tracing::info!("controller disconnected");
                 let _ = app.emit(
@@ -362,15 +446,19 @@ fn run(app: AppHandle, handle: Handle) {
             continue;
         };
 
-        if !connected || current != Some(id) {
+        if announced != Some(id) {
+            if connected {
+                tracing::info!(name = pad.name(), "switched to another controller");
+            } else {
+                tracing::info!(name = pad.name(), "controller connected");
+            }
             connected = true;
-            current = Some(id);
+            announced = Some(id);
             // Held directions and triggers belong to the pad they were read from.
             repeater = Repeater::new();
             left_trigger = TriggerState::default();
             right_trigger = TriggerState::default();
             handle.set_connected(true);
-            tracing::info!(name = pad.name(), "controller connected");
             let _ = app.emit(
                 "gamepad-connection",
                 ConnectionEvent {
@@ -394,8 +482,6 @@ fn run(app: AppHandle, handle: Handle) {
             send(button, false);
         }
 
-        let deadzone = handle.deadzone();
-
         // Triggers are axes on most pads and buttons on some, so both are read and the
         // hysteresis state settles which it was.
         let lt =
@@ -416,17 +502,33 @@ fn run(app: AppHandle, handle: Handle) {
             axis(&pad, gilrs::Axis::LeftStickY),
             deadzone,
         );
-        if let Some((button, repeat)) = repeater.update(dpad.or(stick)) {
+        let direction = dpad.or(stick);
+        if let Some((button, repeat)) = repeater.update(direction) {
             send(button, repeat);
         }
 
         // The right stick scrolls, and is sent as a position rather than as steps.
         let right_x = axis(&pad, gilrs::Axis::RightStickX);
         let right_y = axis(&pad, gilrs::Axis::RightStickY);
-        if deliver && (right_x.abs() >= deadzone || right_y.abs() >= deadzone) {
+        let scrolling = right_x.abs() >= deadzone || right_y.abs() >= deadzone;
+        if deliver && scrolling {
             let _ = app.emit("gamepad-axis", AxisEvent { right_x, right_y });
         }
+
+        if direction.is_some() || scrolling || left_trigger.pressed || right_trigger.pressed {
+            choice.held(now);
+        }
     }
+}
+
+/// The axes a resting pad cannot move by itself. Triggers are left out: some rest at full
+/// travel, so a value past the threshold says nothing about a hand on them.
+fn takes_over(axis: gilrs::Axis) -> bool {
+    use gilrs::Axis as A;
+    matches!(
+        axis,
+        A::LeftStickX | A::LeftStickY | A::RightStickX | A::RightStickY | A::DPadX | A::DPadY
+    )
 }
 
 fn axis(pad: &gilrs::Gamepad<'_>, axis: gilrs::Axis) -> f32 {
@@ -456,6 +558,57 @@ fn held_direction(pad: &gilrs::Gamepad<'_>) -> Option<Button> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_pad_touched_takes_over_from_a_fallback() {
+        // An idle virtual pad listed first must not keep the one in the player's hands out.
+        let now = Instant::now();
+        let mut choice = PadChoice::new();
+        choice.fallback(1);
+        assert!(choice.input(2, now));
+        assert_eq!(choice.current, Some(2));
+    }
+
+    #[test]
+    fn a_copy_of_the_pad_in_use_does_not_count() {
+        // Steam Input mirrors a pad as a second one, which would otherwise double every press.
+        let now = Instant::now();
+        let mut choice = PadChoice::new();
+        assert!(choice.input(1, now));
+        assert!(!choice.input(2, now));
+        assert!(!choice.input(2, now + SWITCH_IDLE / 2));
+        assert_eq!(choice.current, Some(1));
+    }
+
+    #[test]
+    fn another_pad_takes_over_once_the_current_one_rests() {
+        let now = Instant::now();
+        let mut choice = PadChoice::new();
+        choice.input(1, now);
+        assert!(choice.input(2, now + SWITCH_IDLE));
+        assert_eq!(choice.current, Some(2));
+    }
+
+    #[test]
+    fn holding_the_current_pad_keeps_it() {
+        // A held direction sends no events, but the player is still using that pad.
+        let now = Instant::now();
+        let mut choice = PadChoice::new();
+        choice.input(1, now);
+        choice.held(now + SWITCH_IDLE / 2);
+        assert!(!choice.input(2, now + SWITCH_IDLE));
+    }
+
+    #[test]
+    fn unplugging_the_current_pad_frees_the_choice() {
+        let now = Instant::now();
+        let mut choice = PadChoice::new();
+        choice.input(1, now);
+        choice.disconnected(2);
+        assert_eq!(choice.current, Some(1));
+        choice.disconnected(1);
+        assert!(choice.input(2, now));
+    }
 
     #[test]
     fn only_directions_repeat() {

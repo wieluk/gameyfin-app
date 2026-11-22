@@ -59,9 +59,11 @@ export function useGamepad() {
       });
       const connection = await listen<ConnectionEvent>("gamepad-connection", (event) => {
         const { connected, name } = event.payload;
+        const arriving = connected && !useCouch.getState().connected;
         setConnected(connected, name);
-        // The large layout follows the pad by default.
-        if (connected && context.current.couchAuto) setCouch(true);
+        // The large layout follows a pad arriving, not a switch to another, which would undo
+        // the user turning it off.
+        if (arriving && context.current.couchAuto) setCouch(true);
       });
 
       if (cancelled) {
