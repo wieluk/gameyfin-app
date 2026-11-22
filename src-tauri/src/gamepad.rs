@@ -288,6 +288,10 @@ fn run(app: AppHandle, handle: Handle) {
     let mut left_trigger = TriggerState::default();
     let mut right_trigger = TriggerState::default();
     let mut connected = false;
+    // The pad last used. A container or remote session can keep idle virtual pads connected
+    // ahead of the one in the player's hands, so the first connected pad is only the fallback.
+    let mut last_used: Option<gilrs::GamepadId> = None;
+    let mut current: Option<gilrs::GamepadId> = None;
 
     loop {
         let active = connected && handle.enabled() && handle.focused();
@@ -302,14 +306,22 @@ fn run(app: AppHandle, handle: Handle) {
         // and re-enabling replays every press made in between.
         let mut pressed = Vec::new();
         while let Some(event) = gilrs.next_event() {
-            if let gilrs::EventType::ButtonPressed(button, _) = event.event {
-                if let Some(mapped) = map_button(button) {
-                    // Directions are driven by the held-state scan below so the d-pad and
-                    // the stick repeat identically; a raw press here would double them up.
-                    if !mapped.repeats() {
-                        pressed.push(mapped);
+            match event.event {
+                gilrs::EventType::ButtonPressed(button, _) => {
+                    last_used = Some(event.id);
+                    if let Some(mapped) = map_button(button) {
+                        // Directions are driven by the held-state scan below so the d-pad and
+                        // the stick repeat identically; a raw press here would double them up.
+                        if !mapped.repeats() {
+                            pressed.push(mapped);
+                        }
                     }
                 }
+                gilrs::EventType::AxisChanged(_, value, _) if value.abs() >= handle.deadzone() => {
+                    last_used = Some(event.id);
+                }
+                gilrs::EventType::Disconnected if last_used == Some(event.id) => last_used = None,
+                _ => {}
             }
         }
 
@@ -328,12 +340,15 @@ fn run(app: AppHandle, handle: Handle) {
             continue;
         }
 
-        // The first connected pad wins; several would need rules for conflicting directions.
-        let active = gilrs.gamepads().find(|(_, pad)| pad.is_connected());
+        // The last-used pad wins, else the first connected one.
+        let active = last_used
+            .and_then(|id| gilrs.connected_gamepad(id).map(|pad| (id, pad)))
+            .or_else(|| gilrs.gamepads().find(|(_, pad)| pad.is_connected()));
 
-        let Some((_, pad)) = active else {
+        let Some((id, pad)) = active else {
             if connected {
                 connected = false;
+                current = None;
                 handle.set_connected(false);
                 tracing::info!("controller disconnected");
                 let _ = app.emit(
@@ -347,8 +362,13 @@ fn run(app: AppHandle, handle: Handle) {
             continue;
         };
 
-        if !connected {
+        if !connected || current != Some(id) {
             connected = true;
+            current = Some(id);
+            // Held directions and triggers belong to the pad they were read from.
+            repeater = Repeater::new();
+            left_trigger = TriggerState::default();
+            right_trigger = TriggerState::default();
             handle.set_connected(true);
             tracing::info!(name = pad.name(), "controller connected");
             let _ = app.emit(
