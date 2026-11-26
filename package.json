@@ -34,7 +34,7 @@
   "devDependencies": {
     "@cspell/dict-en-gb": "^5.0.38",
     "@resvg/resvg-js": "^2.6.2",
-    "@tailwindcss/vite": "^4.3.3",
+    "@tailwindcss/vite": "^4.3.5",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/cli": "^2.12.4",
     "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
@@ -47,7 +47,7 @@
     "cspell": "^10.4.1",
     "jsdom": "^31.0.0",
     "markdownlint-cli2": "^0.24.0",
-    "tailwindcss": "^4.3.3",
+    "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
     "vite": "^8.3.7",
     "vitepress": "^1.6.4",
